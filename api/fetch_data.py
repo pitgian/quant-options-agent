@@ -1,12 +1,12 @@
-import json
+from flask import Request, jsonify
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 
 
-def handler(event, context):
+def handler(request: Request):
     """
-    Netlify function to fetch options data using yfinance.
+    Vercel Python function to fetch options data using yfinance.
     
     Query parameters:
         symbol: The ticker symbol (SPY, QQQ, SPX, NDX)
@@ -14,19 +14,15 @@ def handler(event, context):
     """
     try:
         # Parse query parameters
-        query_params = event.get('queryStringParameters', {}) or {}
-        symbol = query_params.get('symbol', 'SPY').upper()
-        expiry = query_params.get('expiry', None)
+        symbol = request.args.get('symbol', 'SPY').upper()
+        expiry = request.args.get('expiry', None)
         
         # Validate symbol
         valid_symbols = ['SPY', 'QQQ', 'SPX', 'NDX']
         if symbol not in valid_symbols:
-            return {
-                'statusCode': 400,
-                'body': json.dumps({
-                    'error': f'Invalid symbol. Must be one of: {", ".join(valid_symbols)}'
-                })
-            }
+            return jsonify({
+                'error': f'Invalid symbol. Must be one of: {", ".join(valid_symbols)}'
+            }), 400
         
         # Fetch data from yfinance
         ticker = yf.Ticker(symbol)
@@ -38,12 +34,9 @@ def handler(event, context):
         expirations = ticker.options
         
         if not expirations:
-            return {
-                'statusCode': 404,
-                'body': json.dumps({
-                    'error': 'No options data available for this symbol'
-                })
-            }
+            return jsonify({
+                'error': 'No options data available for this symbol'
+            }), 404
         
         # Select expiry date
         if expiry and expiry in expirations:
@@ -100,22 +93,9 @@ def handler(event, context):
             'timestamp': datetime.utcnow().isoformat() + 'Z'
         }
         
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'GET, OPTIONS'
-            },
-            'body': json.dumps(response_data)
-        }
-        
+        return jsonify(response_data)
+    
     except Exception as e:
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': str(e),
-                'message': 'Failed to fetch options data'
-            })
-        }
+        return jsonify({
+            'error': f'Failed to fetch options data: {str(e)}'
+        }), 500

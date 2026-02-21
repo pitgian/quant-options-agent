@@ -11,15 +11,10 @@ const getDataUrl = (): string => {
 };
 
 // Get the backend API URL from environment variables
-// Uses Netlify function endpoint by default, falls back to localhost for development
+// Uses Vercel Python function endpoint by default, falls back to localhost for development
 const getApiUrl = (): string => {
-  return import.meta.env.VITE_API_URL || '/.netlify/functions/fetch-data';
+  return import.meta.env.VITE_API_URL || '/api/fetch_data';
 };
-
-// Alternative: Use the /api/* redirect defined in netlify.toml
-// const getApiUrl = (): string => {
-//   return import.meta.env.VITE_API_URL || '/api/fetch-data';
-// };
 
 /**
  * Get cached data if still valid
