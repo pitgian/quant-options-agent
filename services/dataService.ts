@@ -435,7 +435,7 @@ export const fetchFromBackend = async (
 
   try {
     const apiUrl = getApiUrl();
-    const url = `${apiUrl}/api/fetch?symbol=${encodeURIComponent(symbol)}`;
+    const url = `${apiUrl}?symbol=${encodeURIComponent(symbol)}`;
     
     const response = await fetch(url, {
       method: 'GET',
@@ -501,7 +501,7 @@ export const fetchMultipleFromBackend = async (
 ): Promise<FetchResult> => {
   try {
     const apiUrl = getApiUrl();
-    const url = `${apiUrl}/api/fetch-multiple?symbols=${encodeURIComponent(symbols.join(','))}`;
+    const url = `${apiUrl}/multiple?symbols=${encodeURIComponent(symbols.join(','))}`;
     
     const response = await fetch(url, {
       method: 'GET',
