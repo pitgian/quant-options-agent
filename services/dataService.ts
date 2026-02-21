@@ -13,7 +13,7 @@ const getDataUrl = (): string => {
 // Get the backend API URL from environment variables
 // Uses Vercel Python function endpoint by default, falls back to localhost for development
 const getApiUrl = (): string => {
-  return import.meta.env.VITE_API_URL || '/api/fetch_data';
+  return import.meta.env.VITE_API_URL || '/api';
 };
 
 /**

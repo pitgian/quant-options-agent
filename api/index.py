@@ -99,3 +99,7 @@ def handler(request: Request):
         return jsonify({
             'error': f'Failed to fetch options data: {str(e)}'
         }), 500
+
+
+# For Vercel, export as main handler
+app = handler
