@@ -1,9 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-// @ts-ignore - yahoo-finance2 CommonJS module
-import yahooFinance from 'yahoo-finance2';
 
-// Ensure we have the default export (CommonJS interop)
-const yf = (yahooFinance as any).default || yahooFinance;
+// Use require() for CommonJS interop with yahoo-finance2 on Vercel
+// @ts-ignore
+const yahooFinance = require('yahoo-finance2');
+
+// Debug: log what we got from the module
+console.log('yahoo-finance2 module type:', typeof yahooFinance);
+console.log('yahoo-finance2 keys:', Object.keys(yahooFinance || {}));
+console.log('yahoo-finance2.default type:', typeof yahooFinance?.default);
+
+// Handle various module export patterns
+const yf = yahooFinance.default || yahooFinance;
+
+// Verify the module has the required methods
+if (typeof yf.quote !== 'function') {
+  console.error('yf.quote is not a function. Available methods:', Object.keys(yf));
+}
 
 // Symbol mapping for yfinance format
 // Indices require ^ prefix in yfinance (e.g., ^SPX, ^NDX)
