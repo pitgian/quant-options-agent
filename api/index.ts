@@ -1,20 +1,42 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// Use require() for CommonJS interop with yahoo-finance2 on Vercel
-// @ts-ignore
-const yahooFinance = require('yahoo-finance2');
+// Dynamic import for yahoo-finance2 (CommonJS module)
+// This is required because the project uses "type": "module" in package.json
+// which makes require() unavailable in ES module scope
 
-// Debug: log what we got from the module
-console.log('yahoo-finance2 module type:', typeof yahooFinance);
-console.log('yahoo-finance2 keys:', Object.keys(yahooFinance || {}));
-console.log('yahoo-finance2.default type:', typeof yahooFinance?.default);
+// Cache the yahoo-finance2 module to avoid re-importing on every request
+let yfModuleCache: any = null;
 
-// Handle various module export patterns
-const yf = yahooFinance.default || yahooFinance;
-
-// Verify the module has the required methods
-if (typeof yf.quote !== 'function') {
-  console.error('yf.quote is not a function. Available methods:', Object.keys(yf));
+async function getYahooFinance(): Promise<any> {
+  if (yfModuleCache) {
+    return yfModuleCache;
+  }
+  
+  try {
+    console.log('Dynamically importing yahoo-finance2...');
+    const yahooFinance = await import('yahoo-finance2');
+    
+    // Debug: log what we got from the module
+    console.log('yahoo-finance2 module type:', typeof yahooFinance);
+    console.log('yahoo-finance2 keys:', Object.keys(yahooFinance || {}));
+    console.log('yahoo-finance2.default type:', typeof yahooFinance?.default);
+    
+    // Handle various module export patterns
+    const yf = yahooFinance.default || yahooFinance;
+    
+    // Verify the module has the required methods
+    if (typeof yf.quote !== 'function') {
+      console.error('yf.quote is not a function. Available methods:', Object.keys(yf));
+      throw new Error('yahoo-finance2 module does not have quote method');
+    }
+    
+    console.log('yahoo-finance2 loaded successfully');
+    yfModuleCache = yf;
+    return yf;
+  } catch (error: any) {
+    console.error('Failed to import yahoo-finance2:', error);
+    throw error;
+  }
 }
 
 // Symbol mapping for yfinance format
@@ -46,7 +68,7 @@ interface OptionsData {
   availableExpirations: string[];
 }
 
-async function fetchOptionsData(symbol: string, expiry?: string): Promise<OptionsData> {
+async function fetchOptionsData(yf: any, symbol: string, expiry?: string): Promise<OptionsData> {
   // Map symbol to yfinance format
   const yfSymbol = SYMBOL_MAP[symbol] || symbol;
   console.log(`Fetching data for ${symbol} -> ${yfSymbol}`);
@@ -144,8 +166,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
     
+    // Get yahoo-finance2 module via dynamic import
+    const yf = await getYahooFinance();
+    
     // Fetch options data
-    const data = await fetchOptionsData(symbol, expiry);
+    const data = await fetchOptionsData(yf, symbol, expiry);
     
     // Return the data
     return res.status(200).json({
@@ -159,6 +184,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({
       error: 'Failed to fetch options data',
       message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       timestamp: new Date().toISOString(),
     });
   }
