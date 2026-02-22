@@ -129,7 +129,7 @@ async function fetchOptionsData(yf: any, symbol: string, expiry?: string): Promi
     calls,
     puts,
     currentPrice,
-    expiry: selectedExpiry,
+    expiry: selectedExpiry!,
     availableExpirations,
   };
 }
