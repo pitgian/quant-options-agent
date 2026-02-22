@@ -22,11 +22,14 @@ async function getYahooFinance(): Promise<any> {
     console.log('yahoo-finance2.default type:', typeof yahooFinance?.default);
     
     // Handle various module export patterns
-    const yf = yahooFinance.default || yahooFinance;
+    // yahoo-finance2 exports a class constructor, not an instance
+    // We must instantiate it to access instance methods (quote, options, etc.)
+    const YahooFinanceClass = yahooFinance.default || yahooFinance;
+    const yf = new YahooFinanceClass();
     
     // Verify the module has the required methods
     if (typeof yf.quote !== 'function') {
-      console.error('yf.quote is not a function. Available methods:', Object.keys(yf));
+      console.error('yf.quote is not a function. Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(yf)));
       throw new Error('yahoo-finance2 module does not have quote method');
     }
     
