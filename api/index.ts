@@ -7,6 +7,39 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 // Cache the yahoo-finance2 module to avoid re-importing on every request
 let yfModuleCache: any = null;
 
+// Rate limiting configuration (matching Python script)
+const RATE_LIMIT_DELAY = 2000; // 2 seconds between API calls
+const MAX_RETRIES = 3;
+
+// Utility function for delays
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Retry wrapper with exponential backoff for rate limiting (HTTP 429)
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = MAX_RETRIES,
+  delay = RATE_LIMIT_DELAY
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    // Check for rate limiting (HTTP 429) or temporary errors
+    const isRateLimited = error.status === 429 ||
+                          error.message?.includes('429') ||
+                          error.message?.includes('Too Many Requests') ||
+                          error.message?.includes('Failed to get crumb');
+    if (retries > 0 && isRateLimited) {
+      console.log(`Rate limited, retrying in ${delay}ms... (${retries} retries left)`);
+      await sleep(delay);
+      // Exponential backoff: double the delay for next retry
+      return withRetry(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
+
 async function getYahooFinance(): Promise<any> {
   if (yfModuleCache) {
     return yfModuleCache;
@@ -76,12 +109,15 @@ async function fetchOptionsData(yf: any, symbol: string, expiry?: string): Promi
   const yfSymbol = SYMBOL_MAP[symbol] || symbol;
   console.log(`Fetching data for ${symbol} -> ${yfSymbol}`);
   
-  // Get the stock/quote data
-  const quote = await yf.quote(yfSymbol);
+  // Get the stock/quote data with retry for rate limiting
+  const quote = await withRetry(() => yf.quote(yfSymbol)) as any;
   const currentPrice = quote.regularMarketPrice || 0;
   
-  // Get options data
-  const options = await yf.options(yfSymbol);
+  // Delay before next API call (rate limiting protection - matching Python script)
+  await sleep(RATE_LIMIT_DELAY);
+  
+  // Get options data with retry for rate limiting
+  const options = await withRetry(() => yf.options(yfSymbol)) as any;
   
   // Get available expirations
   const availableExpirations = options.expirationDates.map((d: Date) => 
