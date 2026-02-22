@@ -1,5 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+// @ts-ignore - yahoo-finance2 CommonJS module
 import yahooFinance from 'yahoo-finance2';
+
+// Ensure we have the default export (CommonJS interop)
+const yf = (yahooFinance as any).default || yahooFinance;
 
 // Symbol mapping for yfinance format
 // Indices require ^ prefix in yfinance (e.g., ^SPX, ^NDX)
@@ -36,11 +40,11 @@ async function fetchOptionsData(symbol: string, expiry?: string): Promise<Option
   console.log(`Fetching data for ${symbol} -> ${yfSymbol}`);
   
   // Get the stock/quote data
-  const quote = await yahooFinance.quote(yfSymbol);
+  const quote = await yf.quote(yfSymbol);
   const currentPrice = quote.regularMarketPrice || 0;
   
   // Get options data
-  const options = await yahooFinance.options(yfSymbol);
+  const options = await yf.options(yfSymbol);
   
   // Get available expirations
   const availableExpirations = options.expirationDates.map((d: Date) => 
