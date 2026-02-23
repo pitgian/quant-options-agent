@@ -2,17 +2,20 @@
   "name": "agente-quant-interattivo-per-opzioni",
   "private": true,
   "version": "0.0.0",
-  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "python:setup": "python3 -m venv venv && ./venv/bin/pip install -r scripts/requirements.txt",
+    "python:setup:win": "python -m venv venv && venv\\Scripts\\pip install -r scripts\\requirements.txt",
+    "python:start": "./venv/bin/python scripts/local_server.py",
+    "python:start:win": "venv\\Scripts\\python scripts\\local_server.py"
   },
   "dependencies": {
-    "react-dom": "^19.2.0",
-    "react": "^19.2.0",
     "@google/genai": "^1.30.0",
     "@vercel/node": "^5.1.14",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "yahoo-finance2": "^2.11.3"
   },
   "devDependencies": {

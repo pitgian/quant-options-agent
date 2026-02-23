@@ -5,14 +5,70 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const CACHE_KEY = 'options_data_cache';
 const BACKEND_CACHE_KEY = 'backend_options_data_cache';
 
+// Local Python server configuration
+const LOCAL_PYTHON_SERVER_URL = 'http://127.0.0.1:8765';
+
 // Get the data URL from environment variables
 const getDataUrl = (): string => {
   return import.meta.env.VITE_DATA_URL || '/data/options_data.json';
 };
 
+/**
+ * Check if we're running in local development environment
+ */
+const isLocalDevelopment = (): boolean => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    return hostname === 'localhost' || hostname === '127.0.0.1';
+  }
+  return false;
+};
+
+/**
+ * Check if the local Python server is available
+ */
+const checkLocalServerHealth = async (): Promise<boolean> => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    
+    const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/health`, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
+
 // Get the backend API URL from environment variables
-// Uses Vercel Python function endpoint by default, falls back to localhost for development
-const getApiUrl = (): string => {
+// Uses local Python server for development, Vercel API for production
+const getApiUrl = async (): Promise<string> => {
+  // If explicitly set, use the environment variable
+  const envApiUrl = import.meta.env.VITE_API_URL;
+  if (envApiUrl) {
+    return envApiUrl;
+  }
+  
+  // In local development, check if local Python server is available
+  if (isLocalDevelopment()) {
+    const isLocalAvailable = await checkLocalServerHealth();
+    if (isLocalAvailable) {
+      console.log('[dataService] Using local Python server:', LOCAL_PYTHON_SERVER_URL);
+      return LOCAL_PYTHON_SERVER_URL;
+    }
+    console.log('[dataService] Local Python server not available, falling back to Vercel API');
+  }
+  
+  // Default to Vercel API
+  return '/api';
+};
+
+// Synchronous version for backward compatibility (doesn't check local server)
+const getApiUrlSync = (): string => {
   return import.meta.env.VITE_API_URL || '/api';
 };
 
@@ -65,7 +121,7 @@ export const clearCache = (): void => {
 /**
  * Fetch options data from JSON file
  */
-export const fetchOptionsData = async (forceRefresh: boolean = false): Promise<FetchResult> => {
+export const fetchOptionsData = async (forceRefresh: boolean = false, symbol?: string, expiry?: string): Promise<FetchResult> => {
   // Check cache first unless force refresh
   if (!forceRefresh) {
     const cached = getCachedData();
@@ -78,6 +134,7 @@ export const fetchOptionsData = async (forceRefresh: boolean = false): Promise<F
     }
   }
 
+  // Fetch from web API
   try {
     const url = getDataUrl();
     
@@ -416,6 +473,7 @@ export const clearBackendCache = (symbol?: string): void => {
 
 /**
  * Fetch options data from backend API
+ * Uses local Python server when available, falls back to Vercel API
  */
 export const fetchFromBackend = async (
   symbol: string = 'SPY',
@@ -434,8 +492,18 @@ export const fetchFromBackend = async (
   }
 
   try {
-    const apiUrl = getApiUrl();
-    const url = `${apiUrl}?symbol=${encodeURIComponent(symbol)}`;
+    // Get API URL (async to check local server availability)
+    const apiUrl = await getApiUrl();
+    
+    // Build URL based on API type
+    // Local Python server: /options/{symbol}
+    // Vercel API: /api?symbol={symbol}
+    const isLocalApi = apiUrl.includes('127.0.0.1') || apiUrl.includes('localhost');
+    const url = isLocalApi
+      ? `${apiUrl}/options/${encodeURIComponent(symbol)}`
+      : `${apiUrl}?symbol=${encodeURIComponent(symbol)}`;
+    
+    console.log(`[dataService] Fetching from: ${url}`);
     
     const response = await fetch(url, {
       method: 'GET',
@@ -458,7 +526,83 @@ export const fetchFromBackend = async (
       throw new Error(errorMessage);
     }
 
-    const data: OptionsDataResponse = await response.json();
+    const rawData = await response.json();
+    
+    // Convert local Python server response to OptionsDataResponse format
+    // Local server returns: { symbol, currentPrice, expiries: [{expiryDate, label, calls, puts, ...}], availableExpirations, timestamp }
+    // We need to wrap it in our expected format
+    let data: OptionsDataResponse;
+    
+    if (isLocalApi && rawData.expiries && Array.isArray(rawData.expiries)) {
+      // New multi-expiry format from Python server
+      const expiries: ExpiryData[] = rawData.expiries.map((exp: any) => ({
+        label: exp.label || 'UNKNOWN',
+        date: exp.expiryDate || '',
+        options: [
+          ...(exp.calls || []).map((c: any) => ({
+            strike: c.strike,
+            side: 'CALL' as const,
+            iv: c.impliedVolatility || 0,
+            oi: c.openInterest || 0,
+            vol: c.volume || 0
+          })),
+          ...(exp.puts || []).map((p: any) => ({
+            strike: p.strike,
+            side: 'PUT' as const,
+            iv: p.impliedVolatility || 0,
+            oi: p.openInterest || 0,
+            vol: p.volume || 0
+          }))
+        ]
+      }));
+      
+      const symbolData: SymbolData = {
+        spot: rawData.currentPrice || 0,
+        generated: rawData.timestamp || new Date().toISOString(),
+        expiries
+      };
+      
+      data = {
+        version: '2.0.0-local',
+        generated: rawData.timestamp || new Date().toISOString(),
+        symbols: { [rawData.symbol || symbol]: symbolData }
+      };
+    } else if (isLocalApi && rawData.calls && rawData.puts) {
+      // Legacy single-expiry format (backwards compatibility)
+      const symbolData: SymbolData = {
+        spot: rawData.currentPrice || 0,
+        generated: rawData.timestamp || new Date().toISOString(),
+        expiries: [{
+          label: 'AUTO',
+          date: rawData.expiry || '',
+          options: [
+            ...rawData.calls.map((c: any) => ({
+              strike: c.strike,
+              side: 'CALL' as const,
+              iv: c.impliedVolatility || 0,
+              oi: c.openInterest || 0,
+              vol: c.volume || 0
+            })),
+            ...rawData.puts.map((p: any) => ({
+              strike: p.strike,
+              side: 'PUT' as const,
+              iv: p.impliedVolatility || 0,
+              oi: p.openInterest || 0,
+              vol: p.volume || 0
+            }))
+          ]
+        }]
+      };
+      
+      data = {
+        version: '2.0.0-local',
+        generated: rawData.timestamp || new Date().toISOString(),
+        symbols: { [rawData.symbol || symbol]: symbolData }
+      };
+    } else {
+      // Use data as-is (Vercel API format)
+      data = rawData as OptionsDataResponse;
+    }
     
     // Validate the response has expected structure
     if (!data.version && !data.structured && !data.legacy && !data.symbols) {
@@ -494,13 +638,44 @@ export const fetchFromBackend = async (
 
 /**
  * Fetch options data for multiple symbols from backend
+ * Note: Local Python server doesn't support multiple symbols endpoint,
+ * so we fetch each symbol individually when using local server
  */
 export const fetchMultipleFromBackend = async (
   symbols: string[],
   forceRefresh: boolean = false
 ): Promise<FetchResult> => {
   try {
-    const apiUrl = getApiUrl();
+    const apiUrl = await getApiUrl();
+    const isLocalApi = apiUrl.includes('127.0.0.1') || apiUrl.includes('localhost');
+    
+    // For local Python server, fetch each symbol individually
+    if (isLocalApi) {
+      const results: Record<string, SymbolData> = {};
+      
+      for (const symbol of symbols) {
+        const result = await fetchFromBackend(symbol, forceRefresh);
+        if (result.success && result.data?.symbols) {
+          Object.assign(results, result.data.symbols);
+        }
+      }
+      
+      if (Object.keys(results).length === 0) {
+        throw new Error('Failed to fetch any symbol data');
+      }
+      
+      return {
+        success: true,
+        data: {
+          version: '2.0.0-local-multi',
+          generated: new Date().toISOString(),
+          symbols: results
+        },
+        fromCache: false
+      };
+    }
+    
+    // For Vercel API, use the multiple endpoint
     const url = `${apiUrl}/multiple?symbols=${encodeURIComponent(symbols.join(','))}`;
     
     const response = await fetch(url, {
