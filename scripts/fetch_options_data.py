@@ -634,6 +634,229 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
     }
 
 
+# ============================================================================
+# FUNZIONI PER SELEZIONE LIVELLI IMPORTANTI
+# ============================================================================
+
+def find_resonance_levels(expiries: List[Dict], spot: float, tolerance_pct: float = 0.005) -> List[Dict]:
+    """
+    Trova i livelli di RESONANCE - strike presenti in TUTTE e 3 le scadenze.
+    
+    Args:
+        expiries: Lista di expiry data con options
+        spot: Prezzo spot corrente
+        tolerance_pct: Tolleranza percentuale per considerare strike uguali (default 0.5%)
+    
+    Returns:
+        Lista di max 2 strike più vicini allo spot
+    """
+    if len(expiries) < 3:
+        return []
+    
+    # Estrai tutti gli strike da ogni expiry
+    all_strikes_by_expiry = []
+    for expiry in expiries:
+        strikes = set()
+        for opt in expiry.get('options', []):
+            strikes.add(round(opt['strike'], 2))
+        all_strikes_by_expiry.append(strikes)
+    
+    # Trova strike comuni con tolleranza
+    # Per ogni strike nella prima expiry, controlla se esiste in tutte le altre
+    common_strikes = []
+    
+    for strike in all_strikes_by_expiry[0]:
+        found_in_all = True
+        for other_strikes in all_strikes_by_expiry[1:]:
+            # Cerca strike simile entro tolleranza
+            found = False
+            for other_strike in other_strikes:
+                if abs(other_strike - strike) / strike <= tolerance_pct:
+                    found = True
+                    break
+            if not found:
+                found_in_all = False
+                break
+        
+        if found_in_all:
+            common_strikes.append(strike)
+    
+    # Ordina per distanza dallo spot e prendi i 2 più vicini
+    common_strikes.sort(key=lambda s: abs(s - spot))
+    
+    return [
+        {"strike": s, "distance_pct": round(abs(s - spot) / spot * 100, 2)}
+        for s in common_strikes[:2]
+    ]
+
+
+def find_confluence_levels(expiries: List[Dict], spot: float, tolerance_pct: float = 0.01) -> List[Dict]:
+    """
+    Trova i livelli di CONFLUENCE - strike presenti in ESATTAMENTE 2 scadenze.
+    
+    Args:
+        expiries: Lista di expiry data con options
+        spot: Prezzo spot corrente
+        tolerance_pct: Tolleranza percentuale per considerare strike uguali (default 1%)
+    
+    Returns:
+        Lista di max 5 strike più vicini allo spot
+    """
+    if len(expiries) < 2:
+        return []
+    
+    # Estrai tutti gli strike da ogni expiry
+    all_strikes_by_expiry = []
+    for expiry in expiries:
+        strikes = set()
+        for opt in expiry.get('options', []):
+            strikes.add(round(opt['strike'], 2))
+        all_strikes_by_expiry.append(strikes)
+    
+    # Conta quante volte ogni strike appare (con tolleranza)
+    strike_counts = {}  # strike -> count
+    
+    for i, expiry_strikes in enumerate(all_strikes_by_expiry):
+        for strike in expiry_strikes:
+            # Cerca se esiste già uno strike simile
+            found_key = None
+            for existing_strike in strike_counts.keys():
+                if abs(existing_strike - strike) / max(existing_strike, strike) <= tolerance_pct:
+                    found_key = existing_strike
+                    break
+            
+            if found_key is not None:
+                strike_counts[found_key] += 1
+            else:
+                if strike not in strike_counts:
+                    strike_counts[strike] = 1
+    
+    # Filtra solo quelli che appaiono esattamente 2 volte
+    confluence_strikes = [s for s, count in strike_counts.items() if count == 2]
+    
+    # Ordina per distanza dallo spot e prendi i 5 più vicini
+    confluence_strikes.sort(key=lambda s: abs(s - spot))
+    
+    return [
+        {"strike": s, "distance_pct": round(abs(s - spot) / spot * 100, 2)}
+        for s in confluence_strikes[:5]
+    ]
+
+
+def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3) -> Dict[str, List[Dict]]:
+    """
+    Seleziona le Call Walls e Put Walls per ogni expiry.
+    Top N per Open Interest.
+    
+    Args:
+        expiries: Lista di expiry data con options
+        spot: Prezzo spot corrente
+        top_n: Numero di walls da selezionare per tipo (default 3)
+    
+    Returns:
+        {
+            "call_walls": [{"strike": float, "oi": int, "expiry": str}, ...],
+            "put_walls": [{"strike": float, "oi": int, "expiry": str}, ...]
+        }
+    """
+    call_walls = []
+    put_walls = []
+    
+    for expiry in expiries:
+        expiry_label = expiry.get('label', 'UNKNOWN')
+        
+        # Separa calls e puts
+        calls = [(opt['strike'], opt['oi']) for opt in expiry.get('options', [])
+                 if opt['side'] == 'CALL' and opt['oi'] > 0]
+        puts = [(opt['strike'], opt['oi']) for opt in expiry.get('options', [])
+                if opt['side'] == 'PUT' and opt['oi'] > 0]
+        
+        # Ordina per OI decrescente
+        calls.sort(key=lambda x: x[1], reverse=True)
+        puts.sort(key=lambda x: x[1], reverse=True)
+        
+        # Prendi top N call walls (sopra lo spot)
+        for strike, oi in calls[:top_n]:
+            if strike > spot:
+                call_walls.append({
+                    "strike": round(strike, 2),
+                    "oi": oi,
+                    "expiry": expiry_label
+                })
+        
+        # Prendi top N put walls (sotto lo spot)
+        for strike, oi in puts[:top_n]:
+            if strike < spot:
+                put_walls.append({
+                    "strike": round(strike, 2),
+                    "oi": oi,
+                    "expiry": expiry_label
+                })
+    
+    # Ordina per OI decrescente e limita a top N globali
+    call_walls.sort(key=lambda x: x['oi'], reverse=True)
+    put_walls.sort(key=lambda x: x['oi'], reverse=True)
+    
+    return {
+        "call_walls": call_walls[:top_n * len(expiries)],  # Max top_n per expiry
+        "put_walls": put_walls[:top_n * len(expiries)]
+    }
+
+
+def select_important_levels(expiries: List[Dict], spot: float) -> Dict:
+    """
+    Seleziona i livelli più importanti usando regole algoritmiche.
+    
+    Regole:
+    1. RESONANCE: Strike in TUTTE e 3 le scadenze (max 2 più vicini allo spot)
+    2. CONFLUENCE: Strike in ESATTAMENTE 2 scadenze (max 5 più vicini allo spot)
+    3. WALLS: Top 3 per OI per tipo per expiry
+    4. GAMMA_FLIP: Dal 0DTE (già calcolato)
+    5. MAX_PAIN: Dal 0DTE (già calcolato)
+    
+    Args:
+        expiries: Lista di expiry data con options e quantMetrics
+        spot: Prezzo spot corrente
+    
+    Returns:
+        {
+            'resonance': [...],  # Max 2 livelli
+            'confluence': [...], # Max 5 livelli
+            'call_walls': [...], # Top 3 per expiry
+            'put_walls': [...],  # Top 3 per expiry
+            'gamma_flip': float,
+            'max_pain': float
+        }
+    """
+    # Trova livelli resonance
+    resonance = find_resonance_levels(expiries, spot, tolerance_pct=0.005)
+    
+    # Trova livelli confluence
+    confluence = find_confluence_levels(expiries, spot, tolerance_pct=0.01)
+    
+    # Seleziona walls
+    walls = select_walls_by_expiry(expiries, spot, top_n=3)
+    
+    # Estrai gamma_flip e max_pain dal 0DTE (prima expiry)
+    gamma_flip = spot
+    max_pain = spot
+    
+    if expiries:
+        first_expiry = expiries[0]
+        quant_metrics = first_expiry.get('quantMetrics', {})
+        gamma_flip = quant_metrics.get('gamma_flip', spot)
+        max_pain = quant_metrics.get('max_pain', spot)
+    
+    return {
+        "resonance": resonance,
+        "confluence": confluence,
+        "call_walls": walls["call_walls"],
+        "put_walls": walls["put_walls"],
+        "gamma_flip": round(gamma_flip, 2),
+        "max_pain": round(max_pain, 2)
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='QUANT Smart Sweep - GitHub Actions Edition'
@@ -717,13 +940,27 @@ def main():
         if data:
             # Genera anche formato legacy
             legacy = generate_legacy_content(data)
+            
+            # Seleziona i livelli più importanti
+            selected_levels = select_important_levels(data.expiries, data.spot)
+            
             all_data["symbols"][symbol] = {
                 "spot": data.spot,
                 "generated": data.generated,
                 "expiries": data.expiries,
+                "selected_levels": selected_levels,
                 "legacy": legacy
             }
             successful += 1
+            
+            # Log dei livelli selezionati
+            logger.info(f"  📊 Livelli selezionati per {symbol}:")
+            logger.info(f"     Resonance: {len(selected_levels['resonance'])} livelli")
+            logger.info(f"     Confluence: {len(selected_levels['confluence'])} livelli")
+            logger.info(f"     Call Walls: {len(selected_levels['call_walls'])} livelli")
+            logger.info(f"     Put Walls: {len(selected_levels['put_walls'])} livelli")
+            logger.info(f"     Gamma Flip: {selected_levels['gamma_flip']}")
+            logger.info(f"     Max Pain: {selected_levels['max_pain']}")
     
     # Salva output principale
     if not args.tv_only:

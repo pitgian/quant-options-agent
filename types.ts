@@ -92,11 +92,21 @@ export interface LegacyExpiryContent {
   date: string;
 }
 
+export interface SelectedLevels {
+  resonance: Array<{strike: number; distance_pct: number}>;
+  confluence: Array<{strike: number; distance_pct: number}>;
+  call_walls: Array<{strike: number; oi: number; expiry: string}>;
+  put_walls: Array<{strike: number; oi: number; expiry: string}>;
+  gamma_flip: number;
+  max_pain: number;
+}
+
 export interface SymbolData {
   spot: number;
   generated: string;
   expiries: ExpiryData[];
   legacy?: Record<string, LegacyExpiryContent>;
+  selected_levels?: SelectedLevels;
 }
 
 export interface OptionsDataResponse {

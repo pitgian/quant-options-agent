@@ -18,7 +18,7 @@ import {
   getLastUpdateTime,
   getDataAgeMinutes
 } from '../services/vercelDataService';
-import { SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios, VolatilitySkew, GEXData } from '../types';
+import { SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios, VolatilitySkew, GEXData, SelectedLevels } from '../types';
 
 // ============================================================================
 // CONSTANTS
@@ -1259,6 +1259,7 @@ export function VercelView(): ReactElement {
 
     const spot = activeSymbolData.spot;
     const expiries = activeSymbolData.expiries;
+    const selectedLevels = activeSymbolData.selected_levels;
 
     // Combine all options for aggregated metrics
     const allOptions: OptionData[] = [];
@@ -1266,15 +1267,42 @@ export function VercelView(): ReactElement {
       allOptions.push(...expiry.options);
     }
 
-    // Calculate aggregated metrics
+    // Calculate aggregated metrics (always needed for PCR, skew, etc.)
     const aggregatedMetrics = calculateAggregatedMetrics(expiries, spot);
 
-    // Calculate walls
-    const walls = calculateWalls(allOptions, spot);
+    // Use selected_levels if available, otherwise calculate locally (fallback)
+    let walls: { callWalls: number[]; putWalls: number[] };
+    let confluenceLevels: Map<number, string[]>;
+    let resonanceLevels: number[];
 
-    // Find confluence and resonance levels
-    const confluenceLevels = findConfluenceLevels(expiries, spot);
-    const resonanceLevels = findResonanceLevels(expiries, spot);
+    if (selectedLevels) {
+      // Use pre-selected levels from Python
+      walls = {
+        callWalls: selectedLevels.call_walls.map(w => w.strike),
+        putWalls: selectedLevels.put_walls.map(w => w.strike)
+      };
+      
+      // Convert confluence array to Map for compatibility
+      confluenceLevels = new Map();
+      for (const c of selectedLevels.confluence) {
+        confluenceLevels.set(c.strike, ['MULTI']); // Generic label for pre-selected
+      }
+      
+      resonanceLevels = selectedLevels.resonance.map(r => r.strike);
+      
+      // Override gamma_flip and max_pain in aggregatedMetrics if available
+      if (aggregatedMetrics && selectedLevels.gamma_flip) {
+        aggregatedMetrics.gamma_flip = selectedLevels.gamma_flip;
+      }
+      if (aggregatedMetrics && selectedLevels.max_pain) {
+        aggregatedMetrics.max_pain = selectedLevels.max_pain;
+      }
+    } else {
+      // Fallback: calculate locally
+      walls = calculateWalls(allOptions, spot);
+      confluenceLevels = findConfluenceLevels(expiries, spot);
+      resonanceLevels = findResonanceLevels(expiries, spot);
+    }
 
     // Calculate sentiment
     const sentiment = aggregatedMetrics ? calculateSentiment(aggregatedMetrics) : 'neutral';
@@ -1297,7 +1325,8 @@ export function VercelView(): ReactElement {
       resonanceLevels,
       sentiment,
       expiryMetrics,
-      allOptions
+      allOptions,
+      selectedLevels // Pass through for displayLevels
     };
   }, [activeSymbolData]);
 
@@ -1351,26 +1380,48 @@ export function VercelView(): ReactElement {
       }
     }
 
-    // Add Call Walls
-    for (const strike of quantAnalysis.walls.callWalls) {
-      const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'CALL');
-      levels.push({
-        level: strike,
-        type: 'CALL_WALL',
-        expiries: ['0DTE'],
-        oi: opt?.oi
-      });
+    // Add Call Walls - use selectedLevels OI if available, otherwise lookup
+    if (quantAnalysis.selectedLevels) {
+      for (const wall of quantAnalysis.selectedLevels.call_walls) {
+        levels.push({
+          level: wall.strike,
+          type: 'CALL_WALL',
+          expiries: [wall.expiry],
+          oi: wall.oi
+        });
+      }
+    } else {
+      for (const strike of quantAnalysis.walls.callWalls) {
+        const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'CALL');
+        levels.push({
+          level: strike,
+          type: 'CALL_WALL',
+          expiries: ['0DTE'],
+          oi: opt?.oi
+        });
+      }
     }
 
-    // Add Put Walls
-    for (const strike of quantAnalysis.walls.putWalls) {
-      const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'PUT');
-      levels.push({
-        level: strike,
-        type: 'PUT_WALL',
-        expiries: ['0DTE'],
-        oi: opt?.oi
-      });
+    // Add Put Walls - use selectedLevels OI if available, otherwise lookup
+    if (quantAnalysis.selectedLevels) {
+      for (const wall of quantAnalysis.selectedLevels.put_walls) {
+        levels.push({
+          level: wall.strike,
+          type: 'PUT_WALL',
+          expiries: [wall.expiry],
+          oi: wall.oi
+        });
+      }
+    } else {
+      for (const strike of quantAnalysis.walls.putWalls) {
+        const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'PUT');
+        levels.push({
+          level: strike,
+          type: 'PUT_WALL',
+          expiries: ['0DTE'],
+          oi: opt?.oi
+        });
+      }
     }
 
     // Sort and split by spot
