@@ -1,6 +1,7 @@
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -16,6 +17,16 @@ export default defineConfig(({ mode }) => {
         console.warn('Python server plugin not available:', e);
       }
     }
+    
+    // Copy data folder to dist for Vercel deployment
+    plugins.push(viteStaticCopy({
+      targets: [
+        {
+          src: 'data',
+          dest: '.'
+        }
+      ]
+    }));
     
     return {
       server: {
