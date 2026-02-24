@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-QUANT SMART SWEEP v14.0 - GitHub Actions Edition
+QUANT SMART SWEEP v15.0 - GitHub Actions Edition
 Scarica dati opzioni da yfinance e genera JSON strutturato per il frontend.
 
 Uso:
@@ -17,8 +17,9 @@ import json
 import argparse
 import logging
 import sys
+import math
 from datetime import datetime
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -60,6 +61,15 @@ class OptionsDataset:
     expiries: List[Dict[str, Any]]
 
 
+def is_friday(date_str: str) -> bool:
+    """Check if date is a Friday"""
+    try:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+        return dt.weekday() == 4
+    except ValueError:
+        return False
+
+
 def is_monthly(date_str: str) -> bool:
     """
     Verifica se una data corrisponde al terzo venerdì del mese.
@@ -70,6 +80,11 @@ def is_monthly(date_str: str) -> bool:
         return dt.weekday() == 4 and 15 <= dt.day <= 21
     except ValueError:
         return False
+
+
+def is_weekly_friday(date_str: str) -> bool:
+    """Check if date is a Friday but NOT monthly (third Friday)"""
+    return is_friday(date_str) and not is_monthly(date_str)
 
 
 def get_spot_price(ticker: yf.Ticker) -> Optional[float]:
@@ -95,10 +110,12 @@ def get_spot_price(ticker: yf.Ticker) -> Optional[float]:
 
 def select_expirations(expirations: List[str]) -> List[tuple]:
     """
-    Seleziona 3 scadenze distinte secondo la logica v13.0:
-    1. 0DTE - Prima scadenza disponibile
-    2. WEEKLY - Prima scadenza che non sia 0DTE
-    3. MONTHLY - Prima scadenza mensile standard
+    Select 3 distinct expirations following standard options expiry rules:
+    1. 0DTE - First available expiration
+    2. WEEKLY - Next Friday that is NOT the third Friday (monthly)
+    3. MONTHLY - Third Friday of the month (day 15-21, weekday=4)
+    
+    Returns list of (label, date) tuples.
     """
     if not expirations:
         return []
@@ -106,32 +123,38 @@ def select_expirations(expirations: List[str]) -> List[tuple]:
     selected = []
     used_dates = set()
     
-    # 1. 0DTE - sempre la prima
+    # 1. 0DTE - always the first
     selected.append(("0DTE", expirations[0]))
     used_dates.add(expirations[0])
     
-    # 2. WEEKLY - prima disponibile diversa da 0DTE
-    for exp in expirations[1:]:
-        if exp not in used_dates:
+    # 2. WEEKLY - Next Friday that is NOT the monthly (third Friday)
+    for exp in expirations:
+        if exp not in used_dates and is_weekly_friday(exp):
             selected.append(("WEEKLY", exp))
             used_dates.add(exp)
             break
     
-    # 3. MONTHLY - prima scadenza mensile non ancora usata
+    # 3. MONTHLY - First third Friday not yet used
     for exp in expirations:
-        if is_monthly(exp) and exp not in used_dates:
+        if exp not in used_dates and is_monthly(exp):
             selected.append(("MONTHLY", exp))
             used_dates.add(exp)
             break
     
-    # Se non abbiamo trovato un mensile, prendiamo la prossima disponibile
+    # Fallback: If no weekly Friday found, use next Friday after 0DTE
+    if len(selected) < 2:
+        for exp in expirations:
+            if exp not in used_dates and is_friday(exp):
+                selected.insert(1, ("WEEKLY", exp))
+                used_dates.add(exp)
+                break
+    
+    # Fallback: If no monthly found, use any Friday after weekly
     if len(selected) < 3:
         for exp in expirations:
             if exp not in used_dates:
-                selected.append(("EXTRA_EXP", exp))
-                used_dates.add(exp)
-                if len(selected) == 3:
-                    break
+                selected.append(("MONTHLY", exp))
+                break
     
     return selected
 
@@ -180,13 +203,19 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
 def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
     """
     Scarica tutti i dati per un singolo simbolo.
+    
+    Args:
+        symbol: Simbolo normalizzato (SPY, QQQ, SPX, NDX)
     """
+    # Converte il simbolo nel formato yfinance
+    yf_symbol = SYMBOL_MAP.get(symbol.upper(), symbol.upper())
+    
     logger.info(f"\n{'='*50}")
-    logger.info(f"  Elaborazione: {symbol}")
+    logger.info(f"  Elaborazione: {symbol} (yfinance: {yf_symbol})")
     logger.info(f"{'='*50}")
     
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = yf.Ticker(yf_symbol)
         
         # Recupera spot price
         logger.info("[1/3] Recupero prezzo spot...")
@@ -214,14 +243,20 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
         for label, date in selected:
             data = fetch_options_chain(ticker, date, label)
             if data:
-                expiries.append(asdict(data))
+                # Converti a dict e aggiungi quantMetrics
+                expiry_dict = asdict(data)
+                # Calcola metriche quantitative
+                expiry_dict['quantMetrics'] = calculate_quant_metrics(
+                    expiry_dict['options'], spot, date
+                )
+                expiries.append(expiry_dict)
         
         if not expiries:
             logger.error(f"❌ Nessun dato scaricato per {symbol}")
             return None
         
         return OptionsDataset(
-            symbol=symbol,
+            symbol=symbol,  # Usa il simbolo originale (senza ^)
             spot=round(spot, 2),
             generated=datetime.now().isoformat(),
             expiries=expiries
@@ -230,34 +265,6 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
     except Exception as e:
         logger.error(f"❌ Errore generale per {symbol}: {e}")
         return None
-
-
-def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float) -> Optional[float]:
-    """
-    Calcola il livello di gamma flip basato sulla distribuzione di OI.
-    Il gamma flip è il livello dove la gamma netta passa da positiva a negativa.
-    Semplificato: media ponderata degli strike per OI delle put sotto spot vs call sopra spot.
-    """
-    try:
-        put_strikes_oi = [(opt['strike'], opt['oi']) for opt in options
-                          if opt['side'] == 'PUT' and opt['strike'] < spot and opt['oi'] > 0]
-        call_strikes_oi = [(opt['strike'], opt['oi']) for opt in options
-                           if opt['side'] == 'CALL' and opt['strike'] > spot and opt['oi'] > 0]
-        
-        if not put_strikes_oi and not call_strikes_oi:
-            return round(spot, 2)
-        
-        # Calcola media ponderata
-        total_oi = sum(oi for _, oi in put_strikes_oi + call_strikes_oi)
-        if total_oi == 0:
-            return round(spot, 2)
-        
-        weighted_sum = sum(strike * oi for strike, oi in put_strikes_oi + call_strikes_oi)
-        gamma_flip = weighted_sum / total_oi
-        
-        return round(gamma_flip, 2)
-    except Exception:
-        return round(spot, 2)
 
 
 def calculate_walls(options: List[Dict[str, Any]], spot: float, top_n: int = 3) -> Dict[str, List[float]]:
@@ -306,8 +313,11 @@ def generate_tradingview_levels(all_data: Dict[str, Any]) -> Dict[str, Any]:
         if not options or spot == 0:
             continue
         
-        # Calcola livelli
-        gamma_flip = calculate_gamma_flip(options, spot)
+        # Usa i quantMetrics già calcolati se disponibili
+        quant_metrics = first_expiry.get("quantMetrics", {})
+        gamma_flip = quant_metrics.get("gamma_flip", spot)
+        
+        # Calcola walls
         walls = calculate_walls(options, spot, top_n=3)
         
         tv_data["symbols"][symbol] = {
@@ -346,12 +356,282 @@ def generate_legacy_content(dataset: OptionsDataset) -> Dict[str, str]:
     return legacy_datasets
 
 
-# Simboli supportati per TradingView (ETF comuni)
-TV_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'GLD', 'TLT']
+# Simboli supportati - ETF e Indici
+# SPY, QQQ: ETF
+# SPX, NDX: Indici (richiedono prefisso ^ in yfinance)
+ALL_SYMBOLS = ['SPY', 'QQQ', 'SPX', 'NDX']
+
+# Symbol mapping per yfinance
+SYMBOL_MAP: Dict[str, str] = {
+    'SPY': 'SPY',    # ETF - no change
+    'QQQ': 'QQQ',    # ETF - no change
+    'SPX': '^SPX',   # S&P 500 Index - requires caret
+    'NDX': '^NDX',   # Nasdaq 100 Index - requires caret
+}
 
 # Rate limiting: pausa tra simboli per evitare blocchi di yfinance
 import time
 RATE_LIMIT_DELAY = 2  # secondi tra un simbolo e l'altro
+
+
+# ============================================================================
+# FUNZIONI PER CALCOLO METRICHE QUANTITATIVE
+# ============================================================================
+
+def calculate_black_scholes_gamma(spot: float, strike: float, T: float, r: float, iv: float) -> float:
+    """
+    Calcola la gamma usando Black-Scholes.
+    
+    Args:
+        spot: Prezzo corrente dell'underlying
+        strike: Strike price
+        T: Time to expiry in years
+        r: Risk-free rate
+        iv: Implied volatility
+    
+    Returns:
+        Gamma value
+    """
+    if iv <= 0 or T <= 0 or spot <= 0:
+        return 0.0
+    
+    try:
+        d1 = (math.log(spot / strike) + (r + 0.5 * iv ** 2) * T) / (iv * math.sqrt(T))
+        gamma = math.exp(-0.5 * d1 ** 2) / (spot * iv * math.sqrt(2 * math.pi * T))
+        return gamma
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def calculate_total_gex(options: List[Dict[str, Any]], spot: float, T: float, r: float = 0.05) -> float:
+    """
+    Calcola il Gamma Exposure totale.
+    
+    Call GEX = +gamma * OI * 100 * spot^2 * 0.01
+    Put GEX = -gamma * OI * 100 * spot^2 * 0.01
+    
+    Returns:
+        Total GEX in billions
+    """
+    total_gex = 0.0
+    
+    for opt in options:
+        oi = opt.get('oi', 0)
+        iv = opt.get('iv', 0.3)  # Default IV if not available
+        strike = opt.get('strike', 0)
+        
+        if oi <= 0 or strike <= 0:
+            continue
+        
+        gamma = calculate_black_scholes_gamma(spot, strike, T, r, iv)
+        gex = gamma * oi * 100 * spot * spot * 0.01
+        
+        # Call GEX is positive, Put GEX is negative
+        if opt.get('side') == 'PUT':
+            gex = -gex
+        
+        total_gex += gex
+    
+    return total_gex / 1e9  # Convert to billions
+
+
+def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r: float = 0.05) -> float:
+    """
+    Trova lo strike dove il GEX cumulativo passa da positivo a negativo.
+    
+    Returns:
+        Strike price dove avviene il gamma flip
+    """
+    # Raggruppa opzioni per strike
+    strikes_data: Dict[float, Dict] = {}
+    
+    for opt in options:
+        strike = opt.get('strike', 0)
+        if strike <= 0:
+            continue
+        
+        if strike not in strikes_data:
+            strikes_data[strike] = {'call_oi': 0, 'put_oi': 0, 'call_iv': 0.3, 'put_iv': 0.3}
+        
+        if opt.get('side') == 'CALL':
+            strikes_data[strike]['call_oi'] = opt.get('oi', 0)
+            strikes_data[strike]['call_iv'] = opt.get('iv', 0.3)
+        else:
+            strikes_data[strike]['put_oi'] = opt.get('oi', 0)
+            strikes_data[strike]['put_iv'] = opt.get('iv', 0.3)
+    
+    if not strikes_data:
+        return round(spot, 2)
+    
+    # Calcola GEX cumulativo per strike
+    cumulative_gex = 0.0
+    gex_by_strike = []
+    
+    for strike in sorted(strikes_data.keys()):
+        data = strikes_data[strike]
+        
+        call_gamma = calculate_black_scholes_gamma(spot, strike, T, r, data['call_iv'])
+        put_gamma = calculate_black_scholes_gamma(spot, strike, T, r, data['put_iv'])
+        
+        call_gex = call_gamma * data['call_oi'] * 100 * spot * spot * 0.01
+        put_gex = -put_gamma * data['put_oi'] * 100 * spot * spot * 0.01
+        
+        gex = (call_gex + put_gex) / 1e9
+        cumulative_gex += gex
+        gex_by_strike.append((strike, cumulative_gex))
+    
+    # Trova il flip point
+    gamma_flip = spot  # Default
+    for i in range(1, len(gex_by_strike)):
+        prev_gex = gex_by_strike[i-1][1]
+        curr_gex = gex_by_strike[i][1]
+        
+        # Se il segno cambia, abbiamo un flip
+        if prev_gex * curr_gex < 0:
+            # Interpolazione lineare
+            prev_strike = gex_by_strike[i-1][0]
+            curr_strike = gex_by_strike[i][0]
+            gamma_flip = (prev_strike + curr_strike) / 2
+            break
+    
+    return round(gamma_flip, 2)
+
+
+def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
+    """
+    Calcola il Max Pain - lo strike dove la perdita totale per option buyers è massima.
+    
+    Per ogni strike, calcola il valore totale delle opzioni alla scadenza.
+    Il Max Pain è lo strike con valore minimo (max loss per buyers).
+    
+    Returns:
+        Strike price del max pain
+    """
+    if not options:
+        return round(spot, 2)
+    
+    # Raggruppa per strike
+    strikes_data: Dict[float, Dict] = {}
+    
+    for opt in options:
+        strike = opt.get('strike', 0)
+        if strike <= 0:
+            continue
+        
+        if strike not in strikes_data:
+            strikes_data[strike] = {'call_oi': 0, 'put_oi': 0}
+        
+        if opt.get('side') == 'CALL':
+            strikes_data[strike]['call_oi'] = opt.get('oi', 0)
+        else:
+            strikes_data[strike]['put_oi'] = opt.get('oi', 0)
+    
+    if not strikes_data:
+        return round(spot, 2)
+    
+    # Testa ogni strike come possibile prezzo alla scadenza
+    test_strikes = sorted(strikes_data.keys())
+    min_value = float('inf')
+    max_pain = spot
+    
+    for test_strike in test_strikes:
+        total_value = 0
+        
+        for strike, data in strikes_data.items():
+            # Call value at expiration = max(0, test_strike - strike) * call_oi
+            call_value = max(0, test_strike - strike) * data['call_oi']
+            # Put value at expiration = max(0, strike - test_strike) * put_oi
+            put_value = max(0, strike - test_strike) * data['put_oi']
+            total_value += (call_value + put_value) * 100  # Contract multiplier
+        
+        if total_value < min_value:
+            min_value = total_value
+            max_pain = test_strike
+    
+    return round(max_pain, 2)
+
+
+def calculate_skew_type(options: List[Dict[str, Any]], spot: float) -> str:
+    """
+    Determina il tipo di skew confrontando OI di calls vs puts ATM.
+    
+    ATM è definito come spot ± 2%.
+    
+    Returns:
+        "CALL" se call_OI > put_OI * 1.2
+        "PUT" se put_OI > call_OI * 1.2
+        "NEUTRAL" altrimenti
+    """
+    lower_bound = spot * 0.98
+    upper_bound = spot * 1.02
+    
+    call_oi_atm = 0
+    put_oi_atm = 0
+    
+    for opt in options:
+        strike = opt.get('strike', 0)
+        if lower_bound <= strike <= upper_bound:
+            if opt.get('side') == 'CALL':
+                call_oi_atm += opt.get('oi', 0)
+            else:
+                put_oi_atm += opt.get('oi', 0)
+    
+    if call_oi_atm == 0 and put_oi_atm == 0:
+        return "NEUTRAL"
+    
+    if call_oi_atm > put_oi_atm * 1.2:
+        return "CALL"
+    elif put_oi_atm > call_oi_atm * 1.2:
+        return "PUT"
+    else:
+        return "NEUTRAL"
+
+
+def calculate_time_to_expiry(expiry_date: str) -> float:
+    """
+    Calcola il time to expiry in anni dalla data odierna.
+    
+    Args:
+        expiry_date: Data di scadenza in formato 'YYYY-MM-DD'
+    
+    Returns:
+        Time to expiry in anni (minimo 1/365 per evitare divisioni per zero)
+    """
+    try:
+        expiry = datetime.strptime(expiry_date, '%Y-%m-%d')
+        now = datetime.now()
+        days = max((expiry - now).days, 1)
+        return days / 365.0
+    except ValueError:
+        return 1 / 365.0  # Default 1 giorno
+
+
+def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_date: str) -> Dict[str, Any]:
+    """
+    Calcola tutte le metriche quantitative per una expiry.
+    
+    Returns:
+        {
+            "gamma_flip": float,
+            "max_pain": float,
+            "total_gex": float,
+            "skew_type": str
+        }
+    """
+    T = calculate_time_to_expiry(expiry_date)
+    r = 0.05  # Risk-free rate assumption
+    
+    gamma_flip = calculate_gamma_flip(options, spot, T, r)
+    max_pain = calculate_max_pain(options, spot)
+    total_gex = calculate_total_gex(options, spot, T, r)
+    skew_type = calculate_skew_type(options, spot)
+    
+    return {
+        "gamma_flip": gamma_flip,
+        "max_pain": max_pain,
+        "total_gex": round(total_gex, 6),
+        "skew_type": skew_type
+    }
 
 
 def main():
@@ -362,7 +642,7 @@ def main():
         '--symbol',
         type=str,
         default='SPY',
-        help='Simbolo da scaricare (SPY, QQQ, ^SPX, ^NDX, o ALL)'
+        help='Simbolo da scaricare (SPY, QQQ, SPX, NDX, o ALL)'
     )
     parser.add_argument(
         '--output',
@@ -392,18 +672,28 @@ def main():
     
     # Determina simboli da processare
     if args.symbols:
-        symbols = args.symbols
+        symbols = [s.upper() for s in args.symbols]
     elif args.symbol.upper() == 'ALL':
-        # Usa la lista estesa per TradingView
-        symbols = TV_SYMBOLS
-    elif args.symbol.upper() == 'TV':
-        # Alias per i simboli TradingView
-        symbols = TV_SYMBOLS
+        # Usa i 4 simboli principali: ETF + Indici
+        symbols = ALL_SYMBOLS
     else:
         symbols = [args.symbol.upper()]
     
+    # Valida simboli
+    valid_symbols = []
+    for s in symbols:
+        if s in SYMBOL_MAP or s in ['SPY', 'QQQ', 'SPX', 'NDX']:
+            valid_symbols.append(s)
+        else:
+            logger.warning(f"⚠️ Simbolo non supportato: {s}, verrà saltato")
+    symbols = valid_symbols
+    
+    if not symbols:
+        logger.error("❌ Nessun simbolo valido specificato")
+        sys.exit(1)
+    
     logger.info(f"\n{'#'*60}")
-    logger.info("# QUANT SMART SWEEP v14.0 - GitHub Actions Edition")
+    logger.info("# QUANT SMART SWEEP v15.0 - GitHub Actions Edition")
     logger.info(f"{'#'*60}")
     logger.info(f"Simboli: {symbols}")
     logger.info(f"Output: {args.output}")
@@ -411,7 +701,7 @@ def main():
     
     # Scarica dati per ogni simbolo
     all_data = {
-        "version": "14.0",
+        "version": "2.0",
         "generated": datetime.now().isoformat(),
         "symbols": {}
     }

@@ -3,7 +3,8 @@
   "outputDirectory": "dist",
   "rewrites": [
     { "source": "/api", "destination": "/api/index" },
-    { "source": "/api/", "destination": "/api/index" }
+    { "source": "/api/", "destination": "/api/index" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
@@ -12,6 +13,12 @@
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, OPTIONS" },
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
+      ]
+    },
+    {
+      "source": "/data/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=1800, s-maxage=1800" }
       ]
     }
   ]

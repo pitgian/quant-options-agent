@@ -4,9 +4,26 @@ import { getAnalysis, getChat } from './services/aiService';
 import { AnalysisLevel, ChatMessage, DailyOutlook, MarketDataset } from './types';
 import { QuantPanel } from './components/QuantPanel';
 import { ChatPanel } from './components/ChatPanel';
+import { VercelView } from './components/VercelView';
 import { Content } from '@google/genai';
 
+/**
+ * Detects if the app is running in local development mode
+ * Returns true for localhost or 127.0.0.1, false for production (Vercel)
+ */
+const isLocalDevelopment = (): boolean => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    return hostname === 'localhost' || hostname === '127.0.0.1';
+  }
+  return false;
+};
+
 const App: React.FC = () => {
+  // Vercel production: show only levels visualization
+  if (!isLocalDevelopment()) {
+    return <VercelView />;
+  }
   const [datasets, setDatasets] = useState<MarketDataset[]>([]);
   const [currentPrice, setCurrentPrice] = useState<string>('');
   const [analysisResult, setAnalysisResult] = useState<AnalysisLevel[] | null>(null);
