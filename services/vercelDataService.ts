@@ -17,7 +17,7 @@ import { SymbolData, ExpiryData } from '../types';
  * GitHub Raw URL for the options data JSON file.
  * Replace [USER] and [REPO] with actual values when deploying.
  */
-const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/main/data/options_data.json';
+const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/master/data/options_data.json';
 
 /**
  * Cache duration in milliseconds (30 minutes).
