@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
+from scipy.stats import norm
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -84,6 +85,48 @@ class GammaWall(BaseModel):
     gamma: float
 
 
+class GEXData(BaseModel):
+    """Gamma exposure data per strike."""
+    strike: float
+    gex: float  # in billions
+    cumulative_gex: float
+
+
+class VolOIAnalysis(BaseModel):
+    """Volume/Open Interest analysis for unusual activity."""
+    call_vol_oi_ratio: float
+    put_vol_oi_ratio: float
+    call_unusual_activity: bool
+    put_unusual_activity: bool
+
+
+class PutCallRatios(BaseModel):
+    """Multiple PCR variants."""
+    oi_based: float
+    volume_based: float
+    weighted: float
+    delta_adjusted: float
+
+
+class VolatilitySkew(BaseModel):
+    """Volatility skew analysis."""
+    put_iv_avg: float
+    call_iv_avg: float
+    skew_ratio: float
+    skew_type: str  # 'smirk', 'reverse_smirk', 'flat'
+    sentiment: str  # 'bearish', 'bullish', 'neutral'
+
+
+class QuantMetrics(BaseModel):
+    """Quantitative metrics for options analysis."""
+    gamma_flip: float
+    total_gex: float
+    max_pain: float
+    put_call_ratios: PutCallRatios
+    volatility_skew: VolatilitySkew
+    gex_by_strike: List[GEXData] = []
+
+
 class ExpiryData(BaseModel):
     """Data for a single expiry."""
     expiryDate: str
@@ -93,6 +136,7 @@ class ExpiryData(BaseModel):
     gammaFlip: Optional[float] = None
     callWalls: List[GammaWall] = []
     putWalls: List[GammaWall] = []
+    quantMetrics: Optional[QuantMetrics] = None
 
 
 class MultiExpiryOptionsResponse(BaseModel):
@@ -228,6 +272,299 @@ def safe_float(value, default=0.0) -> float:
         return result
     except (ValueError, TypeError):
         return default
+
+
+# ============================================================================
+# QUANTITATIVE ANALYSIS FUNCTIONS
+# ============================================================================
+
+def calculate_black_scholes_gamma(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    """
+    Calculate Black-Scholes gamma.
+    
+    Args:
+        S: Spot price
+        K: Strike price
+        T: Time to expiration in years
+        r: Risk-free rate
+        sigma: Implied volatility
+    
+    Returns:
+        Gamma value
+    """
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    try:
+        d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+        return norm.pdf(d1) / (S * sigma * math.sqrt(T))
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def calculate_gex_per_strike(strike: float, call_oi: float, put_oi: float,
+                              spot: float, T: float, r: float,
+                              call_iv: float, put_iv: float) -> float:
+    """
+    Calculate gamma exposure for a single strike in $ billions.
+    
+    Dealer gamma is long calls, short puts (typically).
+    """
+    call_gamma = calculate_black_scholes_gamma(spot, strike, T, r, call_iv) if call_iv > 0 else 0
+    put_gamma = calculate_black_scholes_gamma(spot, strike, T, r, put_iv) if put_iv > 0 else 0
+    
+    # Dealer gamma is long calls, short puts (typically)
+    call_gex = call_gamma * call_oi * 100 * spot * spot * 0.01
+    put_gex = -put_gamma * put_oi * 100 * spot * spot * 0.01  # Negative for puts
+    
+    return (call_gex + put_gex) / 1e9  # Convert to billions
+
+
+def find_gamma_flip_strike(strikes_data: List[Dict], spot: float, T: float, r: float) -> Tuple[float, List[GEXData]]:
+    """
+    Find the strike where cumulative GEX flips from positive to negative.
+    
+    Returns:
+        Tuple of (gamma_flip_strike, list of GEX data by strike)
+    """
+    cumulative_gex = 0
+    gex_by_strike = []
+    
+    for strike_data in sorted(strikes_data, key=lambda x: x['strike']):
+        gex = calculate_gex_per_strike(
+            strike_data['strike'],
+            strike_data.get('call_oi', 0),
+            strike_data.get('put_oi', 0),
+            spot, T, r,
+            strike_data.get('call_iv', 0.3),
+            strike_data.get('put_iv', 0.3)
+        )
+        cumulative_gex += gex
+        gex_by_strike.append(GEXData(
+            strike=strike_data['strike'],
+            gex=round(gex, 6),
+            cumulative_gex=round(cumulative_gex, 6)
+        ))
+    
+    # Find flip point
+    gamma_flip = spot  # Default to spot
+    for i, gex_data in enumerate(gex_by_strike):
+        if i > 0 and gex_by_strike[i-1].cumulative_gex * gex_data.cumulative_gex < 0:
+            gamma_flip = gex_data.strike
+            break
+    
+    return gamma_flip, gex_by_strike
+
+
+def calculate_max_pain(strikes_data: List[Dict], spot: float) -> float:
+    """
+    Calculate max pain - strike where total option value is minimized.
+    
+    This is the price at which option holders (buyers) have the most loss,
+    and option writers (sellers) have the most gain.
+    """
+    if not strikes_data:
+        return spot
+    
+    min_value = float('inf')
+    max_pain = spot
+    
+    test_strikes = [s['strike'] for s in strikes_data]
+    
+    for test_strike in test_strikes:
+        total_value = 0
+        for s in strikes_data:
+            # Call value at expiration = max(0, test_strike - strike) * call_oi
+            call_value = max(0, test_strike - s['strike']) * s.get('call_oi', 0)
+            # Put value at expiration = max(0, strike - test_strike) * put_oi
+            put_value = max(0, s['strike'] - test_strike) * s.get('put_oi', 0)
+            total_value += (call_value + put_value) * 100  # Contract multiplier
+        
+        if total_value < min_value:
+            min_value = total_value
+            max_pain = test_strike
+    
+    return max_pain
+
+
+def analyze_volume_oi_ratio(strikes_data: List[Dict]) -> List[VolOIAnalysis]:
+    """
+    Analyze Volume/OI ratio for unusual activity detection.
+    
+    A ratio > 1.5 is considered unusual (more volume than existing open interest).
+    """
+    analyses = []
+    for strike_data in strikes_data:
+        call_oi = strike_data.get('call_oi', 0)
+        put_oi = strike_data.get('put_oi', 0)
+        call_vol = strike_data.get('call_volume', 0)
+        put_vol = strike_data.get('put_volume', 0)
+        
+        # Calculate ratios (handle division by zero)
+        call_vol_oi_ratio = call_vol / call_oi if call_oi > 0 else 0.0
+        put_vol_oi_ratio = put_vol / put_oi if put_oi > 0 else 0.0
+        
+        # Flag unusual activity (>1.5 is considered unusual)
+        call_unusual = call_vol_oi_ratio > 1.5
+        put_unusual = put_vol_oi_ratio > 1.5
+        
+        analyses.append(VolOIAnalysis(
+            call_vol_oi_ratio=round(call_vol_oi_ratio, 2),
+            put_vol_oi_ratio=round(put_vol_oi_ratio, 2),
+            call_unusual_activity=call_unusual,
+            put_unusual_activity=put_unusual
+        ))
+    
+    return analyses
+
+
+def calculate_weighted_pcr(strikes_data: List[Dict]) -> float:
+    """Volume-weighted Put/Call Ratio."""
+    weighted_put = sum(s.get('put_oi', 0) * s.get('put_volume', 1) for s in strikes_data)
+    weighted_call = sum(s.get('call_oi', 0) * s.get('call_volume', 1) for s in strikes_data)
+    return weighted_put / weighted_call if weighted_call > 0 else 0.0
+
+
+def calculate_delta_adjusted_pcr(strikes_data: List[Dict], spot: float) -> float:
+    """Delta-adjusted PCR using moneyness approximation."""
+    # OTM puts have strikes below spot
+    total_put_delta = sum(
+        min(1, s.get('put_oi', 0) / 1000)
+        for s in strikes_data
+        if s.get('strike', 0) < spot
+    )
+    # OTM calls have strikes above spot
+    total_call_delta = sum(
+        min(1, s.get('call_oi', 0) / 1000)
+        for s in strikes_data
+        if s.get('strike', 0) > spot
+    )
+    return total_put_delta / total_call_delta if total_call_delta > 0 else 0.0
+
+
+def calculate_put_call_ratios(strikes_data: List[Dict], spot: float) -> PutCallRatios:
+    """Calculate multiple PCR variants for comprehensive analysis."""
+    total_call_oi = sum(s.get('call_oi', 0) for s in strikes_data)
+    total_put_oi = sum(s.get('put_oi', 0) for s in strikes_data)
+    total_call_vol = sum(s.get('call_volume', 0) for s in strikes_data)
+    total_put_vol = sum(s.get('put_volume', 0) for s in strikes_data)
+    
+    return PutCallRatios(
+        oi_based=round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0.0,
+        volume_based=round(total_put_vol / total_call_vol, 3) if total_call_vol > 0 else 0.0,
+        weighted=round(calculate_weighted_pcr(strikes_data), 3),
+        delta_adjusted=round(calculate_delta_adjusted_pcr(strikes_data, spot), 3)
+    )
+
+
+def analyze_volatility_skew(strikes_data: List[Dict], spot: float) -> VolatilitySkew:
+    """
+    Analyze IV skew for sentiment indication.
+    
+    - Smirk (put skew): Fear - puts more expensive, bearish sentiment
+    - Reverse smirk (call skew): Calls more expensive, bullish sentiment
+    - Flat: Balanced market
+    """
+    # OTM puts: strikes below 95% of spot
+    otm_puts = [s for s in strikes_data if s['strike'] < spot * 0.95]
+    # OTM calls: strikes above 105% of spot
+    otm_calls = [s for s in strikes_data if s['strike'] > spot * 1.05]
+    
+    avg_put_iv = sum(s.get('put_iv', 0) for s in otm_puts) / len(otm_puts) if otm_puts else 0.0
+    avg_call_iv = sum(s.get('call_iv', 0) for s in otm_calls) / len(otm_calls) if otm_calls else 0.0
+    
+    skew_ratio = avg_put_iv / avg_call_iv if avg_call_iv > 0 else 1.0
+    
+    # Classify skew
+    if skew_ratio > 1.2:
+        skew_type = "smirk"  # Fear - puts more expensive
+        sentiment = "bearish"
+    elif skew_ratio < 0.9:
+        skew_type = "reverse_smirk"  # Calls more expensive
+        sentiment = "bullish"
+    else:
+        skew_type = "flat"  # Balanced
+        sentiment = "neutral"
+    
+    return VolatilitySkew(
+        put_iv_avg=round(avg_put_iv, 4),
+        call_iv_avg=round(avg_call_iv, 4),
+        skew_ratio=round(skew_ratio, 3),
+        skew_type=skew_type,
+        sentiment=sentiment
+    )
+
+
+def calculate_quant_metrics(calls: List[OptionContract], puts: List[OptionContract],
+                            spot: float, expiry_date: str) -> QuantMetrics:
+    """
+    Calculate all quantitative metrics for an expiry.
+    
+    Args:
+        calls: List of call option contracts
+        puts: List of put option contracts
+        spot: Current spot price
+        expiry_date: Expiration date string (YYYY-MM-DD)
+    
+    Returns:
+        QuantMetrics object with all calculated metrics
+    """
+    # Calculate time to expiration in years
+    try:
+        expiry_dt = datetime.strptime(expiry_date, '%Y-%m-%d')
+        now = datetime.now()
+        T = max((expiry_dt - now).days / 365.0, 0.0001)  # Minimum 1 day for calculations
+    except ValueError:
+        T = 0.01  # Default to ~3.5 days
+    
+    r = 0.05  # Risk-free rate assumption (5%)
+    
+    # Build strikes data structure
+    strikes_map: Dict[float, Dict] = {}
+    
+    for call in calls:
+        if call.strike not in strikes_map:
+            strikes_map[call.strike] = {'strike': call.strike}
+        strikes_map[call.strike]['call_oi'] = call.openInterest or 0
+        strikes_map[call.strike]['call_volume'] = call.volume or 0
+        strikes_map[call.strike]['call_iv'] = call.impliedVolatility
+    
+    for put in puts:
+        if put.strike not in strikes_map:
+            strikes_map[put.strike] = {'strike': put.strike}
+        strikes_map[put.strike]['put_oi'] = put.openInterest or 0
+        strikes_map[put.strike]['put_volume'] = put.volume or 0
+        strikes_map[put.strike]['put_iv'] = put.impliedVolatility
+    
+    strikes_data = list(strikes_map.values())
+    
+    # Calculate GEX and gamma flip
+    gamma_flip, gex_by_strike = find_gamma_flip_strike(strikes_data, spot, T, r)
+    
+    # Calculate total GEX
+    total_gex = sum(g.gex for g in gex_by_strike)
+    
+    # Calculate max pain
+    max_pain = calculate_max_pain(strikes_data, spot)
+    
+    # Calculate put/call ratios
+    put_call_ratios = calculate_put_call_ratios(strikes_data, spot)
+    
+    # Analyze volatility skew
+    volatility_skew = analyze_volatility_skew(strikes_data, spot)
+    
+    return QuantMetrics(
+        gamma_flip=round(gamma_flip, 2),
+        total_gex=round(total_gex, 4),
+        max_pain=round(max_pain, 2),
+        put_call_ratios=put_call_ratios,
+        volatility_skew=volatility_skew,
+        gex_by_strike=gex_by_strike[:50]  # Limit to 50 strikes for response size
+    )
+
+
+# ============================================================================
+# END QUANTITATIVE ANALYSIS FUNCTIONS
+# ============================================================================
 
 
 def process_option_chain(chain, side: str, current_price: float) -> List[OptionContract]:
@@ -441,11 +778,20 @@ async def get_options(
             calls = process_option_chain(option_chain, "CALL", current_price)
             puts = process_option_chain(option_chain, "PUT", current_price)
             
-            # Calculate gamma exposure
+            # Calculate gamma exposure (legacy method)
             all_options = calls + puts
             gamma_flip, call_walls, put_walls = calculate_gamma_exposure(
                 all_options, "ALL", current_price
             )
+            
+            # Calculate advanced quantitative metrics
+            try:
+                quant_metrics = calculate_quant_metrics(calls, puts, current_price, exp_date)
+                logger.info(f"Quant metrics for {label}: gamma_flip={quant_metrics.gamma_flip}, "
+                           f"max_pain={quant_metrics.max_pain}, total_gex={quant_metrics.total_gex}")
+            except Exception as e:
+                logger.warning(f"Failed to calculate quant metrics for {label}: {e}")
+                quant_metrics = None
             
             expiry_data = ExpiryData(
                 expiryDate=exp_date,
@@ -454,7 +800,8 @@ async def get_options(
                 puts=puts,
                 gammaFlip=gamma_flip,
                 callWalls=call_walls,
-                putWalls=put_walls
+                putWalls=put_walls,
+                quantMetrics=quant_metrics
             )
             
             expiry_data_list.append(expiry_data)

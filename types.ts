@@ -6,7 +6,7 @@ export interface AnalysisLevel {
   sintesiOperativa: string; // Nuova descrizione operativa rapida
   colore: 'rosso' | 'verde' | 'indigo' | 'ambra';
   importanza: number; 
-  ruolo: 'WALL' | 'PIVOT' | 'MAGNET' | 'FRICTION' | 'CONFLUENCE';
+  ruolo: 'WALL' | 'PIVOT' | 'MAGNET' | 'FRICTION' | 'CONFLUENCE' | 'RESONANCE';
   isDayTrade: boolean;
   scadenzaTipo?: string;
   lato: 'CALL' | 'PUT' | 'BOTH' | 'GAMMA_FLIP';
@@ -24,6 +24,7 @@ export interface MarketDataset {
   name: string;
   content: string;
   type: '0DTE' | 'WEEKLY' | 'MONTHLY' | 'OTHER';
+  quantMetrics?: QuantMetrics;
 }
 
 export interface AnalysisResponse {
@@ -82,6 +83,7 @@ export interface ExpiryData {
   label: string;
   date: string;
   options: OptionData[];
+  quantMetrics?: QuantMetrics;
 }
 
 export interface LegacyExpiryContent {
@@ -116,4 +118,60 @@ export interface FetchResult {
   data?: OptionsDataResponse;
   error?: string;
   fromCache?: boolean;
+}
+
+// ============================================================================
+// QUANTITATIVE METRICS TYPES
+// ============================================================================
+
+/**
+ * Gamma exposure data per strike
+ */
+export interface GEXData {
+  strike: number;
+  gex: number;  // in billions
+  cumulative_gex: number;
+}
+
+/**
+ * Volume/Open Interest analysis for unusual activity detection
+ */
+export interface VolOIAnalysis {
+  call_vol_oi_ratio: number;
+  put_vol_oi_ratio: number;
+  call_unusual_activity: boolean;
+  put_unusual_activity: boolean;
+}
+
+/**
+ * Multiple Put/Call Ratio variants
+ */
+export interface PutCallRatios {
+  oi_based: number;
+  volume_based: number;
+  weighted: number;
+  delta_adjusted: number;
+}
+
+/**
+ * Volatility skew analysis for sentiment indication
+ */
+export interface VolatilitySkew {
+  put_iv_avg: number;
+  call_iv_avg: number;
+  skew_ratio: number;
+  skew_type: 'smirk' | 'reverse_smirk' | 'flat';
+  sentiment: 'bearish' | 'bullish' | 'neutral';
+}
+
+/**
+ * Comprehensive quantitative metrics for options analysis
+ */
+export interface QuantMetrics {
+  gamma_flip: number;
+  total_gex: number;
+  max_pain: number;
+  put_call_ratios: PutCallRatios;
+  volatility_skew: VolatilitySkew;
+  gex_by_strike: GEXData[];
 }

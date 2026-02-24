@@ -282,7 +282,8 @@ const parseSymbolsFormat = (symbols: Record<string, SymbolData>): { datasets: Ma
           id: `symbols-${symbol}-${expiry.label}-${expiry.date}`,
           name: `${symbol} - ${expiry.label} (${expiry.date})`,
           content: lines.join('\n'),
-          type: expiryType
+          type: expiryType,
+          quantMetrics: expiry.quantMetrics // Pass through quantitative metrics
         });
       }
     }
@@ -553,7 +554,9 @@ export const fetchFromBackend = async (
             oi: p.openInterest || 0,
             vol: p.volume || 0
           }))
-        ]
+        ],
+        // Include quantitative metrics if available
+        quantMetrics: exp.quantMetrics || undefined
       }));
       
       const symbolData: SymbolData = {

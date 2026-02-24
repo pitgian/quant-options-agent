@@ -1,6 +1,6 @@
 
 import React, { useRef, useMemo, useState, useEffect, useCallback } from 'react';
-import { AnalysisLevel, DailyOutlook, MarketDataset } from '../types';
+import { AnalysisLevel, DailyOutlook, MarketDataset, QuantMetrics } from '../types';
 import { IconAnalyze, IconLoader, IconUpload } from './Icons';
 import { PythonBridge } from './PythonBridge';
 import {
@@ -36,7 +36,316 @@ interface QuantPanelProps {
   analysisResult: AnalysisLevel[] | null;
   dailyOutlook: DailyOutlook | null;
   onLevelClick: (level: AnalysisLevel) => void;
+  quantMetrics?: QuantMetrics | null;
 }
+
+// Tooltip explanations (Italian) - Clear and actionable
+const TOOLTIPS = {
+  gammaFlip: `Gamma Flip - Punto di inversione gamma
+
+COS'È: Il prezzo dove l'esposizione gamma cumulativa passa da positiva a negativa.
+
+COME USARLO:
+• Se prezzo > Gamma Flip: dealer comprano su rally (supporto rialzista)
+• Se prezzo < Gamma Flip: dealer vendono su drop (pressione ribassista)
+• Più vicino al prezzo attuale = maggiore probabilità di movimento direzionale
+
+STRATEGIA: Livello chiave per capire la direzione del mercato. Se siamo vicini, attendi una mossa forte.`,
+
+  totalGex: `Total GEX - Esposizione Gamma Totale
+
+COS'È: Somma di tutta l'esposizione gamma dei dealer in miliardi di dollari.
+
+COME USARLO:
+• GEX > 0 (positivo): Mercato stabile, dealer assorbono volatilità
+• GEX < 0 (negativo): Mercato volatile, dealer amplificano movimenti
+• |GEX| > 5B = impatto significativo
+
+STRATEGIA: GEX negativo = evita posizioni large, usa stop loss stretti. GEX positivo = puoi essere più aggressivo.`,
+
+  maxPain: `Max Pain - Dolore Massimo per i Trader
+
+COS'È: Lo strike price dove il valore totale delle opzioni in scadenza è minimo = massima perdita per chi compra opzioni.
+
+COME USARLO:
+• I market maker spingono il prezzo verso questo livello
+• Distanza < 2% dal spot = forte attrazione magnetica
+• Max Pain vicino a supporto/resistenza = livello molto importante
+
+STRATEGIA: Se il prezzo è lontano dal Max Pain, aspettati una mossa verso di esso. Usalo come target.`,
+
+  pcrOiBased: `Put/Call Ratio basato su Open Interest
+
+COS'È: Rapporto tra Put OI e Call OI. Misura il posizionamento delle posizioni aperte.
+
+COME USARLO:
+• PCR > 1.0 = sentimento ribassista (troppe put)
+• PCR < 0.7 = sentimento rialzista (troppe call)
+• PCR estremi (>1.5 o <0.5) = possibile inversione contrarian
+
+STRATEGIA: PCR molto alto = possibile rimbalzo (troppo pessimismo). PCR molto basso = possibile correzione.`,
+
+  pcrVolume: `Put/Call Ratio basato su Volume
+
+COS'È: Rapporto tra volume put e call di oggi. Misura l'attività di trading corrente.
+
+COME USARLO:
+• Volume PCR > OI PCR = aumento attività put (nuova paura)
+• Volume PCR < OI PCR = aumento attività call (nuovo ottimismo)
+• Cambiamenti rapidi = segnale di inversione
+
+STRATEGIA: Confronta con OI PCR. Se divergono, qualcosa sta cambiando nel sentiment.`,
+
+  pcrWeighted: `Put/Call Ratio Ponderato
+
+COS'È: PCR pesato per volume. Dà più peso alle opzioni con alta attività.
+
+COME USARLO:
+• Più sensibile alle opzioni ATM e near-term
+• Meno influenzato da opzioni illiquide
+• Migliore indicatore a breve termine
+
+STRATEGIA: Usalo per trading intraday. Reagisce più velocemente ai cambiamenti di sentiment.`,
+
+  pcrDeltaAdj: `Put/Call Ratio Aggiustato per Delta
+
+COS'È: PCR pesato per il delta delle opzioni. Considera la sensibilità al prezzo reale.
+
+COME USARLO:
+• Delta put ~ -0.3 a -0.5 = put OTM che diventano ITM
+• Più preciso per stimare hedging dei dealer
+• Valori alti = più protezione richiesta
+
+STRATEGIA: Il più sofisticato. Usalo per analisi professionale del rischio di mercato.`,
+
+  skewType: `Tipo di Volatility Skew
+
+COS'È: La forma della curva di volatilità implicita tra put e call OTM.
+
+COME USARLO:
+• SMIRK: Put costose = paura, supporto forte, mercato difensivo
+• REVERSE SMIRK: Call costose = euforia, resistenza debole, mercato aggressivo
+• FLAT: Equilibrio, mercato incerto
+
+STRATEGIA: Smirk = cerca supporti forti, compra dip. Reverse = vendi rally, resistenze deboli.`,
+
+  putIv: `Volatilità Implicita Media Put OTM
+
+COS'È: Media della IV delle put out-of-the-money. Misura il "prezzo della paura".
+
+COME USARLO:
+• IV put alta (>30%) = molta paura, possibile rimbalzo
+• IV put bassa (<20%) = compiacenza, rischio correzione
+• Confronta con storico per capire se è estrema
+
+STRATEGIA: IV put molto alta = opportunità di vendita put (premium alti). IV bassa = compra put per protezione economica.`,
+
+  callIv: `Volatilità Implicita Media Call OTM
+
+COS'È: Media della IV delle call out-of-the-money. Misura l'entusiasmo rialzista.
+
+COME USARLO:
+• IV call alta = molto entusiasmo, mercato "euphorico"
+• IV call bassa = poco interesse rialzista
+• Call IV > Put IV = sentimento molto rialzista (attenzione)
+
+STRATEGIA: IV call molto alta = vendi call (premium buoni). IV call bassa = compra call è economico.`,
+
+  skewRatio: `Skew Ratio - Rapporto IV Put/Call
+
+COS'È: Rapporto tra volatilità implicita media put e call OTM.
+
+COME USARLO:
+• Ratio > 1.2 = SKEW RIBASSISTA (put molto più care)
+• Ratio < 0.9 = SKEW RIALZISTA (call più care)
+• Ratio 0.9-1.2 = mercato equilibrato
+
+STRATEGIA: Ratio estremo (>1.3 o <0.8) = possibile inversione. Il mercato tende a mean-revertare.`
+};
+
+// Metric Label component with tooltip and question mark icon
+const MetricLabel: React.FC<{
+  label: string;
+  tooltip: string;
+  className?: string;
+}> = ({ label, tooltip, className = '' }) => (
+  <span
+    title={tooltip}
+    className={`cursor-help inline-flex items-center gap-1 ${className}`}
+  >
+    {label}
+    <span
+      className="text-[10px] text-gray-500 border border-gray-500 rounded-full w-3.5 h-3.5 inline-flex items-center justify-center font-bold hover:text-gray-300 hover:border-gray-300 transition-colors"
+      style={{ fontSize: '9px', flexShrink: 0 }}
+    >
+      ?
+    </span>
+  </span>
+);
+
+// Quantitative Metrics Display Component
+const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) => {
+  // Color coding helpers
+  const getGexColor = (gex: number) =>
+    gex >= 0 ? 'text-green-400' : 'text-red-400';
+  
+  const getPcrColor = (pcr: number) =>
+    pcr < 0.7 ? 'text-green-400' : pcr > 1.0 ? 'text-red-400' : 'text-yellow-400';
+  
+  const getSentimentColor = (sentiment: string) =>
+    sentiment === 'bullish' ? 'text-green-400' :
+    sentiment === 'bearish' ? 'text-red-400' : 'text-gray-400';
+
+  const formatGex = (gex: number) => {
+    const absVal = Math.abs(gex);
+    const sign = gex >= 0 ? '' : '-';
+    return `${sign}$${absVal.toFixed(2)}B`;
+  };
+
+  return (
+    <div className="bg-gray-900/60 p-4 rounded-xl border border-gray-700/50 mt-4">
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-xl">📊</span>
+        <h3 className="text-base font-black text-white uppercase tracking-wider">Quantitative Metrics</h3>
+      </div>
+      
+      {/* Key Metrics Row */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        {/* Gamma Flip */}
+        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
+          <MetricLabel
+            label="Gamma Flip"
+            tooltip={TOOLTIPS.gammaFlip}
+            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+          />
+          <span className="text-xl font-black text-indigo-400 font-mono block mt-1">
+            ${metrics.gamma_flip?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+          </span>
+        </div>
+        
+        {/* Total GEX */}
+        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
+          <MetricLabel
+            label="Total GEX"
+            tooltip={TOOLTIPS.totalGex}
+            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+          />
+          <span className={`text-xl font-black font-mono block mt-1 ${getGexColor(metrics.total_gex)}`}>
+            {formatGex(metrics.total_gex)}
+          </span>
+          {metrics.total_gex < 0 && (
+            <span className="text-[10px] text-red-400/70 block">(negative)</span>
+          )}
+        </div>
+        
+        {/* Max Pain */}
+        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
+          <MetricLabel
+            label="Max Pain"
+            tooltip={TOOLTIPS.maxPain}
+            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+          />
+          <span className="text-xl font-black text-amber-400 font-mono block mt-1">
+            ${metrics.max_pain?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+          </span>
+        </div>
+      </div>
+      
+      {/* Put/Call Ratios */}
+      <div className="bg-black/30 p-3 rounded-lg border border-gray-800/40 mb-3">
+        <span className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Put/Call Ratios</span>
+        <div className="grid grid-cols-4 gap-3">
+          <div className="text-center">
+            <MetricLabel
+              label="OI-Based"
+              tooltip={TOOLTIPS.pcrOiBased}
+              className="text-[11px] text-gray-400 block"
+            />
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.oi_based)}`}>
+              {metrics.put_call_ratios.oi_based.toFixed(2)}
+            </span>
+          </div>
+          <div className="text-center">
+            <MetricLabel
+              label="Volume"
+              tooltip={TOOLTIPS.pcrVolume}
+              className="text-[11px] text-gray-400 block"
+            />
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.volume_based)}`}>
+              {metrics.put_call_ratios.volume_based.toFixed(2)}
+            </span>
+          </div>
+          <div className="text-center">
+            <MetricLabel
+              label="Weighted"
+              tooltip={TOOLTIPS.pcrWeighted}
+              className="text-[11px] text-gray-400 block"
+            />
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.weighted)}`}>
+              {metrics.put_call_ratios.weighted.toFixed(2)}
+            </span>
+          </div>
+          <div className="text-center">
+            <MetricLabel
+              label="Delta-Adj"
+              tooltip={TOOLTIPS.pcrDeltaAdj}
+              className="text-[11px] text-gray-400 block"
+            />
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.delta_adjusted)}`}>
+              {metrics.put_call_ratios.delta_adjusted.toFixed(2)}
+            </span>
+          </div>
+        </div>
+      </div>
+      
+      {/* Volatility Skew */}
+      <div className="bg-black/30 p-3 rounded-lg border border-gray-800/40">
+        <span className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Volatility Skew</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-5">
+            <div>
+              <MetricLabel
+                label="Type"
+                tooltip={TOOLTIPS.skewType}
+                className="text-[11px] text-gray-400 block"
+              />
+              <span className="text-base font-bold text-white capitalize block mt-1">{metrics.volatility_skew.skew_type.replace('_', ' ')}</span>
+            </div>
+            <div>
+              <MetricLabel
+                label="Put IV"
+                tooltip={TOOLTIPS.putIv}
+                className="text-[11px] text-gray-400 block"
+              />
+              <span className="text-base font-bold text-red-400 font-mono block mt-1">{(metrics.volatility_skew.put_iv_avg * 100).toFixed(0)}%</span>
+            </div>
+            <div>
+              <MetricLabel
+                label="Call IV"
+                tooltip={TOOLTIPS.callIv}
+                className="text-[11px] text-gray-400 block"
+              />
+              <span className="text-base font-bold text-green-400 font-mono block mt-1">{(metrics.volatility_skew.call_iv_avg * 100).toFixed(0)}%</span>
+            </div>
+            <div>
+              <MetricLabel
+                label="Ratio"
+                tooltip={TOOLTIPS.skewRatio}
+                className="text-[11px] text-gray-400 block"
+              />
+              <span className="text-base font-bold text-gray-300 font-mono block mt-1">{metrics.volatility_skew.skew_ratio.toFixed(2)}</span>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className={`text-sm font-black uppercase ${getSentimentColor(metrics.volatility_skew.sentiment)}`}>
+              {metrics.volatility_skew.sentiment}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // Auto-fetch icon component
 const IconAutoFetch: React.FC = () => (
@@ -53,14 +362,15 @@ const LevelRow: React.FC<{
     const distancePct = spot > 0 ? ((level.prezzo - spot) / spot) * 100 : 0;
     const isVeryClose = Math.abs(distancePct) <= 0.6; // Entro lo 0.6% è considerato critico
 
-    const isResonance = 
-        level.ruolo === 'CONFLUENCE' || 
-        level.lato === 'BOTH' || 
-        level.scadenzaTipo?.toUpperCase().includes('MULTI') ||
-        level.scadenzaTipo?.toUpperCase().includes('ALL') ||
-        level.importanza >= 96;
+    // RESONANCE: Level appears in ALL THREE expiries (0DTE, WEEKLY, MONTHLY)
+    // This is the highest confluence level - only when ruolo === 'RESONANCE'
+    const isResonance = level.ruolo === 'RESONANCE';
+    
+    // CONFLUENCE: Level appears in exactly TWO expiries
+    const isConfluence = level.ruolo === 'CONFLUENCE';
 
     const getTheme = () => {
+        // RESONANCE: All 3 expiries - highest importance, gold/amber theme
         if (isResonance) return {
             border: 'border-amber-500/60',
             bg: 'bg-amber-500/10',
@@ -69,6 +379,16 @@ const LevelRow: React.FC<{
             icon: '💎',
             bar: 'from-amber-600 to-yellow-400 shadow-[0_0_12px_rgba(245,158,11,0.5)]',
             pulse: 'animate-pulse'
+        };
+        // CONFLUENCE: 2 expiries - high importance, purple/violet theme
+        if (isConfluence) return {
+            border: 'border-violet-500/50',
+            bg: 'bg-violet-500/10',
+            label: 'bg-violet-500 text-white font-black',
+            price: 'text-violet-300',
+            icon: '✨',
+            bar: 'from-violet-600 to-purple-400 shadow-[0_0_8px_rgba(139,92,246,0.4)]',
+            pulse: ''
         };
         if (level.lato === 'GAMMA_FLIP') return {
             border: 'border-indigo-500/40',
@@ -119,7 +439,7 @@ const LevelRow: React.FC<{
             <div className="flex-grow min-w-0">
                 <div className="flex items-center gap-3 mb-2">
                     <span className={`text-[10px] font-black uppercase tracking-tight px-2.5 py-0.5 rounded shadow-sm ${t.label} ${t.pulse}`}>
-                        {t.icon} {isResonance ? 'RESONANCE' : level.livello}
+                        {t.icon} {isResonance ? 'RESONANCE' : isConfluence ? 'CONFLUENCE' : level.livello}
                     </span>
                     <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">
                         {level.lato} • {level.scadenzaTipo}
@@ -136,7 +456,7 @@ const LevelRow: React.FC<{
                     </h4>
                 </div>
 
-                <p className={`text-[12px] font-medium leading-tight truncate mb-3 italic ${isResonance || level.lato === 'GAMMA_FLIP' ? 'text-gray-400' : 'text-gray-500'}`}>
+                <p className={`text-[12px] font-medium leading-tight truncate mb-3 italic ${isResonance || isConfluence || level.lato === 'GAMMA_FLIP' ? 'text-gray-400' : 'text-gray-500'}`}>
                     {level.motivazione}
                 </p>
 
@@ -149,7 +469,7 @@ const LevelRow: React.FC<{
                     </div>
                     <div className="shrink-0 flex items-center gap-1.5">
                         <span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Power</span>
-                        <span className={`text-[11px] font-black font-mono ${isResonance ? 'text-amber-400' : 'text-white'}`}>
+                        <span className={`text-[11px] font-black font-mono ${isResonance ? 'text-amber-400' : isConfluence ? 'text-violet-300' : 'text-white'}`}>
                             {level.importanza}%
                         </span>
                     </div>
@@ -186,6 +506,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
   analysisResult,
   dailyOutlook,
   onLevelClick,
+  quantMetrics,
 }) => {
     const spot = parseFloat(currentPrice) || 0;
     const fileRef = useRef<HTMLInputElement>(null);
@@ -196,6 +517,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
     const [lastUpdateTime, setLastUpdateTime] = useState<string | null>(null);
     const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
     const [fromCache, setFromCache] = useState(false);
+    const [fetchedQuantMetrics, setFetchedQuantMetrics] = useState<QuantMetrics | null>(null);
     
     // Symbol selection and spot price editing
     const [selectedSymbol, setSelectedSymbol] = useState<SymbolType>('SPY');
@@ -301,6 +623,24 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
         newDatasets.forEach(dataset => {
           addDataset(dataset);
         });
+        
+        // Extract quantMetrics from the first available expiry (prefer 0DTE)
+        if (result.data.symbols) {
+          for (const symbolData of Object.values(result.data.symbols)) {
+            if (symbolData.expiries?.length) {
+              // Find 0DTE first, then fall back to first available
+              const zeroDte = symbolData.expiries.find(e =>
+                e.label?.includes('0DTE') || e.label?.includes('0dte')
+              );
+              const targetExpiry = zeroDte || symbolData.expiries[0];
+              if (targetExpiry?.quantMetrics) {
+                setFetchedQuantMetrics(targetExpiry.quantMetrics);
+                console.log('[QuantPanel] Extracted quantMetrics:', targetExpiry.quantMetrics);
+                break;
+              }
+            }
+          }
+        }
         
         // Update last update time
         if (result.data.metadata?.timestamp) {
@@ -548,6 +888,11 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
              <p className="text-sm text-gray-200 font-bold leading-relaxed italic">"{dailyOutlook.summary}"</p>
           </div>
         </div>
+      )}
+
+      {/* Quantitative Metrics Display */}
+      {(quantMetrics || fetchedQuantMetrics) && (
+        <QuantMetricsDisplay metrics={quantMetrics || fetchedQuantMetrics!} />
       )}
     </div>
   );

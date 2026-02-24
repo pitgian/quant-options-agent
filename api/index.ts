@@ -57,8 +57,10 @@ async function getYahooFinance(): Promise<any> {
     // Handle various module export patterns
     // yahoo-finance2 exports a class constructor, not an instance
     // We must instantiate it to access instance methods (quote, options, etc.)
+    // Use type assertion to handle the union type from ESM/CommonJS interop
     const YahooFinanceClass = yahooFinance.default || yahooFinance;
-    const yf = new YahooFinanceClass();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const yf = new (YahooFinanceClass as any)();
     
     // Verify the module has the required methods
     if (typeof yf.quote !== 'function') {
