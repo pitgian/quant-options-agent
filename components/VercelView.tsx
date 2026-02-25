@@ -1025,7 +1025,7 @@ const LevelRow: React.FC<{
         <div className="flex items-start gap-2 mb-1.5">
           <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${isVeryClose ? 'bg-indigo-400 animate-ping' : 'bg-gray-600'}`} />
           <h4 className="text-[14px] font-black text-white uppercase tracking-tight leading-tight">
-            {type === 'CALL_WALL' ? 'RESISTENZA' : type === 'PUT_WALL' ? 'SUPPORTO' : getDescription()}
+            {type === 'CALL_WALL' ? 'RESISTANCE' : type === 'PUT_WALL' ? 'SUPPORT' : getDescription()}
           </h4>
         </div>
 

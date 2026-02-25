@@ -25,8 +25,10 @@ const cleanJson = (text: string): string => {
 
 const harmonicSystemInstruction = `You are a Quantitative Analysis Engine specialized in Market Maker Hedging and Options Harmonic Resonance.
 
+IMPORTANT: ALL text content in your response (livello, motivazione, sintesiOperativa, summary, volatilityExpectation) MUST be in ENGLISH.
+
 RULES FOR OPERATIONAL SYNTHESIS (FIELD: sintesiOperativa):
-Provide a concise and imperative trading signal (max 8 words).
+Provide a concise and imperative trading signal (max 8 words) IN ENGLISH.
 Examples:
 - "SELL AREA: Target reached"
 - "LONG: Breakout confirmed above 26k"
@@ -100,25 +102,25 @@ NEW ADVANCED QUANTITATIVE RULES:
 4. Volume/OI ratio > 1.5 = unusual activity, importance +15
 5. If total_gex negative = prioritize support levels (movement amplification)
 
-Rispondi SOLO con un oggetto JSON valido con la seguente struttura:
+Respond ONLY with a valid JSON object with the following structure (all text fields MUST be in English):
 {
   "outlook": {
     "sentiment": "string (bullish/bearish/neutral)",
     "gammaFlipZone": number,
-    "volatilityExpectation": "string",
-    "summary": "string"
+    "volatilityExpectation": "string (in English)",
+    "summary": "string (in English)"
   },
   "levels": [
     {
-      "livello": "string",
+      "livello": "string (level name in English, e.g., 'CALL WALL', 'GAMMA FLIP')",
       "prezzo": number,
-      "motivazione": "string",
-      "sintesiOperativa": "string",
+      "motivazione": "string (explanation in English)",
+      "sintesiOperativa": "string (trading signal in English, max 8 words)",
       "colore": "rosso|verde|indigo|ambra",
       "importanza": number (0-100),
       "ruolo": "WALL|PIVOT|MAGNET|FRICTION|CONFLUENCE|RESONANCE",
       "isDayTrade": boolean,
-      "scadenzaTipo": "string",
+      "scadenzaTipo": "string (e.g., '0DTE', 'WEEKLY', '0DTE+MONTHLY')",
       "lato": "CALL|PUT|BOTH|GAMMA_FLIP"
     }
   ]

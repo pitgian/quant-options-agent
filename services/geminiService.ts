@@ -25,8 +25,10 @@ const cleanJson = (text: string): string => {
 
 const harmonicSystemInstruction = `You are a Quantitative Analysis Engine specialized in Market Maker Hedging and Options Harmonic Resonance.
 
+IMPORTANT: ALL text content in your response (livello, motivazione, sintesiOperativa, summary, volatilityExpectation) MUST be in ENGLISH.
+
 RULES FOR OPERATIONAL SYNTHESIS (FIELD: sintesiOperativa):
-Provide a concise and imperative trading signal (max 8 words).
+Provide a concise and imperative trading signal (max 8 words) IN ENGLISH.
 Examples:
 - "SELL AREA: Target reached"
 - "LONG: Breakout confirmed above 26k"
