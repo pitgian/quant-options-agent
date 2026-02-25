@@ -55,16 +55,16 @@ AI_MODEL = 'glm-5'
 AI_API_KEY = os.environ.get('AI_API_KEY', '')
 
 # Real-time Spot Price API Configuration
-FINNHUB_API_KEY = os.environ.get('FINNHUB_API_KEY', '')
+# NOTE: Finnhub removed - does not support indices (SPX, NDX) on free tier
 TWELVEDATA_API_KEY = os.environ.get('TWELVEDATA_API_KEY', '')
 
-# Symbol mapping for real-time APIs (they use different symbols)
+# Symbol mapping for Twelve Data API
 SPOT_SYMBOL_MAP = {
-    'SPY': {'finnhub': 'SPY', 'twelvedata': 'SPY'},
-    'SPX': {'finnhub': 'SPX', 'twelvedata': 'SPX'},  # Note: may need ^SPX for some APIs
-    'NDX': {'finnhub': 'NDX', 'twelvedata': 'NDX'},
-    'QQQ': {'finnhub': 'QQQ', 'twelvedata': 'QQQ'},
-    'IWM': {'finnhub': 'IWM', 'twelvedata': 'IWM'},
+    'SPY': 'SPY',
+    'SPX': 'SPX',
+    'NDX': 'NDX',
+    'QQQ': 'QQQ',
+    'IWM': 'IWM',
 }
 
 # System prompt - same as harmonicSystemInstruction in glmService.ts
@@ -420,7 +420,7 @@ class OptionsDataset:
     spot: float
     generated: str
     expiries: List[Dict[str, Any]]
-    spot_source: str = 'yahoo'  # 'finnhub', 'twelvedata', 'yahoo', 'none'
+    spot_source: str = 'yahoo'  # 'twelvedata', 'yahoo', 'none'
 
 
 def is_friday(date_str: str) -> bool:
@@ -454,45 +454,21 @@ def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[
     Get real-time spot price with multi-source fallback.
     
     Priority:
-    1. Finnhub (real-time, 60 calls/min free)
-    2. Twelve Data (real-time, 800 calls/day free)
-    3. Yahoo Finance fallback (passed as parameter)
+    1. Twelve Data (real-time, supports indices like SPX, NDX)
+    2. Yahoo Finance fallback (passed as parameter)
     
     Returns:
-        Tuple of (price, source) where source is 'finnhub', 'twelvedata', 'yahoo', or 'none'
+        Tuple of (price, source) where source is 'twelvedata', 'yahoo', or 'none'
     """
     if not HAS_REQUESTS:
         return (yahoo_fallback, 'yahoo' if yahoo_fallback else 'none')
     
-    # Get mapped symbol for APIs
-    symbol_map = SPOT_SYMBOL_MAP.get(symbol, {'finnhub': symbol, 'twelvedata': symbol})
+    # Get mapped symbol for Twelve Data API
+    twelvedata_symbol = SPOT_SYMBOL_MAP.get(symbol, symbol)
     
-    # Try Finnhub first (real-time)
-    # Note: Finnhub free tier only supports stocks/ETFs, not indices (SPX, NDX)
-    if FINNHUB_API_KEY:
-        try:
-            finnhub_symbol = symbol_map['finnhub']
-            url = f"https://finnhub.io/api/v1/quote?symbol={finnhub_symbol}&token={FINNHUB_API_KEY}"
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                price = data.get('c')  # Current price
-                if price and price > 0:
-                    logger.info(f"💰 Spot price from Finnhub: {symbol} = {price}")
-                    return (float(price), 'finnhub')
-                else:
-                    logger.info(f"ℹ️ Finnhub returned no data for {symbol} (indices not supported on free tier)")
-            else:
-                logger.warning(f"⚠️ Finnhub HTTP {response.status_code} for {symbol}")
-        except Exception as e:
-            logger.warning(f"⚠️ Finnhub error for {symbol}: {e}")
-    else:
-        logger.info(f"ℹ️ FINNHUB_API_KEY not set, skipping Finnhub")
-    
-    # Try Twelve Data (real-time)
+    # Try Twelve Data first (real-time, supports indices)
     if TWELVEDATA_API_KEY:
         try:
-            twelvedata_symbol = symbol_map['twelvedata']
             url = f"https://api.twelvedata.com/price?symbol={twelvedata_symbol}&apikey={TWELVEDATA_API_KEY}"
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
@@ -503,8 +479,14 @@ def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[
                     if price > 0:
                         logger.info(f"💰 Spot price from Twelve Data: {symbol} = {price}")
                         return (price, 'twelvedata')
+                else:
+                    logger.info(f"ℹ️ Twelve Data returned no price for {symbol}")
+            else:
+                logger.warning(f"⚠️ Twelve Data HTTP {response.status_code} for {symbol}")
         except Exception as e:
             logger.warning(f"⚠️ Twelve Data error for {symbol}: {e}")
+    else:
+        logger.info(f"ℹ️ TWELVEDATA_API_KEY not set, skipping Twelve Data")
     
     # Fallback to Yahoo
     if yahoo_fallback:
