@@ -18,7 +18,7 @@ import {
   getLastUpdateTime,
   getDataAgeMinutes
 } from '../services/vercelDataService';
-import { SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios, VolatilitySkew, GEXData, SelectedLevels } from '../types';
+import { SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios, VolatilitySkew, GEXData, SelectedLevels, AIAnalysis, AILevel, AIOutlook } from '../types';
 
 // ============================================================================
 // CONSTANTS
@@ -1070,6 +1070,180 @@ const LevelRow: React.FC<{
 };
 
 /**
+ * AI Level Row Component - Displays AI-generated levels with enhanced styling
+ */
+const AILevelRow: React.FC<{
+  level: AILevel;
+  spot: number;
+}> = ({ level, spot }) => {
+  const distancePct = spot > 0 ? ((level.prezzo - spot) / spot) * 100 : 0;
+  const isVeryClose = Math.abs(distancePct) <= 0.6;
+
+  const getTheme = () => {
+    if (level.ruolo === 'RESONANCE') return {
+      border: 'border-amber-500/60',
+      bg: 'bg-amber-500/10',
+      label: 'bg-amber-500 text-black font-black',
+      price: 'text-amber-400',
+      icon: '💎',
+      bar: 'from-amber-600 to-yellow-400 shadow-[0_0_12px_rgba(245,158,11,0.5)]',
+      pulse: 'animate-pulse'
+    };
+    if (level.ruolo === 'CONFLUENCE') return {
+      border: 'border-violet-500/50',
+      bg: 'bg-violet-500/10',
+      label: 'bg-violet-500 text-white font-black',
+      price: 'text-violet-300',
+      icon: '✨',
+      bar: 'from-violet-600 to-purple-400 shadow-[0_0_8px_rgba(139,92,246,0.4)]',
+      pulse: ''
+    };
+    if (level.ruolo === 'PIVOT') return {
+      border: 'border-indigo-500/40',
+      bg: 'bg-indigo-950/20',
+      label: 'bg-indigo-600 text-white',
+      price: 'text-indigo-300',
+      icon: '⚖️',
+      bar: 'from-indigo-600 to-blue-400',
+      pulse: ''
+    };
+    if (level.ruolo === 'MAGNET') return {
+      border: 'border-cyan-500/40',
+      bg: 'bg-cyan-950/20',
+      label: 'bg-cyan-600 text-white',
+      price: 'text-cyan-300',
+      icon: '🧲',
+      bar: 'from-cyan-600 to-teal-400',
+      pulse: ''
+    };
+    if (level.ruolo === 'WALL') return {
+      border: level.lato === 'CALL' ? 'border-red-900/30' : 'border-green-900/30',
+      bg: level.lato === 'CALL' ? 'bg-red-900/5' : 'bg-green-900/5',
+      label: level.lato === 'CALL'
+        ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+        : 'bg-green-500/10 text-green-400 border border-green-500/20',
+      price: level.lato === 'CALL' ? 'text-red-400' : 'text-green-400',
+      icon: '🛡️',
+      bar: level.lato === 'CALL' ? 'from-red-600 to-orange-500' : 'from-green-600 to-emerald-400',
+      pulse: ''
+    };
+    if (level.ruolo === 'FRICTION') return {
+      border: 'border-orange-500/40',
+      bg: 'bg-orange-950/20',
+      label: 'bg-orange-600 text-white',
+      price: 'text-orange-300',
+      icon: '⚡',
+      bar: 'from-orange-600 to-yellow-400',
+      pulse: ''
+    };
+    return {
+      border: 'border-gray-800',
+      bg: 'bg-gray-800/10',
+      label: 'bg-gray-700 text-gray-300',
+      price: 'text-gray-300',
+      icon: '📍',
+      bar: 'from-gray-600 to-gray-400',
+      pulse: ''
+    };
+  };
+
+  const t = getTheme();
+
+  return (
+    <div
+      className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-6
+        ${t.bg} ${t.border} hover:scale-[1.01] hover:border-white/20`}
+    >
+      <div className="flex-grow min-w-0">
+        <div className="flex items-center gap-3 mb-2">
+          <span className={`text-[10px] font-black uppercase tracking-tight px-2.5 py-0.5 rounded shadow-sm ${t.label} ${t.pulse}`}>
+            {t.icon} {level.livello}
+          </span>
+          {level.scadenzaTipo && (
+            <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">
+              {level.scadenzaTipo}
+            </span>
+          )}
+          {isVeryClose && (
+            <span className="text-[8px] font-black text-white bg-indigo-600 px-2 py-0.5 rounded animate-pulse border border-indigo-400">PROXIMATE</span>
+          )}
+        </div>
+
+        <div className="flex items-start gap-2 mb-1.5">
+          <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${isVeryClose ? 'bg-indigo-400 animate-ping' : 'bg-gray-600'}`} />
+          <h4 className="text-[14px] font-black text-white uppercase tracking-tight leading-tight">
+            {level.sintesiOperativa}
+          </h4>
+        </div>
+
+        <div className="flex items-center gap-3 mt-2">
+          <div className="flex-grow h-2 bg-black/60 rounded-full border border-white/5 overflow-hidden">
+            <div
+              className={`h-full bg-gradient-to-r transition-all duration-1000 ease-out ${t.bar}`}
+              style={{ width: `${level.importanza}%` }}
+            ></div>
+          </div>
+          <div className="shrink-0 flex items-center gap-1.5">
+            <span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Power</span>
+            <span className={`text-[11px] font-black font-mono ${level.ruolo === 'RESONANCE' ? 'text-amber-400' : level.ruolo === 'CONFLUENCE' ? 'text-violet-300' : 'text-white'}`}>
+              {level.importanza}%
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="text-right shrink-0">
+        <div className="flex flex-col items-end">
+          <span className={`text-2xl font-black font-mono tracking-tighter ${t.price}`}>
+            {level.prezzo.toFixed(2)}
+          </span>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className={`text-[11px] font-black font-mono ${distancePct > 0 ? 'text-red-500' : 'text-green-500'}`}>
+              {distancePct > 0 ? '+' : ''}{distancePct.toFixed(2)}%
+            </span>
+            <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">DIST</span>
+          </div>
+          <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest mt-1">Strike Price</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * AI Outlook Display Component
+ */
+const AIOutlookDisplay: React.FC<{
+  outlook: AIOutlook;
+}> = ({ outlook }) => {
+  const sentimentColor = outlook.sentiment === 'bullish' ? 'text-green-400' :
+    outlook.sentiment === 'bearish' ? 'text-red-400' : 'text-gray-400';
+
+  return (
+    <div className="space-y-4 mb-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-gray-800/20 p-4 rounded-xl border border-gray-700/30 text-center">
+          <span className="text-[9px] font-bold text-gray-500 uppercase block mb-1 tracking-widest">AI SENTIMENT</span>
+          <span className={`text-lg font-black uppercase ${sentimentColor}`}>{outlook.sentiment}</span>
+        </div>
+        <div className="bg-gray-800/20 p-4 rounded-xl border border-gray-700/30 text-center">
+          <span className="text-[9px] font-bold text-gray-500 uppercase block mb-1 tracking-widest">GAMMA FLIP CLUSTER</span>
+          <span className="text-lg font-black text-indigo-400">${outlook.gammaFlipZone.toFixed(2)}</span>
+        </div>
+      </div>
+      <div className="bg-gray-800/20 p-4 rounded-xl border border-gray-700/30">
+        <span className="text-[9px] font-bold text-gray-500 uppercase block mb-2 tracking-widest">VOLATILITY EXPECTATION</span>
+        <span className="text-sm font-medium text-amber-400">{outlook.volatilityExpectation}</span>
+      </div>
+      <div className="bg-indigo-950/30 p-4 rounded-xl border border-indigo-500/30">
+        <span className="text-[9px] font-bold text-indigo-400 uppercase block mb-2 tracking-widest">AI SUMMARY</span>
+        <p className="text-sm text-gray-300 leading-relaxed">{outlook.summary}</p>
+      </div>
+    </div>
+  );
+};
+
+/**
  * Sentiment Display Component
  */
 const SentimentDisplay: React.FC<{
@@ -1260,6 +1434,7 @@ export function VercelView(): ReactElement {
     const spot = activeSymbolData.spot;
     const expiries = activeSymbolData.expiries;
     const selectedLevels = activeSymbolData.selected_levels;
+    const aiAnalysis = activeSymbolData.ai_analysis;
 
     // Combine all options for aggregated metrics
     const allOptions: OptionData[] = [];
@@ -1304,8 +1479,18 @@ export function VercelView(): ReactElement {
       resonanceLevels = findResonanceLevels(expiries, spot);
     }
 
-    // Calculate sentiment
-    const sentiment = aggregatedMetrics ? calculateSentiment(aggregatedMetrics) : 'neutral';
+    // Calculate sentiment - prefer AI sentiment if available
+    let sentiment: 'bullish' | 'bearish' | 'neutral';
+    if (aiAnalysis?.outlook?.sentiment) {
+      sentiment = aiAnalysis.outlook.sentiment;
+    } else {
+      sentiment = aggregatedMetrics ? calculateSentiment(aggregatedMetrics) : 'neutral';
+    }
+
+    // Override gamma_flip with AI value if available
+    if (aiAnalysis?.outlook?.gammaFlipZone && aggregatedMetrics) {
+      aggregatedMetrics.gamma_flip = aiAnalysis.outlook.gammaFlipZone;
+    }
 
     // Get individual expiry metrics
     const expiryMetrics = expiries.map(expiry => {
@@ -1326,12 +1511,33 @@ export function VercelView(): ReactElement {
       sentiment,
       expiryMetrics,
       allOptions,
-      selectedLevels // Pass through for displayLevels
+      selectedLevels, // Pass through for displayLevels
+      aiAnalysis // Pass through AI analysis
     };
   }, [activeSymbolData]);
 
-  // Build levels array for display
+  // Build AI levels array for display (when ai_analysis is available)
+  const aiDisplayLevels = useMemo(() => {
+    if (!quantAnalysis?.aiAnalysis?.levels) return null;
+
+    const spot = quantAnalysis.spot;
+    const aiLevels = quantAnalysis.aiAnalysis.levels;
+
+    // Sort and split by spot
+    const sorted = [...aiLevels].sort((a, b) => b.prezzo - a.prezzo);
+    return {
+      aboveSpot: sorted.filter(l => l.prezzo > spot),
+      belowSpot: sorted.filter(l => l.prezzo <= spot)
+    };
+  }, [quantAnalysis]);
+
+  // Build levels array for display (fallback when no AI analysis)
   const displayLevels = useMemo(() => {
+    // If AI levels are available, don't compute fallback
+    if (quantAnalysis?.aiAnalysis?.levels) {
+      return { aboveSpot: [], belowSpot: [] };
+    }
+
     if (!quantAnalysis) return { aboveSpot: [], belowSpot: [] };
 
     const levels: Array<{
@@ -1514,48 +1720,88 @@ export function VercelView(): ReactElement {
                 <div className="flex justify-between items-center mb-6">
                   <div>
                     <h2 className="text-xl font-black text-white uppercase tracking-tighter">RESONANCE ENGINE</h2>
-                    <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest opacity-80">Quant Analysis Active</p>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest opacity-80 ${quantAnalysis.aiAnalysis ? 'text-purple-500' : 'text-green-500'}`}>
+                      {quantAnalysis.aiAnalysis ? '🤖 AI Analysis Active' : 'Quant Analysis Active'}
+                    </p>
                   </div>
                 </div>
 
-                {/* Sentiment Display */}
-                <SentimentDisplay
-                  sentiment={quantAnalysis.sentiment}
-                  gammaFlipCluster={quantAnalysis.aggregatedMetrics.gamma_flip}
-                />
+                {/* AI Outlook Display (when AI analysis is available) */}
+                {quantAnalysis.aiAnalysis?.outlook ? (
+                  <AIOutlookDisplay outlook={quantAnalysis.aiAnalysis.outlook} />
+                ) : (
+                  /* Fallback Sentiment Display */
+                  <SentimentDisplay
+                    sentiment={quantAnalysis.sentiment}
+                    gammaFlipCluster={quantAnalysis.aggregatedMetrics.gamma_flip}
+                  />
+                )}
 
-                {/* Levels Display */}
+                {/* Levels Display - AI Levels or Fallback */}
                 <div className="flex flex-col gap-2">
-                  {displayLevels.aboveSpot.map((l, i) => (
-                    <LevelRow
-                      key={`above-${i}`}
-                      level={l.level}
-                      type={l.type}
-                      spot={quantAnalysis.spot}
-                      expiries={l.expiries}
-                      oi={l.oi}
-                    />
-                  ))}
+                  {/* AI Levels */}
+                  {aiDisplayLevels ? (
+                    <>
+                      {aiDisplayLevels.aboveSpot.map((level, i) => (
+                        <AILevelRow
+                          key={`ai-above-${i}`}
+                          level={level}
+                          spot={quantAnalysis.spot}
+                        />
+                      ))}
 
-                  {/* Spot Price Divider */}
-                  <div className="py-6 flex items-center gap-6">
-                    <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-indigo-500/40 to-indigo-500/40"></div>
-                    <div className="shrink-0 bg-indigo-600 px-6 py-2 rounded-full border border-indigo-400 shadow-[0_0_15px_rgba(79,70,229,0.3)]">
-                      <span className="text-[12px] font-black text-white uppercase tracking-[0.2em]">LIVE SPOT: {quantAnalysis.spot.toFixed(2)}</span>
-                    </div>
-                    <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-indigo-500/40 to-indigo-500/40"></div>
-                  </div>
+                      {/* Spot Price Divider */}
+                      <div className="py-6 flex items-center gap-6">
+                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-indigo-500/40 to-indigo-500/40"></div>
+                        <div className="shrink-0 bg-indigo-600 px-6 py-2 rounded-full border border-indigo-400 shadow-[0_0_15px_rgba(79,70,229,0.3)]">
+                          <span className="text-[12px] font-black text-white uppercase tracking-[0.2em]">LIVE SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                        </div>
+                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-indigo-500/40 to-indigo-500/40"></div>
+                      </div>
 
-                  {displayLevels.belowSpot.map((l, i) => (
-                    <LevelRow
-                      key={`below-${i}`}
-                      level={l.level}
-                      type={l.type}
-                      spot={quantAnalysis.spot}
-                      expiries={l.expiries}
-                      oi={l.oi}
-                    />
-                  ))}
+                      {aiDisplayLevels.belowSpot.map((level, i) => (
+                        <AILevelRow
+                          key={`ai-below-${i}`}
+                          level={level}
+                          spot={quantAnalysis.spot}
+                        />
+                      ))}
+                    </>
+                  ) : (
+                    /* Fallback to algorithmic levels */
+                    <>
+                      {displayLevels.aboveSpot.map((l, i) => (
+                        <LevelRow
+                          key={`above-${i}`}
+                          level={l.level}
+                          type={l.type}
+                          spot={quantAnalysis.spot}
+                          expiries={l.expiries}
+                          oi={l.oi}
+                        />
+                      ))}
+
+                      {/* Spot Price Divider */}
+                      <div className="py-6 flex items-center gap-6">
+                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-indigo-500/40 to-indigo-500/40"></div>
+                        <div className="shrink-0 bg-indigo-600 px-6 py-2 rounded-full border border-indigo-400 shadow-[0_0_15px_rgba(79,70,229,0.3)]">
+                          <span className="text-[12px] font-black text-white uppercase tracking-[0.2em]">LIVE SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                        </div>
+                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-indigo-500/40 to-indigo-500/40"></div>
+                      </div>
+
+                      {displayLevels.belowSpot.map((l, i) => (
+                        <LevelRow
+                          key={`below-${i}`}
+                          level={l.level}
+                          type={l.type}
+                          spot={quantAnalysis.spot}
+                          expiries={l.expiries}
+                          oi={l.oi}
+                        />
+                      ))}
+                    </>
+                  )}
                 </div>
 
                 {/* Quantitative Metrics Display */}
