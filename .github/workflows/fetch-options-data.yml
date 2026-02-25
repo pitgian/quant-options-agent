@@ -36,6 +36,8 @@ jobs:
         env:
           TZ: America/New_York
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           
       - name: Commit changes
         run: |
