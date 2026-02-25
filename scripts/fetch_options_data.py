@@ -18,10 +18,20 @@ import argparse
 import logging
 import sys
 import math
+import os
+import re
+import time
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
+
+# HTTP client for AI API calls
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 # Configurazione logging
 logging.basicConfig(
@@ -33,6 +43,322 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# CONFIGURAZIONE AI API (GLM-5)
+# ============================================================================
+
+# API Configuration - same as glmService.ts
+AI_API_URL = 'https://api.z.ai/api/coding/paas/v4/chat/completions'
+AI_MODEL = 'glm-5'
+AI_API_KEY = os.environ.get('AI_API_KEY', '')
+
+# System prompt - same as harmonicSystemInstruction in glmService.ts
+HARMONIC_SYSTEM_INSTRUCTION = """Sei un Engine di Analisi Quantitativa specializzato in Market Maker Hedging e Risonanza Armonica delle Opzioni.
+
+REGOLE PER LA SINTESI OPERATIVA (CAMPO: sintesiOperativa):
+Fornisci un segnale di trading secco e imperativo (max 8 parole).
+Esempi:
+- "AREA DI VENDITA: Target raggiunto"
+- "LONG: Breakout confermato sopra 26k"
+- "DIFESA MM: Supporto strutturale"
+- "SCALPING: Volatilità attesa nel range"
+- "ATTRAZIONE: Magnete di prezzo attivo"
+
+**REGOLE TASSATIVE PER CLASSIFICAZIONE MULTI-EXPIRY:**
+
+⚠️ ATTENZIONE: La classificazione multi-expiry è RARA e deve essere applicata con ESTREMA precisione.
+
+1. **RESONANCE** (MOLTO RARO - max 1-2 livelli totali):
+   - Condizione: Lo STESSO strike esatto (±0.5%) deve essere un livello significativo in TUTTE E TRE le scadenze (0DTE + WEEKLY + MONTHLY)
+   - ESEMPI VALIDI: Strike 25000 è Call Wall in 0DTE, Put Wall in WEEKLY, e Max Pain in MONTHLY
+   - ESEMPI NON VALIDI: Strike 24700 in 0DTE, strike 24750 in WEEKLY, strike 24800 in MONTHLY → NON è RESONANCE (troppo diversi)
+   - Importanza: 98-100
+   - Usa questo SOLO quando c'è perfetta allineazione tra tutte le scadenze
+
+2. **CONFLUENCE** (RARO - max 3-5 livelli totali):
+   - Condizione: Lo STESSO strike (±1%) è significativo in ESATTAMENTE DUE scadenze
+   - Importanza: 85-94
+   - Esempio: Strike 24500 è Wall in 0DTE e Wall in WEEKLY, ma non presente in MONTHLY
+
+3. **SINGOLO EXPIRY** (LA MAGGIORANZA dei livelli):
+   - Condizione: Livello significativo in una sola scadenza
+   - Ruoli: WALL, PIVOT, MAGNET, FRICTION
+   - Importanza: 60-84
+   - Questo dovrebbe coprire ~80% dei livelli
+
+⚠️ ERRORI COMUNI DA EVITARE:
+- NON assegnare RESONANCE a livelli che appaiono in scadenze diverse ma a strike diversi
+- NON assegnare RESONANCE solo perché uno strike è "vicino" tra le scadenze
+- Se non sei sicuro, usa il ruolo base (WALL/PIVOT/MAGNET/FRICTION)
+
+REGOLE DI ANALISI STANDARD:
+- **CALL WALLS**: Strike sopra lo Spot con OI Call dominante. Ruolo 'WALL', Colore 'rosso'.
+- **PUT WALLS**: Strike sotto lo Spot con OI Put dominante. Ruolo 'WALL', Colore 'verde'.
+- **GAMMA FLIP**: Punto di equilibrio sentiment. Ruolo 'PIVOT', Colore 'indigo', Lato 'GAMMA_FLIP'.
+
+NUOVE REGOLE QUANTITATIVE AVANZATE:
+
+**Gamma Exposure (GEX):**
+- GEX positivo = dealer long gamma = mercato stabile, supporta prezzi
+- GEX negativo = dealer short gamma = mercato volatile, amplifica movimenti
+- Gamma Flip: livello critico dove GEX cumulativo cambia segno
+- Se spot vicino a gamma flip = alta probabilità di movimento direzionale
+- Usare total_gex per determinare volatilità attesa (negativo = alta vol)
+
+**Max Pain:**
+- Livello dove valore opzioni è minimo = target market maker
+- Aggiungere come livello MAGNET se distanza < 2% dal spot
+- Importance: 85-95 se vicino a spot (< 1%)
+- Importance: 70-84 se moderately vicino (1-2%)
+
+**Put/Call Ratios:**
+- PCR > 1.0 = sentimento ribassista (troppo pessimismo = possibile rimbalzo?)
+- PCR < 0.7 = sentimento rialzista (troppo ottimismo = rischio correzione?)
+- Usare delta-adjusted per analisi più precisa
+- Volume/OI ratio > 1.5 = unusual activity, importance +15
+
+**Volatility Skew:**
+- Skew "smirk" (put costose, skew_ratio > 1.2) = paura, supporto forte, sentiment bearish
+- Skew "reverse_smirk" (call costose, skew_ratio < 0.9) = euforia, resistenza debole, sentiment bullish
+- Skew "flat" = mercato equilibrato, neutral sentiment
+- Usare skew sentiment per validare direzione dei livelli
+
+**INTEGRAZIONE CON LIVELLI ESISTENTI:**
+1. Se Max Pain vicino a Call/Put Wall (distanza < 1%) = CONFLUENCE, importance +10
+2. Se Gamma Flip vicino a Wall (distanza < 0.5%) = livello più importante, importance +15
+3. Usare skew sentiment per validare direzione: skew bearish rafforza put walls
+4. Volume/OI ratio > 1.5 = unusual activity, importance +15
+5. Se total_gex negativo = priorità a livelli di supporto (amplificazione movimenti)
+
+Rispondi SOLO con un oggetto JSON valido con la seguente struttura:
+{
+  "outlook": {
+    "sentiment": "string (bullish/bearish/neutral)",
+    "gammaFlipZone": number,
+    "volatilityExpectation": "string",
+    "summary": "string"
+  },
+  "levels": [
+    {
+      "livello": "string",
+      "prezzo": number,
+      "motivazione": "string",
+      "sintesiOperativa": "string",
+      "colore": "rosso|verde|indigo|ambra",
+      "importanza": number (0-100),
+      "ruolo": "WALL|PIVOT|MAGNET|FRICTION|CONFLUENCE|RESONANCE",
+      "isDayTrade": boolean,
+      "scadenzaTipo": "string",
+      "lato": "CALL|PUT|BOTH|GAMMA_FLIP"
+    }
+  ]
+}"""
+
+
+def clean_json_response(text: str) -> str:
+    """Clean JSON response from markdown code blocks."""
+    cleaned = re.sub(r'```json\s*|\s*```', '', text).strip()
+    first_bracket = cleaned.find('{')
+    last_bracket = cleaned.rfind('}')
+    if first_bracket != -1 and last_bracket != -1:
+        return cleaned[first_bracket:last_bracket + 1]
+    return cleaned
+
+
+def format_quant_metrics_for_ai(quant_metrics: Dict[str, Any]) -> str:
+    """Format quantitative metrics for AI analysis - same as formatQuantMetrics in glmService.ts"""
+    gex_sign = 'positivo/stabile' if quant_metrics.get('total_gex', 0) > 0 else 'negativo/volatile'
+    skew = quant_metrics.get('volatility_skew', {})
+    skew_type = skew.get('skew_type', 'unknown')
+    sentiment = skew.get('sentiment', 'neutral')
+    
+    return f"""
+=== METRICHE QUANTITATIVE AVANZATE ===
+Gamma Flip: {quant_metrics.get('gamma_flip', 'N/A')}
+Total GEX: {quant_metrics.get('total_gex', 0):.2f}B ({gex_sign})
+Max Pain: {quant_metrics.get('max_pain', 'N/A')}
+
+Put/Call Ratios:
+- OI-Based: {quant_metrics.get('put_call_ratios', {}).get('oi_based', 0):.2f}
+- Volume-Based: {quant_metrics.get('put_call_ratios', {}).get('volume_based', 0):.2f}
+- Weighted: {quant_metrics.get('put_call_ratios', {}).get('weighted', 0):.2f}
+- Delta-Adjusted: {quant_metrics.get('put_call_ratios', {}).get('delta_adjusted', 0):.2f}
+
+Volatility Skew:
+- Type: {skew_type}
+- Sentiment: {sentiment}
+- Skew Ratio: {skew.get('skew_ratio', 0):.2f}
+- Put IV Avg: {skew.get('put_iv_avg', 0):.2f}%
+- Call IV Avg: {skew.get('call_iv_avg', 0):.2f}%
+
+Top GEX Strikes (per riferimento livelli):
+{format_gex_strikes(quant_metrics.get('gex_by_strike', [])[:5])}
+"""
+
+
+def format_gex_strikes(gex_strikes: List[Dict]) -> str:
+    """Format top GEX strikes for AI prompt."""
+    lines = []
+    for s in gex_strikes:
+        lines.append(f"  Strike {s.get('strike', 'N/A')}: GEX {s.get('gex', 0):.2f}B, Cumulative {s.get('cumulative_gex', 0):.2f}B")
+    return '\n'.join(lines)
+
+
+def format_options_for_ai(expiries: List[Dict], spot: float) -> str:
+    """Format options data for AI analysis - same format as in glmService.ts"""
+    sections = []
+    
+    for expiry in expiries:
+        label = expiry.get('label', 'UNKNOWN')
+        date = expiry.get('date', 'N/A')
+        options = expiry.get('options', [])
+        quant_metrics = expiry.get('quantMetrics', {})
+        
+        # Filter options near the money (within5% of spot) and sort by OI
+        spot_range = spot * 0.05
+        nearby_options = [opt for opt in options
+                         if abs(opt['strike'] - spot) <= spot_range]
+        
+        # Sort by OI descending and take top 30
+        nearby_options.sort(key=lambda x: x['oi'], reverse=True)
+        selected_options = nearby_options[:30]
+        
+        # Format options table
+        lines = [f"STRIKE | TIPO | IV | OI | VOL"]
+        for opt in selected_options:
+            lines.append(
+                f"{opt['strike']:.2f} | {opt['side']} | {opt['iv']:.4f} | {opt['oi']} | {opt['vol']}"
+            )
+        content = "\n".join(lines)
+        
+        section = f"""DATASET [{label}] ({date}):
+{content}"""
+        
+        # Add quantitative metrics if available
+        if quant_metrics:
+            section += '\n' + format_quant_metrics_for_ai(quant_metrics)
+        
+        sections.append(section)
+    
+    return '\n\n---\n\n'.join(sections)
+
+
+def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3) -> Optional[str]:
+    """
+    Call GLM-5 API with retry logic.
+    Same implementation as callGLMAPI in glmService.ts
+    """
+    if not HAS_REQUESTS:
+        logger.warning("⚠️ requests library not installed. AI analysis skipped.")
+        return None
+    
+    if not AI_API_KEY:
+        logger.warning("⚠️ AI_API_KEY not set. AI analysis skipped.")
+        return None
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                AI_API_URL,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept-Language': 'en-US,en',
+                    'Authorization': f'Bearer {AI_API_KEY}'
+                },
+                json={
+                    'model': AI_MODEL,
+                    'messages': messages,
+                    'temperature': 0.1,
+                    'top_p': 0.9
+                },
+                timeout=120
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                if content:
+                    return content
+                else:
+                    logger.warning(f"⚠️ Empty response from AI API (attempt {attempt + 1})")
+            else:
+                logger.warning(f"⚠️ AI API error: {response.status_code} - {response.text[:200]} (attempt {attempt + 1})")
+        
+        except requests.exceptions.Timeout:
+            logger.warning(f"⚠️ AI API timeout (attempt {attempt + 1})")
+        except Exception as e:
+            logger.warning(f"⚠️ AI API error: {e} (attempt {attempt + 1})")
+        
+        if attempt < max_retries - 1:
+            time.sleep(2 ** attempt)  # Exponential backoff
+    
+    return None
+
+
+def get_ai_analysis(expiries: List[Dict], spot: float) -> Optional[Dict[str, Any]]:
+    """
+    Get AI analysis for options data.
+    Same implementation as getAnalysis in glmService.ts
+    
+    Returns:
+        {
+            'outlook': {...},
+            'levels': [...]
+        }
+    """
+    if not AI_API_KEY:
+        logger.info("ℹ️ AI_API_KEY not configured, skipping AI analysis")
+        return None
+    
+    logger.info("🤖 Calling AI for level analysis...")
+    
+    # Format data for AI
+    formatted_data = format_options_for_ai(expiries, spot)
+    
+    # Build messages - same as in glmService.ts
+    messages = [
+        {'role': 'system', 'content': HARMONIC_SYSTEM_INSTRUCTION},
+        {
+            'role': 'user',
+            'content': f"""ESEGUI DEEP QUANT ANALYSIS. SPOT: {spot}.
+Fornisci segnali operativi brevi e decisi per ogni livello.
+Usa le METRICHE QUANTITATIVE AVANZATE per identificare livelli aggiuntivi (Max Pain, Gamma Flip).
+Integra skew sentiment e PCR per validare l'importanza dei livelli.
+
+{formatted_data}"""
+        }
+    ]
+    
+    # Call API
+    response_text = call_ai_api(messages)
+    
+    if not response_text:
+        logger.warning("⚠️ No response from AI API")
+        return None
+    
+    try:
+        # Parse JSON response
+        cleaned_json = clean_json_response(response_text)
+        result = json.loads(cleaned_json)
+        
+        # Validate structure
+        if 'outlook' in result and 'levels' in result:
+            logger.info(f"✅ AI analysis complete: {len(result.get('levels', []))} levels identified")
+            return result
+        else:
+            logger.warning(f"⚠️ Invalid AI response structure: {list(result.keys())}")
+            return None
+    
+    except json.JSONDecodeError as e:
+        logger.warning(f"⚠️ Failed to parse AI response as JSON: {e}")
+        logger.debug(f"Response text: {response_text[:500]}...")
+        return None
+
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
 
 @dataclass
 class OptionRow:
@@ -941,26 +1267,39 @@ def main():
             # Genera anche formato legacy
             legacy = generate_legacy_content(data)
             
-            # Seleziona i livelli più importanti
+            # Seleziona i livelli più importanti (algoritmici)
             selected_levels = select_important_levels(data.expiries, data.spot)
+            
+            # Chiama AI per analisi avanzata (se API key configurata)
+            ai_analysis = get_ai_analysis(data.expiries, data.spot)
             
             all_data["symbols"][symbol] = {
                 "spot": data.spot,
                 "generated": data.generated,
                 "expiries": data.expiries,
                 "selected_levels": selected_levels,
+                "ai_analysis": ai_analysis,  # Aggiungi analisi AI
                 "legacy": legacy
             }
             successful += 1
             
             # Log dei livelli selezionati
-            logger.info(f"  📊 Livelli selezionati per {symbol}:")
+            logger.info(f"  📊 Livelli algoritmici per {symbol}:")
             logger.info(f"     Resonance: {len(selected_levels['resonance'])} livelli")
             logger.info(f"     Confluence: {len(selected_levels['confluence'])} livelli")
             logger.info(f"     Call Walls: {len(selected_levels['call_walls'])} livelli")
             logger.info(f"     Put Walls: {len(selected_levels['put_walls'])} livelli")
             logger.info(f"     Gamma Flip: {selected_levels['gamma_flip']}")
             logger.info(f"     Max Pain: {selected_levels['max_pain']}")
+            
+            # Log AI analysis
+            if ai_analysis:
+                outlook = ai_analysis.get('outlook', {})
+                levels = ai_analysis.get('levels', [])
+                logger.info(f"  🤖 AI Analysis per {symbol}:")
+                logger.info(f"     Sentiment: {outlook.get('sentiment', 'N/A')}")
+                logger.info(f"     Volatility: {outlook.get('volatilityExpectation', 'N/A')}")
+                logger.info(f"     AI Levels: {len(levels)} livelli identificati")
     
     # Salva output principale
     if not args.tv_only:
