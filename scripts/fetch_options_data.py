@@ -418,9 +418,9 @@ class OptionsDataset:
     """Dataset completo per un simbolo."""
     symbol: str
     spot: float
-    spot_source: str = 'yahoo'  # 'finnhub', 'twelvedata', 'yahoo', 'none'
     generated: str
     expiries: List[Dict[str, Any]]
+    spot_source: str = 'yahoo'  # 'finnhub', 'twelvedata', 'yahoo', 'none'
 
 
 def is_friday(date_str: str) -> bool:
