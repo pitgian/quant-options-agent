@@ -1379,6 +1379,7 @@ export function VercelView(): ReactElement {
   const [data, setData] = useState<VercelOptionsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0); // Timer tick to force age recalculation
 
   // Fetch data on mount
   useEffect(() => {
@@ -1416,6 +1417,15 @@ export function VercelView(): ReactElement {
     };
   }, []);
 
+  // Timer to update age display every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTick(t => t + 1);
+    }, 60000); // Update every minute
+
+    return () => clearInterval(interval);
+  }, []);
+
   // Memoized values
   const activeSymbolData = useMemo(() => {
     if (!data) return null;
@@ -1430,7 +1440,7 @@ export function VercelView(): ReactElement {
   const dataAgeMinutes = useMemo(() => {
     if (!data) return -1;
     return getDataAgeMinutes(data);
-  }, [data]);
+  }, [data, tick]); // Include tick to recalculate when time passes
 
   // Calculate quantitative analysis
   const quantAnalysis = useMemo(() => {
