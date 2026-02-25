@@ -468,6 +468,7 @@ def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[
     symbol_map = SPOT_SYMBOL_MAP.get(symbol, {'finnhub': symbol, 'twelvedata': symbol})
     
     # Try Finnhub first (real-time)
+    # Note: Finnhub free tier only supports stocks/ETFs, not indices (SPX, NDX)
     if FINNHUB_API_KEY:
         try:
             finnhub_symbol = symbol_map['finnhub']
@@ -479,8 +480,14 @@ def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[
                 if price and price > 0:
                     logger.info(f"💰 Spot price from Finnhub: {symbol} = {price}")
                     return (float(price), 'finnhub')
+                else:
+                    logger.info(f"ℹ️ Finnhub returned no data for {symbol} (indices not supported on free tier)")
+            else:
+                logger.warning(f"⚠️ Finnhub HTTP {response.status_code} for {symbol}")
         except Exception as e:
             logger.warning(f"⚠️ Finnhub error for {symbol}: {e}")
+    else:
+        logger.info(f"ℹ️ FINNHUB_API_KEY not set, skipping Finnhub")
     
     # Try Twelve Data (real-time)
     if TWELVEDATA_API_KEY:
