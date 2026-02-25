@@ -32,6 +32,7 @@ jobs:
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
         env:
           TZ: America/New_York
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
           
       - name: Commit changes
         run: |
@@ -39,4 +40,5 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/options_data.json
           git diff --quiet && git diff --staged --quiet || git commit -m "chore: update options data [skip ci]"
+          git pull --rebase origin master
           git push
