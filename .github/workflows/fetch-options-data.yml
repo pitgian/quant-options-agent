@@ -43,5 +43,7 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/options_data.json
           git diff --quiet && git diff --staged --quiet || git commit -m "chore: update options data [skip ci]"
+          git stash
           git pull --rebase origin master
+          git stash pop || true
           git push
