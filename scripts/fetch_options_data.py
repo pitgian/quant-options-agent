@@ -21,6 +21,7 @@ import math
 import os
 import re
 import time
+import random
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
@@ -52,6 +53,19 @@ logger = logging.getLogger(__name__)
 AI_API_URL = 'https://api.z.ai/api/coding/paas/v4/chat/completions'
 AI_MODEL = 'glm-5'
 AI_API_KEY = os.environ.get('AI_API_KEY', '')
+
+# Real-time Spot Price API Configuration
+FINNHUB_API_KEY = os.environ.get('FINNHUB_API_KEY', '')
+TWELVEDATA_API_KEY = os.environ.get('TWELVEDATA_API_KEY', '')
+
+# Symbol mapping for real-time APIs (they use different symbols)
+SPOT_SYMBOL_MAP = {
+    'SPY': {'finnhub': 'SPY', 'twelvedata': 'SPY'},
+    'SPX': {'finnhub': 'SPX', 'twelvedata': 'SPX'},  # Note: may need ^SPX for some APIs
+    'NDX': {'finnhub': 'NDX', 'twelvedata': 'NDX'},
+    'QQQ': {'finnhub': 'QQQ', 'twelvedata': 'QQQ'},
+    'IWM': {'finnhub': 'IWM', 'twelvedata': 'IWM'},
+}
 
 # System prompt - same as harmonicSystemInstruction in glmService.ts
 HARMONIC_SYSTEM_INSTRUCTION = """Sei un Engine di Analisi Quantitativa specializzato in Market Maker Hedging e Risonanza Armonica delle Opzioni.
@@ -244,10 +258,17 @@ def format_options_for_ai(expiries: List[Dict], spot: float) -> str:
     return '\n\n---\n\n'.join(sections)
 
 
-def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3) -> Optional[str]:
+def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3, num_expiries: int = 3) -> Optional[str]:
     """
-    Call GLM-5 API with retry logic.
-    Same implementation as callGLMAPI in glmService.ts
+    Call GLM-5 API with adaptive timeout and enhanced retry logic.
+    
+    Args:
+        messages: Chat messages for the API
+        max_retries: Maximum number of retry attempts
+        num_expiries: Number of expiries being analyzed (for adaptive timeout)
+    
+    Returns:
+        API response content or None if failed
     """
     if not HAS_REQUESTS:
         logger.warning("⚠️ requests library not installed. AI analysis skipped.")
@@ -257,8 +278,16 @@ def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3) -> Optiona
         logger.warning("⚠️ AI_API_KEY not set. AI analysis skipped.")
         return None
     
+    # Adaptive timeout: base 90s + 30s per expiry
+    timeout = 90 + (num_expiries * 30)
+    logger.info(f"🤖 AI API timeout set to {timeout}s (based on {num_expiries} expiries)")
+    
+    # Retry delays with jitter: 2s, 4s, 8s + random(0, 1)
+    retry_delays = [2, 4, 8]
+    
     for attempt in range(max_retries):
         try:
+            logger.info(f"🤖 AI API attempt {attempt + 1}/{max_retries}...")
             response = requests.post(
                 AI_API_URL,
                 headers={
@@ -272,13 +301,14 @@ def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3) -> Optiona
                     'temperature': 0.1,
                     'top_p': 0.9
                 },
-                timeout=120
+                timeout=timeout
             )
             
             if response.status_code == 200:
                 data = response.json()
                 content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
                 if content:
+                    logger.info(f"✅ AI API response received ({len(content)} chars)")
                     return content
                 else:
                     logger.warning(f"⚠️ Empty response from AI API (attempt {attempt + 1})")
@@ -286,32 +316,37 @@ def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3) -> Optiona
                 logger.warning(f"⚠️ AI API error: {response.status_code} - {response.text[:200]} (attempt {attempt + 1})")
         
         except requests.exceptions.Timeout:
-            logger.warning(f"⚠️ AI API timeout (attempt {attempt + 1})")
+            logger.warning(f"⚠️ AI API timeout after {timeout}s (attempt {attempt + 1})")
         except Exception as e:
             logger.warning(f"⚠️ AI API error: {e} (attempt {attempt + 1})")
         
         if attempt < max_retries - 1:
-            time.sleep(2 ** attempt)  # Exponential backoff
+            # Retry with jitter
+            delay = retry_delays[attempt] + random.uniform(0, 1)
+            logger.info(f"🔄 Retrying in {delay:.1f}s...")
+            time.sleep(delay)
     
+    logger.error(f"❌ AI API failed after {max_retries} attempts")
     return None
 
 
 def get_ai_analysis(expiries: List[Dict], spot: float) -> Optional[Dict[str, Any]]:
     """
-    Get AI analysis for options data.
-    Same implementation as getAnalysis in glmService.ts
+    Get AI analysis for options data with graceful fallback.
     
     Returns:
         {
             'outlook': {...},
-            'levels': [...]
+            'levels': [...],
+            'ai_fallback': False  # True if using algorithmic fallback
         }
     """
     if not AI_API_KEY:
         logger.info("ℹ️ AI_API_KEY not configured, skipping AI analysis")
         return None
     
-    logger.info("🤖 Calling AI for level analysis...")
+    num_expiries = len(expiries)
+    logger.info(f"🤖 Calling AI for level analysis ({num_expiries} expiries)...")
     
     # Format data for AI
     formatted_data = format_options_for_ai(expiries, spot)
@@ -330,11 +365,11 @@ Integra skew sentiment e PCR per validare l'importanza dei livelli.
         }
     ]
     
-    # Call API
-    response_text = call_ai_api(messages)
+    # Call API with adaptive timeout
+    response_text = call_ai_api(messages, num_expiries=num_expiries)
     
     if not response_text:
-        logger.warning("⚠️ No response from AI API")
+        logger.warning("⚠️ No response from AI API - using algorithmic fallback")
         return None
     
     try:
@@ -383,6 +418,7 @@ class OptionsDataset:
     """Dataset completo per un simbolo."""
     symbol: str
     spot: float
+    spot_source: str = 'yahoo'  # 'finnhub', 'twelvedata', 'yahoo', 'none'
     generated: str
     expiries: List[Dict[str, Any]]
 
@@ -413,25 +449,98 @@ def is_weekly_friday(date_str: str) -> bool:
     return is_friday(date_str) and not is_monthly(date_str)
 
 
-def get_spot_price(ticker: yf.Ticker) -> Optional[float]:
+def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[Optional[float], str]:
     """
-    Recupera il prezzo spot corrente con fallback multipli.
+    Get real-time spot price with multi-source fallback.
+    
+    Priority:
+    1. Finnhub (real-time, 60 calls/min free)
+    2. Twelve Data (real-time, 800 calls/day free)
+    3. Yahoo Finance fallback (passed as parameter)
+    
+    Returns:
+        Tuple of (price, source) where source is 'finnhub', 'twelvedata', 'yahoo', or 'none'
     """
+    if not HAS_REQUESTS:
+        return (yahoo_fallback, 'yahoo' if yahoo_fallback else 'none')
+    
+    # Get mapped symbol for APIs
+    symbol_map = SPOT_SYMBOL_MAP.get(symbol, {'finnhub': symbol, 'twelvedata': symbol})
+    
+    # Try Finnhub first (real-time)
+    if FINNHUB_API_KEY:
+        try:
+            finnhub_symbol = symbol_map['finnhub']
+            url = f"https://finnhub.io/api/v1/quote?symbol={finnhub_symbol}&token={FINNHUB_API_KEY}"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                price = data.get('c')  # Current price
+                if price and price > 0:
+                    logger.info(f"💰 Spot price from Finnhub: {symbol} = {price}")
+                    return (float(price), 'finnhub')
+        except Exception as e:
+            logger.warning(f"⚠️ Finnhub error for {symbol}: {e}")
+    
+    # Try Twelve Data (real-time)
+    if TWELVEDATA_API_KEY:
+        try:
+            twelvedata_symbol = symbol_map['twelvedata']
+            url = f"https://api.twelvedata.com/price?symbol={twelvedata_symbol}&apikey={TWELVEDATA_API_KEY}"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                price_str = data.get('price')
+                if price_str:
+                    price = float(price_str)
+                    if price > 0:
+                        logger.info(f"💰 Spot price from Twelve Data: {symbol} = {price}")
+                        return (price, 'twelvedata')
+        except Exception as e:
+            logger.warning(f"⚠️ Twelve Data error for {symbol}: {e}")
+    
+    # Fallback to Yahoo
+    if yahoo_fallback:
+        logger.info(f"💰 Spot price from Yahoo (delayed): {symbol} = {yahoo_fallback}")
+        return (yahoo_fallback, 'yahoo')
+    
+    return (None, 'none')
+
+
+def get_spot_price(ticker: yf.Ticker, symbol: str = None) -> Tuple[Optional[float], str]:
+    """
+    Recupera il prezzo spot corrente con fallback multipli e real-time APIs.
+    
+    Returns:
+        Tuple of (price, source) where source indicates the data provider
+    """
+    yahoo_price = None
+    
+    # Try Yahoo Finance methods first
     try:
         # Metodo 1: fast_info (più veloce)
-        return float(ticker.fast_info['last_price'])
+        yahoo_price = float(ticker.fast_info['last_price'])
     except (KeyError, TypeError):
         pass
     
-    try:
-        # Metodo 2: history
-        hist = ticker.history(period="1d")
-        if not hist.empty:
-            return float(hist['Close'].iloc[-1])
-    except Exception:
-        pass
+    if yahoo_price is None:
+        try:
+            # Metodo 2: history
+            hist = ticker.history(period="1d")
+            if not hist.empty:
+                yahoo_price = float(hist['Close'].iloc[-1])
+        except Exception:
+            pass
     
-    return None
+    # If we have a symbol, try real-time APIs
+    if symbol:
+        return get_realtime_spot_price(symbol, yahoo_price)
+    
+    # Otherwise return Yahoo price
+    if yahoo_price:
+        return (yahoo_price, 'yahoo')
+    
+    return (None, 'none')
 
 
 def select_expirations(expirations: List[str]) -> List[tuple]:
@@ -543,13 +652,13 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
     try:
         ticker = yf.Ticker(yf_symbol)
         
-        # Recupera spot price
+        # Recupera spot price con real-time APIs
         logger.info("[1/3] Recupero prezzo spot...")
-        spot = get_spot_price(ticker)
+        spot, spot_source = get_spot_price(ticker, symbol)
         if spot is None:
             logger.error(f"❌ Impossibile recuperare spot price per {symbol}")
             return None
-        logger.info(f"  -> Spot: {spot:.2f}")
+        logger.info(f"  -> Spot: {spot:.2f} (source: {spot_source})")
         
         # Recupera scadenze disponibili
         logger.info("[2/3] Recupero scadenze...")
@@ -584,6 +693,7 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
         return OptionsDataset(
             symbol=symbol,  # Usa il simbolo originale (senza ^)
             spot=round(spot, 2),
+            spot_source=spot_source,
             generated=datetime.now().isoformat(),
             expiries=expiries
         )
