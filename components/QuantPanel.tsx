@@ -39,128 +39,128 @@ interface QuantPanelProps {
   quantMetrics?: QuantMetrics | null;
 }
 
-// Tooltip explanations (Italian) - Clear and actionable
+// Tooltip explanations (English) - Clear and actionable
 const TOOLTIPS = {
-  gammaFlip: `Gamma Flip - Punto di inversione gamma
+  gammaFlip: `Gamma Flip - Gamma Inversion Point
 
-COS'È: Il prezzo dove l'esposizione gamma cumulativa passa da positiva a negativa.
+WHAT IT IS: The price where cumulative gamma exposure shifts from positive to negative.
 
-COME USARLO:
-• Se prezzo > Gamma Flip: dealer comprano su rally (supporto rialzista)
-• Se prezzo < Gamma Flip: dealer vendono su drop (pressione ribassista)
-• Più vicino al prezzo attuale = maggiore probabilità di movimento direzionale
+HOW TO USE IT:
+• If price > Gamma Flip: dealers buy on rallies (bullish support)
+• If price < Gamma Flip: dealers sell on drops (bearish pressure)
+• Closer to current price = higher probability of directional movement
 
-STRATEGIA: Livello chiave per capire la direzione del mercato. Se siamo vicini, attendi una mossa forte.`,
+STRATEGY: Key level to understand market direction. If close, expect a strong move.`,
 
-  totalGex: `Total GEX - Esposizione Gamma Totale
+  totalGex: `Total GEX - Total Gamma Exposure
 
-COS'È: Somma di tutta l'esposizione gamma dei dealer in miliardi di dollari.
+WHAT IT IS: Sum of all dealer gamma exposure in billions of dollars.
 
-COME USARLO:
-• GEX > 0 (positivo): Mercato stabile, dealer assorbono volatilità
-• GEX < 0 (negativo): Mercato volatile, dealer amplificano movimenti
-• |GEX| > 5B = impatto significativo
+HOW TO USE IT:
+• GEX > 0 (positive): Stable market, dealers absorb volatility
+• GEX < 0 (negative): Volatile market, dealers amplify movements
+• |GEX| > 5B = significant impact
 
-STRATEGIA: GEX negativo = evita posizioni large, usa stop loss stretti. GEX positivo = puoi essere più aggressivo.`,
+STRATEGY: Negative GEX = avoid large positions, use tight stop losses. Positive GEX = can be more aggressive.`,
 
-  maxPain: `Max Pain - Dolore Massimo per i Trader
+  maxPain: `Max Pain - Maximum Trader Pain
 
-COS'È: Lo strike price dove il valore totale delle opzioni in scadenza è minimo = massima perdita per chi compra opzioni.
+WHAT IT IS: The strike price where total option value at expiration is minimal = maximum loss for option buyers.
 
-COME USARLO:
-• I market maker spingono il prezzo verso questo livello
-• Distanza < 2% dal spot = forte attrazione magnetica
-• Max Pain vicino a supporto/resistenza = livello molto importante
+HOW TO USE IT:
+• Market makers push price toward this level
+• Distance < 2% from spot = strong magnetic attraction
+• Max Pain near support/resistance = very important level
 
-STRATEGIA: Se il prezzo è lontano dal Max Pain, aspettati una mossa verso di esso. Usalo come target.`,
+STRATEGY: If price is far from Max Pain, expect a move toward it. Use as target.`,
 
-  pcrOiBased: `Put/Call Ratio basato su Open Interest
+  pcrOiBased: `Put/Call Ratio based on Open Interest
 
-COS'È: Rapporto tra Put OI e Call OI. Misura il posizionamento delle posizioni aperte.
+WHAT IT IS: Ratio between Put OI and Call OI. Measures open position positioning.
 
-COME USARLO:
-• PCR > 1.0 = sentimento ribassista (troppe put)
-• PCR < 0.7 = sentimento rialzista (troppe call)
-• PCR estremi (>1.5 o <0.5) = possibile inversione contrarian
+HOW TO USE IT:
+• PCR > 1.0 = bearish sentiment (too many puts)
+• PCR < 0.7 = bullish sentiment (too many calls)
+• Extreme PCR (>1.5 or <0.5) = possible contrarian reversal
 
-STRATEGIA: PCR molto alto = possibile rimbalzo (troppo pessimismo). PCR molto basso = possibile correzione.`,
+STRATEGY: Very high PCR = possible bounce (too much pessimism). Very low PCR = possible correction.`,
 
-  pcrVolume: `Put/Call Ratio basato su Volume
+  pcrVolume: `Put/Call Ratio based on Volume
 
-COS'È: Rapporto tra volume put e call di oggi. Misura l'attività di trading corrente.
+WHAT IT IS: Ratio between today's put and call volume. Measures current trading activity.
 
-COME USARLO:
-• Volume PCR > OI PCR = aumento attività put (nuova paura)
-• Volume PCR < OI PCR = aumento attività call (nuovo ottimismo)
-• Cambiamenti rapidi = segnale di inversione
+HOW TO USE IT:
+• Volume PCR > OI PCR = increased put activity (new fear)
+• Volume PCR < OI PCR = increased call activity (new optimism)
+• Rapid changes = reversal signal
 
-STRATEGIA: Confronta con OI PCR. Se divergono, qualcosa sta cambiando nel sentiment.`,
+STRATEGY: Compare with OI PCR. If diverging, sentiment is changing.`,
 
-  pcrWeighted: `Put/Call Ratio Ponderato
+  pcrWeighted: `Weighted Put/Call Ratio
 
-COS'È: PCR pesato per volume. Dà più peso alle opzioni con alta attività.
+WHAT IT IS: PCR weighted by volume. Gives more weight to options with high activity.
 
-COME USARLO:
-• Più sensibile alle opzioni ATM e near-term
-• Meno influenzato da opzioni illiquide
-• Migliore indicatore a breve termine
+HOW TO USE IT:
+• More sensitive to ATM and near-term options
+• Less influenced by illiquid options
+• Better short-term indicator
 
-STRATEGIA: Usalo per trading intraday. Reagisce più velocemente ai cambiamenti di sentiment.`,
+STRATEGY: Use for intraday trading. Reacts faster to sentiment changes.`,
 
-  pcrDeltaAdj: `Put/Call Ratio Aggiustato per Delta
+  pcrDeltaAdj: `Delta-Adjusted Put/Call Ratio
 
-COS'È: PCR pesato per il delta delle opzioni. Considera la sensibilità al prezzo reale.
+WHAT IT IS: PCR weighted by option delta. Considers real price sensitivity.
 
-COME USARLO:
-• Delta put ~ -0.3 a -0.5 = put OTM che diventano ITM
-• Più preciso per stimare hedging dei dealer
-• Valori alti = più protezione richiesta
+HOW TO USE IT:
+• Put delta ~ -0.3 to -0.5 = OTM puts becoming ITM
+• More precise for estimating dealer hedging
+• High values = more protection requested
 
-STRATEGIA: Il più sofisticato. Usalo per analisi professionale del rischio di mercato.`,
+STRATEGY: The most sophisticated. Use for professional market risk analysis.`,
 
-  skewType: `Tipo di Volatility Skew
+  skewType: `Volatility Skew Type
 
-COS'È: La forma della curva di volatilità implicita tra put e call OTM.
+WHAT IT IS: The shape of the implied volatility curve between OTM puts and calls.
 
-COME USARLO:
-• SMIRK: Put costose = paura, supporto forte, mercato difensivo
-• REVERSE SMIRK: Call costose = euforia, resistenza debole, mercato aggressivo
-• FLAT: Equilibrio, mercato incerto
+HOW TO USE IT:
+• SMIRK: Expensive puts = fear, strong support, defensive market
+• REVERSE SMIRK: Expensive calls = euphoria, weak resistance, aggressive market
+• FLAT: Balance, uncertain market
 
-STRATEGIA: Smirk = cerca supporti forti, compra dip. Reverse = vendi rally, resistenze deboli.`,
+STRATEGY: Smirk = look for strong support, buy dips. Reverse = sell rallies, weak resistance.`,
 
-  putIv: `Volatilità Implicita Media Put OTM
+  putIv: `Average OTM Put Implied Volatility
 
-COS'È: Media della IV delle put out-of-the-money. Misura il "prezzo della paura".
+WHAT IT IS: Average IV of out-of-the-money puts. Measures the "price of fear".
 
-COME USARLO:
-• IV put alta (>30%) = molta paura, possibile rimbalzo
-• IV put bassa (<20%) = compiacenza, rischio correzione
-• Confronta con storico per capire se è estrema
+HOW TO USE IT:
+• High put IV (>30%) = lots of fear, possible bounce
+• Low put IV (<20%) = complacency, correction risk
+• Compare with historical to understand if extreme
 
-STRATEGIA: IV put molto alta = opportunità di vendita put (premium alti). IV bassa = compra put per protezione economica.`,
+STRATEGY: Very high put IV = opportunity to sell puts (high premiums). Low IV = buy puts for cheap protection.`,
 
-  callIv: `Volatilità Implicita Media Call OTM
+  callIv: `Average OTM Call Implied Volatility
 
-COS'È: Media della IV delle call out-of-the-money. Misura l'entusiasmo rialzista.
+WHAT IT IS: Average IV of out-of-the-money calls. Measures bullish enthusiasm.
 
-COME USARLO:
-• IV call alta = molto entusiasmo, mercato "euphorico"
-• IV call bassa = poco interesse rialzista
-• Call IV > Put IV = sentimento molto rialzista (attenzione)
+HOW TO USE IT:
+• High call IV = lots of enthusiasm, "euphoric" market
+• Low call IV = little bullish interest
+• Call IV > Put IV = very bullish sentiment (caution)
 
-STRATEGIA: IV call molto alta = vendi call (premium buoni). IV call bassa = compra call è economico.`,
+STRATEGY: Very high call IV = sell calls (good premiums). Low call IV = buying calls is cheap.`,
 
-  skewRatio: `Skew Ratio - Rapporto IV Put/Call
+  skewRatio: `Skew Ratio - Put/Call IV Ratio
 
-COS'È: Rapporto tra volatilità implicita media put e call OTM.
+WHAT IT IS: Ratio between average OTM put and call implied volatility.
 
-COME USARLO:
-• Ratio > 1.2 = SKEW RIBASSISTA (put molto più care)
-• Ratio < 0.9 = SKEW RIALZISTA (call più care)
-• Ratio 0.9-1.2 = mercato equilibrato
+HOW TO USE IT:
+• Ratio > 1.2 = BEARISH SKEW (puts much more expensive)
+• Ratio < 0.9 = BULLISH SKEW (calls more expensive)
+• Ratio 0.9-1.2 = balanced market
 
-STRATEGIA: Ratio estremo (>1.3 o <0.8) = possibile inversione. Il mercato tende a mean-revertare.`
+STRATEGY: Extreme ratio (>1.3 or <0.8) = possible reversal. Markets tend to mean-revert.`
 };
 
 // Metric Label component with tooltip and question mark icon
@@ -566,12 +566,12 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
         
         if (!result.success || !result.data) {
           // Fallback to static file if backend is not available
-          if (result.error?.includes('Backend non disponibile')) {
+          if (result.error?.includes('Backend not available')) {
             console.log('Backend not available, falling back to static file...');
             const fallbackResult = await fetchOptionsData(forceRefresh);
             
             if (!fallbackResult.success || !fallbackResult.data) {
-              setAutoFetchError(fallbackResult.error || 'Errore nel caricamento dei dati');
+              setAutoFetchError(fallbackResult.error || 'Error loading data');
               setIsAutoFetching(false);
               return;
             }
@@ -603,7 +603,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
             return;
           }
           
-          setAutoFetchError(result.error || 'Errore nel caricamento dei dati');
+          setAutoFetchError(result.error || 'Error loading data');
           setIsAutoFetching(false);
           return;
         }
@@ -652,7 +652,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
         }
         
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Errore sconosciuto';
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         setAutoFetchError(errorMessage);
       } finally {
         setIsAutoFetching(false);
@@ -713,7 +713,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
           <div className="flex items-center gap-2">
             {lastUpdateTime && (
               <span className="text-[9px] text-gray-500 font-medium">
-                Ultimo agg: {getTimeSinceUpdate(lastUpdateTime)}
+                Last update: {getTimeSinceUpdate(lastUpdateTime)}
                 {fromCache && ' (cache)'}
               </span>
             )}
@@ -724,7 +724,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
         {/* Symbol Dropdown */}
         <div className="bg-black/60 p-3 rounded-xl border border-gray-800/50 flex flex-col justify-center">
-            <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1 tracking-widest">SIMBOLO</label>
+            <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1 tracking-widest">SYMBOL</label>
             <select
               value={selectedSymbol}
               onChange={(e) => setSelectedSymbol(e.target.value as SymbolType)}
@@ -746,7 +746,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
                 <button
                   onClick={() => setCurrentPrice(originalSpotPrice.toString())}
                   className="text-[8px] text-indigo-400 hover:text-indigo-300 underline"
-                  title={`Ripristina: ${originalSpotPrice}`}
+                  title={`Restore: ${originalSpotPrice}`}
                 >
                   Reset
                 </button>
@@ -764,7 +764,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
               placeholder="0.00"
             />
             {originalSpotPrice && originalSpotPrice !== parseFloat(currentPrice) && (
-              <span className="text-[8px] text-gray-500 mt-0.5">Originale: {originalSpotPrice.toFixed(2)}</span>
+              <span className="text-[8px] text-gray-500 mt-0.5">Original: {originalSpotPrice.toFixed(2)}</span>
             )}
         </div>
         
@@ -782,7 +782,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
                 {isAutoFetching ? (
                   <>
                     <IconLoader />
-                    <span className="text-[9px] font-bold uppercase mt-1">Caricamento...</span>
+                    <span className="text-[9px] font-bold uppercase mt-1">Loading...</span>
                   </>
                 ) : (
                   <>
@@ -799,7 +799,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
                 className="shrink-0 w-32 flex flex-col items-center justify-center p-3 rounded-xl border border-dashed border-gray-700 hover:border-indigo-500 hover:bg-indigo-500/5 transition-all text-gray-500 hover:text-indigo-400"
             >
                 <IconUpload />
-                <span className="text-[9px] font-bold uppercase mt-1">Carica Sweep</span>
+                <span className="text-[9px] font-bold uppercase mt-1">Load Sweep</span>
                 <input type="file" ref={fileRef} onChange={handleFile} className="hidden" accept=".txt" />
             </button>
             
@@ -823,7 +823,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
             className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-gray-900"
           />
           <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">
-            Aggiorna automaticamente (5 min)
+            Auto refresh (5 min)
           </span>
         </label>
         
@@ -837,8 +837,8 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
                 handleAutoFetch(true);
               }}
               className="text-[9px] text-red-400 hover:text-red-300 underline"
-            >
-              Riprova
+              >
+              Retry
             </button>
           </div>
         )}
@@ -851,7 +851,7 @@ export const QuantPanel: React.FC<QuantPanelProps> = ({
         disabled={isLoading || datasets.length === 0 || !currentPrice} 
         className="mt-6 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-xl shadow-lg transition-all disabled:opacity-20 uppercase tracking-[0.2em] text-sm flex items-center justify-center gap-2"
       >
-        {isLoading ? <><IconLoader /> SCANSIONE RISONANZA...</> : <><IconAnalyze /> ANALIZZA TUTTE LE SCADENZE</>}
+        {isLoading ? <><IconLoader /> RESONANCE SCAN...</> : <><IconAnalyze /> ANALYZE ALL EXPIRATIONS</>}
       </button>
 
       {analysisResult && dailyOutlook && (

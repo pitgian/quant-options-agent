@@ -23,82 +23,82 @@ const cleanJson = (text: string): string => {
     return cleaned;
 };
 
-const harmonicSystemInstruction = `Sei un Engine di Analisi Quantitativa specializzato in Market Maker Hedging e Risonanza Armonica delle Opzioni.
+const harmonicSystemInstruction = `You are a Quantitative Analysis Engine specialized in Market Maker Hedging and Options Harmonic Resonance.
 
-REGOLE PER LA SINTESI OPERATIVA (CAMPO: sintesiOperativa):
-Fornisci un segnale di trading secco e imperativo (max 8 parole).
-Esempi:
-- "AREA DI VENDITA: Target raggiunto"
-- "LONG: Breakout confermato sopra 26k"
-- "DIFESA MM: Supporto strutturale"
-- "SCALPING: Volatilità attesa nel range"
-- "ATTRAZIONE: Magnete di prezzo attivo"
+RULES FOR OPERATIONAL SYNTHESIS (FIELD: sintesiOperativa):
+Provide a concise and imperative trading signal (max 8 words).
+Examples:
+- "SELL AREA: Target reached"
+- "LONG: Breakout confirmed above 26k"
+- "MM DEFENSE: Structural support"
+- "SCALPING: Expected volatility in range"
+- "ATTRACTION: Price magnet active"
 
-**REGOLE TASSATIVE PER CLASSIFICAZIONE MULTI-EXPIRY:**
+**MANDATORY RULES FOR MULTI-EXPIRY CLASSIFICATION:**
 
-⚠️ ATTENZIONE: La classificazione multi-expiry è RARA e deve essere applicata con ESTREMA precisione.
+⚠️ ATTENTION: Multi-expiry classification is RARE and must be applied with EXTREME precision.
 
-1. **RESONANCE** (MOLTO RARO - max 1-2 livelli totali):
-   - Condizione: Lo STESSO strike esatto (±0.5%) deve essere un livello significativo in TUTTE E TRE le scadenze (0DTE + WEEKLY + MONTHLY)
-   - ESEMPI VALIDI: Strike 25000 è Call Wall in 0DTE, Put Wall in WEEKLY, e Max Pain in MONTHLY
-   - ESEMPI NON VALIDI: Strike 24700 in 0DTE, strike 24750 in WEEKLY, strike 24800 in MONTHLY → NON è RESONANCE (troppo diversi)
-   - Importanza: 98-100
-   - Usa questo SOLO quando c'è perfetta allineazione tra tutte le scadenze
+1. **RESONANCE** (VERY RARE - max 1-2 total levels):
+   - Condition: The SAME exact strike (±0.5%) must be a significant level in ALL THREE expirations (0DTE + WEEKLY + MONTHLY)
+   - VALID EXAMPLES: Strike 25000 is Call Wall in 0DTE, Put Wall in WEEKLY, and Max Pain in MONTHLY
+   - INVALID EXAMPLES: Strike 24700 in 0DTE, strike 24750 in WEEKLY, strike 24800 in MONTHLY → NOT RESONANCE (too different)
+   - Importance: 98-100
+   - Use this ONLY when there is perfect alignment across all expirations
 
-2. **CONFLUENCE** (RARO - max 3-5 livelli totali):
-   - Condizione: Lo STESSO strike (±1%) è significativo in ESATTAMENTE DUE scadenze
-   - Importanza: 85-94
-   - Esempio: Strike 24500 è Wall in 0DTE e Wall in WEEKLY, ma non presente in MONTHLY
+2. **CONFLUENCE** (RARE - max 3-5 total levels):
+   - Condition: The SAME strike (±1%) is significant in EXACTLY TWO expirations
+   - Importance: 85-94
+   - Example: Strike 24500 is Wall in 0DTE and Wall in WEEKLY, but not present in MONTHLY
 
-3. **SINGOLO EXPIRY** (LA MAGGIORANZA dei livelli):
-   - Condizione: Livello significativo in una sola scadenza
-   - Ruoli: WALL, PIVOT, MAGNET, FRICTION
-   - Importanza: 60-84
-   - Questo dovrebbe coprire ~80% dei livelli
+3. **SINGLE EXPIRY** (THE MAJORITY of levels):
+   - Condition: Significant level in only one expiration
+   - Roles: WALL, PIVOT, MAGNET, FRICTION
+   - Importance: 60-84
+   - This should cover ~80% of levels
 
-⚠️ ERRORI COMUNI DA EVITARE:
-- NON assegnare RESONANCE a livelli che appaiono in scadenze diverse ma a strike diversi
-- NON assegnare RESONANCE solo perché uno strike è "vicino" tra le scadenze
-- Se non sei sicuro, usa il ruolo base (WALL/PIVOT/MAGNET/FRICTION)
+⚠️ COMMON MISTAKES TO AVOID:
+- DO NOT assign RESONANCE to levels that appear in different expirations but at different strikes
+- DO NOT assign RESONANCE just because a strike is "close" across expirations
+- If unsure, use the base role (WALL/PIVOT/MAGNET/FRICTION)
 
-REGOLE DI ANALISI STANDARD:
-- **CALL WALLS**: Strike sopra lo Spot con OI Call dominante. Ruolo 'WALL', Colore 'rosso'.
-- **PUT WALLS**: Strike sotto lo Spot con OI Put dominante. Ruolo 'WALL', Colore 'verde'.
-- **GAMMA FLIP**: Punto di equilibrio sentiment. Ruolo 'PIVOT', Colore 'indigo', Lato 'GAMMA_FLIP'.
+STANDARD ANALYSIS RULES:
+- **CALL WALLS**: Strike above Spot with dominant Call OI. Role 'WALL', Color 'rosso' (red).
+- **PUT WALLS**: Strike below Spot with dominant Put OI. Role 'WALL', Color 'verde' (green).
+- **GAMMA FLIP**: Sentiment equilibrium point. Role 'PIVOT', Color 'indigo', Side 'GAMMA_FLIP'.
 
-NUOVE REGOLE QUANTITATIVE AVANZATE:
+NEW ADVANCED QUANTITATIVE RULES:
 
 **Gamma Exposure (GEX):**
-- GEX positivo = dealer long gamma = mercato stabile, supporta prezzi
-- GEX negativo = dealer short gamma = mercato volatile, amplifica movimenti
-- Gamma Flip: livello critico dove GEX cumulativo cambia segno
-- Se spot vicino a gamma flip = alta probabilità di movimento direzionale
-- Usare total_gex per determinare volatilità attesa (negativo = alta vol)
+- Positive GEX = dealers long gamma = stable market, supports prices
+- Negative GEX = dealers short gamma = volatile market, amplifies movements
+- Gamma Flip: critical level where cumulative GEX changes sign
+- If spot near gamma flip = high probability of directional movement
+- Use total_gex to determine expected volatility (negative = high vol)
 
 **Max Pain:**
-- Livello dove valore opzioni è minimo = target market maker
-- Aggiungere come livello MAGNET se distanza < 2% dal spot
-- Importance: 85-95 se vicino a spot (< 1%)
-- Importance: 70-84 se moderately vicino (1-2%)
+- Level where option value is minimal = market maker target
+- Add as MAGNET level if distance < 2% from spot
+- Importance: 85-95 if near spot (< 1%)
+- Importance: 70-84 if moderately near (1-2%)
 
 **Put/Call Ratios:**
-- PCR > 1.0 = sentimento ribassista (troppo pessimismo = possibile rimbalzo?)
-- PCR < 0.7 = sentimento rialzista (troppo ottimismo = rischio correzione?)
-- Usare delta-adjusted per analisi più precisa
+- PCR > 1.0 = bearish sentiment (too much pessimism = possible bounce?)
+- PCR < 0.7 = bullish sentiment (too much optimism = correction risk?)
+- Use delta-adjusted for more precise analysis
 - Volume/OI ratio > 1.5 = unusual activity, importance +15
 
 **Volatility Skew:**
-- Skew "smirk" (put costose, skew_ratio > 1.2) = paura, supporto forte, sentiment bearish
-- Skew "reverse_smirk" (call costose, skew_ratio < 0.9) = euforia, resistenza debole, sentiment bullish
-- Skew "flat" = mercato equilibrato, neutral sentiment
-- Usare skew sentiment per validare direzione dei livelli
+- "Smirk" skew (expensive puts, skew_ratio > 1.2) = fear, strong support, bearish sentiment
+- "Reverse smirk" skew (expensive calls, skew_ratio < 0.9) = euphoria, weak resistance, bullish sentiment
+- "Flat" skew = balanced market, neutral sentiment
+- Use skew sentiment to validate level direction
 
-**INTEGRAZIONE CON LIVELLI ESISTENTI:**
-1. Se Max Pain vicino a Call/Put Wall (distanza < 1%) = CONFLUENCE, importance +10
-2. Se Gamma Flip vicino a Wall (distanza < 0.5%) = livello più importante, importance +15
-3. Usare skew sentiment per validare direzione: skew bearish rafforza put walls
+**INTEGRATION WITH EXISTING LEVELS:**
+1. If Max Pain near Call/Put Wall (distance < 1%) = CONFLUENCE, importance +10
+2. If Gamma Flip near Wall (distance < 0.5%) = more important level, importance +15
+3. Use skew sentiment to validate direction: bearish skew strengthens put walls
 4. Volume/OI ratio > 1.5 = unusual activity, importance +15
-5. Se total_gex negativo = priorità a livelli di supporto (amplificazione movimenti)
+5. If total_gex negative = prioritize support levels (movement amplification)
 
 Rispondi SOLO con un oggetto JSON valido con la seguente struttura:
 {
@@ -180,12 +180,12 @@ const callGLMAPI = async (messages: GLMMessage[], model?: string): Promise<strin
  * Formats quantitative metrics for AI analysis
  */
 const formatQuantMetrics = (quantMetrics: import('../types').QuantMetrics): string => {
-  const gexSign = quantMetrics.total_gex > 0 ? 'positivo/stabile' : 'negativo/volatile';
+  const gexSign = quantMetrics.total_gex > 0 ? 'positive/stable' : 'negative/volatile';
   const skewType = quantMetrics.volatility_skew.skew_type;
   const sentiment = quantMetrics.volatility_skew.sentiment;
   
   return `
-=== METRICHE QUANTITATIVE AVANZATE ===
+=== ADVANCED QUANTITATIVE METRICS ===
 Gamma Flip: ${quantMetrics.gamma_flip}
 Total GEX: ${quantMetrics.total_gex.toFixed(2)}B (${gexSign})
 Max Pain: ${quantMetrics.max_pain}
@@ -203,7 +203,7 @@ Volatility Skew:
 - Put IV Avg: ${quantMetrics.volatility_skew.put_iv_avg.toFixed(2)}%
 - Call IV Avg: ${quantMetrics.volatility_skew.call_iv_avg.toFixed(2)}%
 
-Top GEX Strikes (per riferimento livelli):
+Top GEX Strikes (for level reference):
 ${quantMetrics.gex_by_strike.slice(0, 5).map(s =>
   `  Strike ${s.strike}: GEX ${s.gex.toFixed(2)}B, Cumulative ${s.cumulative_gex.toFixed(2)}B`
 ).join('\n')}
@@ -229,10 +229,10 @@ export const getAnalysis = async (datasets: MarketDataset[], currentPrice: strin
             { role: 'system', content: harmonicSystemInstruction },
             {
                 role: 'user',
-                content: `ESEGUI DEEP QUANT ANALYSIS. SPOT: ${currentPrice}.
-                Fornisci segnali operativi brevi e decisi per ogni livello.
-                Usa le METRICHE QUANTITATIVE AVANZATE per identificare livelli aggiuntivi (Max Pain, Gamma Flip).
-                Integra skew sentiment e PCR per validare l'importanza dei livelli.
+                content: `EXECUTE DEEP QUANT ANALYSIS. SPOT: ${currentPrice}.
+                Provide concise and decisive trading signals for each level.
+                Use ADVANCED QUANTITATIVE METRICS to identify additional levels (Max Pain, Gamma Flip).
+                Integrate skew sentiment and PCR to validate level importance.
                 
                 ${formattedData}`
             }
@@ -250,7 +250,7 @@ export const continueChat = async (history: Content[], model?: string): Promise<
     const selectedModel = model || GLM_MODEL;
     // Convert Gemini-style history to GLM format
     const messages: GLMMessage[] = [
-        { role: 'system', content: 'Sei un assistente Quant. Spiega i flussi di Hedging.' }
+        { role: 'system', content: 'You are a Quant assistant. Explain Hedging flows.' }
     ];
     
     // Convert history to GLM message format
@@ -263,21 +263,21 @@ export const continueChat = async (history: Content[], model?: string): Promise<
     }
 
     const responseText = await callGLMAPI(messages, selectedModel);
-    return responseText || "Errore nella risposta.";
+    return responseText || "Error in response.";
 };
 
 const withRetry = async <T,>(apiCall: () => Promise<T>): Promise<T> => {
     let attempts = 0;
     while (attempts < MAX_RETRIES) {
-        try { 
-            return await apiCall(); 
+        try {
+            return await apiCall();
         } catch (error) {
             attempts++;
             if (attempts >= MAX_RETRIES) throw error;
             await new Promise(res => setTimeout(res, 1000));
         }
     }
-    throw new Error("Errore critico analisi.");
+    throw new Error("Critical analysis error.");
 };
 
 // Export model info for UI

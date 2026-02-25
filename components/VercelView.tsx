@@ -41,72 +41,72 @@ const EXPIRY_LABELS: Record<string, string> = {
 
 // Tooltips for metrics
 const TOOLTIPS = {
-  gammaFlip: `Gamma Flip - Punto di inversione gamma
+  gammaFlip: `Gamma Flip - Gamma Inversion Point
 
-COS'È: Il prezzo dove l'esposizione gamma cumulativa passa da positiva a negativa.
+WHAT IT IS: The price where cumulative gamma exposure shifts from positive to negative.
 
-COME USARLO:
-• Se prezzo > Gamma Flip: dealer comprano su rally (supporto rialzista)
-• Se prezzo < Gamma Flip: dealer vendono su drop (pressione ribassista)
-• Più vicino al prezzo attuale = maggiore probabilità di movimento direzionale
+HOW TO USE IT:
+• If price > Gamma Flip: dealers buy on rallies (bullish support)
+• If price < Gamma Flip: dealers sell on drops (bearish pressure)
+• Closer to current price = higher probability of directional movement
 
-STRATEGIA: Livello chiave per capire la direzione del mercato.`,
+STRATEGY: Key level to understand market direction.`,
 
-  totalGex: `Total GEX - Esposizione Gamma Totale
+  totalGex: `Total GEX - Total Gamma Exposure
 
-COS'È: Somma di tutta l'esposizione gamma dei dealer in miliardi di dollari.
+WHAT IT IS: Sum of all dealer gamma exposure in billions of dollars.
 
-COME USARLO:
-• GEX > 0 (positivo): Mercato stabile, dealer assorbono volatilità
-• GEX < 0 (negativo): Mercato volatile, dealer amplificano movimenti
-• |GEX| > 5B = impatto significativo
+HOW TO USE IT:
+• GEX > 0 (positive): Stable market, dealers absorb volatility
+• GEX < 0 (negative): Volatile market, dealers amplify movements
+• |GEX| > 5B = significant impact
 
-STRATEGIA: GEX negativo = evita posizioni large, usa stop loss stretti.`,
+STRATEGY: Negative GEX = avoid large positions, use tight stop losses.`,
 
-  maxPain: `Max Pain - Dolore Massimo per i Trader
+  maxPain: `Max Pain - Maximum Trader Pain
 
-COS'È: Lo strike price dove il valore totale delle opzioni in scadenza è minimo.
+WHAT IT IS: The strike price where total option value at expiration is minimal.
 
-COME USARLO:
-• I market maker spingono il prezzo verso questo livello
-• Distanza < 2% dal spot = forte attrazione magnetica
+HOW TO USE IT:
+• Market makers push price toward this level
+• Distance < 2% from spot = strong magnetic attraction
 
-STRATEGIA: Se il prezzo è lontano dal Max Pain, aspettati una mossa verso di esso.`,
+STRATEGY: If price is far from Max Pain, expect a move toward it.`,
 
-  pcrOiBased: `Put/Call Ratio basato su Open Interest
+  pcrOiBased: `Put/Call Ratio based on Open Interest
 
-COS'È: Rapporto tra Put OI e Call OI.
-• PCR > 1.0 = sentimento ribassista
-• PCR < 0.7 = sentimento rialzista
-• PCR estremi (>1.5 o <0.5) = possibile inversione contrarian`,
+WHAT IT IS: Ratio between Put OI and Call OI.
+• PCR > 1.0 = bearish sentiment
+• PCR < 0.7 = bullish sentiment
+• Extreme PCR (>1.5 or <0.5) = possible contrarian reversal`,
 
-  pcrVolume: `Put/Call Ratio basato su Volume
+  pcrVolume: `Put/Call Ratio based on Volume
 
-COS'È: Rapporto tra volume put e call di oggi.
-• Volume PCR > OI PCR = aumento attività put (nuova paura)
-• Volume PCR < OI PCR = aumento attività call (nuovo ottimismo)`,
+WHAT IT IS: Ratio between today's put and call volume.
+• Volume PCR > OI PCR = increased put activity (new fear)
+• Volume PCR < OI PCR = increased call activity (new optimism)`,
 
-  pcrWeighted: `Put/Call Ratio Ponderato
+  pcrWeighted: `Weighted Put/Call Ratio
 
-COS'È: PCR pesato per volume. Dà più peso alle opzioni con alta attività.
-• Più sensibile alle opzioni ATM e near-term`,
+WHAT IT IS: PCR weighted by volume. Gives more weight to options with high activity.
+• More sensitive to ATM and near-term options`,
 
-  pcrDeltaAdj: `Put/Call Ratio Aggiustato per Delta
+  pcrDeltaAdj: `Delta-Adjusted Put/Call Ratio
 
-COS'È: PCR pesato per il delta delle opzioni.
-• Il più sofisticato per analisi professionale del rischio.`,
+WHAT IT IS: PCR weighted by option delta.
+• The most sophisticated for professional risk analysis.`,
 
-  skewType: `Tipo di Volatility Skew
+  skewType: `Volatility Skew Type
 
-COS'È: La forma della curva di volatilità implicita.
-• SMIRK: Put costose = paura, mercato difensivo
-• REVERSE SMIRK: Call costose = euforia, mercato aggressivo`,
+WHAT IT IS: The shape of the implied volatility curve.
+• SMIRK: Expensive puts = fear, defensive market
+• REVERSE SMIRK: Expensive calls = euphoria, aggressive market`,
 
-  skewRatio: `Skew Ratio - Rapporto IV Put/Call
+  skewRatio: `Skew Ratio - Put/Call IV Ratio
 
-COS'È: Rapporto tra volatilità implicita media put e call OTM.
-• Ratio > 1.2 = SKEW RIBASSISTA
-• Ratio < 0.9 = SKEW RIALZISTA`
+WHAT IT IS: Ratio between average OTM put and call implied volatility.
+• Ratio > 1.2 = BEARISH SKEW
+• Ratio < 0.9 = BULLISH SKEW`
 };
 
 // ============================================================================
@@ -855,7 +855,7 @@ const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) =
             <div>
               <MetricLabel
                 label="Put IV"
-                tooltip="Volatilità implicita media put OTM"
+                tooltip="Average OTM put implied volatility"
                 className="text-[11px] text-gray-400 block"
               />
               <span className="text-base font-bold text-red-400 font-mono block mt-1">{(metrics.volatility_skew.put_iv_avg * 100).toFixed(0)}%</span>
@@ -863,7 +863,7 @@ const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) =
             <div>
               <MetricLabel
                 label="Call IV"
-                tooltip="Volatilità implicita media call OTM"
+                tooltip="Average OTM call implied volatility"
                 className="text-[11px] text-gray-400 block"
               />
               <span className="text-base font-bold text-green-400 font-mono block mt-1">{(metrics.volatility_skew.call_iv_avg * 100).toFixed(0)}%</span>
@@ -983,12 +983,12 @@ const LevelRow: React.FC<{
 
   const getDescription = () => {
     switch (type) {
-      case 'RESONANCE': return 'Livello con risonanza multipla';
+      case 'RESONANCE': return 'Multi-expiry resonance level';
       case 'CONFLUENCE': return `Confluence: ${expiries.join(' + ')}`;
-      case 'GAMMA_FLIP': return 'Punto di inversione gamma';
-      case 'MAX_PAIN': return 'Target magnetico MM';
-      case 'CALL_WALL': return 'Resistenza principale';
-      case 'PUT_WALL': return 'Supporto principale';
+      case 'GAMMA_FLIP': return 'Gamma inversion point';
+      case 'MAX_PAIN': return 'MM magnetic target';
+      case 'CALL_WALL': return 'Main resistance';
+      case 'PUT_WALL': return 'Main support';
       default: return '';
     }
   };

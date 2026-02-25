@@ -48,7 +48,7 @@ const App: React.FC = () => {
 
   const handleAnalysis = useCallback(async () => {
     if (datasets.length === 0 || !currentPrice.trim()) {
-      setError("Dati insufficienti.");
+      setError("Insufficient data.");
       return;
     }
     setIsLoadingAnalysis(true);
@@ -59,11 +59,11 @@ const App: React.FC = () => {
       setDailyOutlook(response.outlook);
       const initialContext: ChatMessage = {
         role: 'user',
-        parts: [{ text: `RISONANZA: Spot ${currentPrice}. Dataset totali: ${datasets.length}. Livelli: ${JSON.stringify(response.levels)}` }]
+        parts: [{ text: `RESONANCE: Spot ${currentPrice}. Total datasets: ${datasets.length}. Levels: ${JSON.stringify(response.levels)}` }]
       };
       setChatHistory([initialContext]);
     } catch (err: any) {
-      setError("Errore scansione risonanza.");
+      setError("Resonance scan error.");
     } finally {
       setIsLoadingAnalysis(false);
     }
@@ -78,7 +78,7 @@ const App: React.FC = () => {
       const modelResponse = await getChat(newHistory as Content[]);
       setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: modelResponse }] }]);
     } catch (err: any) {
-      setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: `Errore.` }] }]);
+      setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: `Error.` }] }]);
     } finally {
       setIsLoadingChat(false);
     }
@@ -86,7 +86,7 @@ const App: React.FC = () => {
 
   const handleLevelClick = useCallback((level: AnalysisLevel) => {
     if (isLoadingChat || !analysisResult) return;
-    handleChatSubmit(`Analisi strike ${level.prezzo} (${level.scadenzaTipo}). Spiega la risonanza armonica di questo livello.`);
+    handleChatSubmit(`Strike analysis ${level.prezzo} (${level.scadenzaTipo}). Explain the harmonic resonance of this level.`);
     chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [handleChatSubmit, isLoadingChat, analysisResult]);
 

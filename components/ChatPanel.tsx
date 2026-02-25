@@ -127,7 +127,7 @@ export const ChatPanel = forwardRef<HTMLDivElement, ChatPanelProps>(({ chatHisto
             <div className="p-6 rounded-full mb-4 border border-indigo-500/20">
                 <IconSparkles />
             </div>
-            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">In attesa dei dati di mercato</p>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Waiting for market data</p>
         </div>
       ) : (
         <>
@@ -149,7 +149,7 @@ export const ChatPanel = forwardRef<HTMLDivElement, ChatPanelProps>(({ chatHisto
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Chiedi all'AI..."
+                placeholder="Ask the AI..."
                 className="flex-grow bg-gray-800/40 border border-gray-700/50 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 transition-colors"
                 disabled={isLoading}
               />
