@@ -124,6 +124,7 @@ export interface AILevel {
   ruolo: 'WALL' | 'PIVOT' | 'MAGNET' | 'FRICTION' | 'CONFLUENCE' | 'RESONANCE';
   importanza: number;        // Importance score 0-100
   sintesiOperativa: string;  // Operational summary
+  motivazione?: string;      // Detailed AI explanation/reason
   scadenzaTipo?: string;     // Expiry type (e.g., "0DTE+MONTHLY")
   lato?: 'CALL' | 'PUT' | 'BOTH' | 'GAMMA_FLIP';
 }

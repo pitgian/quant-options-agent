@@ -1176,6 +1176,13 @@ const AILevelRow: React.FC<{
           </h4>
         </div>
 
+        {/* Detailed AI reason/motivazione */}
+        {level.motivazione && (
+          <p className="text-[11px] text-gray-400 leading-relaxed mt-2 pl-3.5 border-l-2 border-gray-700/50">
+            {level.motivazione}
+          </p>
+        )}
+
         <div className="flex items-center gap-3 mt-2">
           <div className="flex-grow h-2 bg-black/60 rounded-full border border-white/5 overflow-hidden">
             <div
