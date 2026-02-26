@@ -1203,7 +1203,9 @@ const LevelRow: React.FC<{
   spot: number;
   expiries?: string[];
   oi?: number;
-}> = ({ level, type, spot, expiries = [], oi }) => {
+  isMatch?: boolean;
+  wallType?: WallType;
+}> = ({ level, type, spot, expiries = [], oi, isMatch = false, wallType }) => {
   const distancePct = spot > 0 ? ((level - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
@@ -1308,16 +1310,39 @@ const LevelRow: React.FC<{
     return 50;
   };
 
+  // Wall type badge color
+  const getWallTypeBadge = () => {
+    if (!wallType) return null;
+    const colors: Record<WallType, string> = {
+      'DOMINANT': 'bg-red-500 text-white',
+      'MODERATE': 'bg-yellow-500 text-black',
+      'WEAK': 'bg-gray-500 text-white',
+      'ANOMALY': 'bg-purple-500 text-white'
+    };
+    return (
+      <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${colors[wallType]}`}>
+        {wallType}
+      </span>
+    );
+  };
+
   return (
     <div
       className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-6
-        ${t.bg} ${t.border} hover:scale-[1.01] hover:border-white/20`}
+        ${t.bg} ${t.border} hover:scale-[1.01] hover:border-white/20
+        ${isMatch ? 'ring-2 ring-cyan-500/50 bg-cyan-500/5' : ''}`}
     >
       <div className="flex-grow min-w-0">
         <div className="flex items-center gap-3 mb-2">
           <span className={`text-[10px] font-black uppercase tracking-tight px-2.5 py-0.5 rounded shadow-sm ${t.label} ${t.pulse}`}>
             {t.icon} {getLabel()}
           </span>
+          {wallType && getWallTypeBadge()}
+          {isMatch && (
+            <span className="text-[8px] font-black text-cyan-400 bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-500/30">
+              ✓ MATCH
+            </span>
+          )}
           {expiries.length > 0 && (
             <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">
               {expiries.join(' • ')}
@@ -1376,12 +1401,37 @@ const LevelRow: React.FC<{
 };
 
 /**
+ * Find matching strikes between AI and algorithmic levels
+ * Returns a Set of rounded strike prices that match within 0.3% tolerance
+ */
+function findMatchingStrikes(
+  aiLevels: AILevel[],
+  algoLevels: Array<{ level: number }>,
+  spot: number
+): Set<number> {
+  const matches = new Set<number>();
+  const tolerance = spot * 0.003; // 0.3% tolerance
+
+  for (const ai of aiLevels) {
+    for (const algo of algoLevels) {
+      if (Math.abs(ai.prezzo - algo.level) <= tolerance) {
+        matches.add(Math.round(ai.prezzo));
+        matches.add(Math.round(algo.level));
+      }
+    }
+  }
+
+  return matches;
+}
+
+/**
  * AI Level Row Component - Displays AI-generated levels with enhanced styling
  */
 const AILevelRow: React.FC<{
   level: AILevel;
   spot: number;
-}> = ({ level, spot }) => {
+  isMatch?: boolean;
+}> = ({ level, spot, isMatch = false }) => {
   const distancePct = spot > 0 ? ((level.prezzo - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
@@ -1458,13 +1508,19 @@ const AILevelRow: React.FC<{
   return (
     <div
       className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-6
-        ${t.bg} ${t.border} hover:scale-[1.01] hover:border-white/20`}
+        ${t.bg} ${t.border} hover:scale-[1.01] hover:border-white/20
+        ${isMatch ? 'ring-2 ring-cyan-500/50 bg-cyan-500/5' : ''}`}
     >
       <div className="flex-grow min-w-0">
         <div className="flex items-center gap-3 mb-2">
           <span className={`text-[10px] font-black uppercase tracking-tight px-2.5 py-0.5 rounded shadow-sm ${t.label} ${t.pulse}`}>
             {t.icon} {level.livello}
           </span>
+          {isMatch && (
+            <span className="text-[8px] font-black text-cyan-400 bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-500/30">
+              ✓ MATCH
+            </span>
+          )}
           {level.scadenzaTipo && (
             <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">
               {level.scadenzaTipo}
@@ -1854,13 +1910,9 @@ export function VercelView(): ReactElement {
     };
   }, [quantAnalysis]);
 
-  // Build levels array for display (fallback when no AI analysis)
+  // Build levels array for display (algorithmic fallback - always computed for comparison)
   const displayLevels = useMemo(() => {
-    // If AI levels are available, don't compute fallback
-    if (quantAnalysis?.aiAnalysis?.levels) {
-      return { aboveSpot: [], belowSpot: [] };
-    }
-
+    // Always compute algorithmic levels for side-by-side comparison
     if (!quantAnalysis) return { aboveSpot: [], belowSpot: [] };
 
     const levels: Array<{
@@ -2060,72 +2112,138 @@ export function VercelView(): ReactElement {
                   />
                 )}
 
-                {/* Levels Display - AI Levels or Fallback */}
-                <div className="flex flex-col gap-2">
-                  {/* AI Levels */}
-                  {aiDisplayLevels ? (
-                    <>
-                      {aiDisplayLevels.aboveSpot.map((level, i) => (
-                        <AILevelRow
-                          key={`ai-above-${i}`}
-                          level={level}
-                          spot={quantAnalysis.spot}
-                        />
-                      ))}
+                {/* Two-Column Levels Display - AI vs Algorithmic */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* AI Column (Left) */}
+                  <div className="border border-purple-500/30 rounded-xl p-4 bg-purple-500/5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <span className="text-xl">🤖</span>
+                      <h3 className="text-lg font-bold text-purple-400">AI Analysis</h3>
+                      {aiDisplayLevels && (
+                        <span className="text-[10px] font-bold text-green-400 bg-green-500/20 px-2 py-0.5 rounded-full">
+                          ACTIVE
+                        </span>
+                      )}
+                    </div>
+                    
+                    {aiDisplayLevels ? (
+                      <div className="flex flex-col gap-2">
+                        {/* AI Levels Above Spot */}
+                        {aiDisplayLevels.aboveSpot.map((level, i) => {
+                          const isMatch = displayLevels.aboveSpot.some(l =>
+                            Math.abs(l.level - level.prezzo) < quantAnalysis.spot * 0.003
+                          );
+                          return (
+                            <AILevelRow
+                              key={`ai-above-${i}`}
+                              level={level}
+                              spot={quantAnalysis.spot}
+                              isMatch={isMatch}
+                            />
+                          );
+                        })}
+
+                        {/* Spot Price Divider */}
+                        <div className="py-3 flex items-center gap-3">
+                          <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-purple-500/40 to-purple-500/40"></div>
+                          <div className="shrink-0 bg-purple-600 px-3 py-1 rounded-full border border-purple-400 shadow-[0_0_10px_rgba(147,51,234,0.3)]">
+                            <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                          </div>
+                          <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-purple-500/40 to-purple-500/40"></div>
+                        </div>
+
+                        {/* AI Levels Below Spot */}
+                        {aiDisplayLevels.belowSpot.map((level, i) => {
+                          const isMatch = displayLevels.belowSpot.some(l =>
+                            Math.abs(l.level - level.prezzo) < quantAnalysis.spot * 0.003
+                          );
+                          return (
+                            <AILevelRow
+                              key={`ai-below-${i}`}
+                              level={level}
+                              spot={quantAnalysis.spot}
+                              isMatch={isMatch}
+                            />
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <span className="text-4xl mb-2 block">🚫</span>
+                        <p className="text-sm font-medium">AI Analysis Not Available</p>
+                        <p className="text-xs text-gray-600 mt-1">Using algorithmic fallback only</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Algorithmic Column (Right) */}
+                  <div className="border border-blue-500/30 rounded-xl p-4 bg-blue-500/5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <span className="text-xl">⚙️</span>
+                      <h3 className="text-lg font-bold text-blue-400">Algorithmic Fallback</h3>
+                      <span className="text-[10px] font-bold text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded-full">
+                        {displayLevels.aboveSpot.length + displayLevels.belowSpot.length} LEVELS
+                      </span>
+                    </div>
+                    
+                    <div className="flex flex-col gap-2">
+                      {/* Algorithmic Levels Above Spot */}
+                      {displayLevels.aboveSpot.map((l, i) => {
+                        const isMatch = aiDisplayLevels?.aboveSpot.some(ai =>
+                          Math.abs(ai.prezzo - l.level) < quantAnalysis.spot * 0.003
+                        ) || false;
+                        return (
+                          <LevelRow
+                            key={`algo-above-${i}`}
+                            level={l.level}
+                            type={l.type}
+                            spot={quantAnalysis.spot}
+                            expiries={l.expiries}
+                            oi={l.oi}
+                            isMatch={isMatch}
+                          />
+                        );
+                      })}
 
                       {/* Spot Price Divider */}
-                      <div className="py-6 flex items-center gap-6">
-                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-indigo-500/40 to-indigo-500/40"></div>
-                        <div className="shrink-0 bg-indigo-600 px-6 py-2 rounded-full border border-indigo-400 shadow-[0_0_15px_rgba(79,70,229,0.3)]">
-                          <span className="text-[12px] font-black text-white uppercase tracking-[0.2em]">LIVE SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                      <div className="py-3 flex items-center gap-3">
+                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-blue-500/40 to-blue-500/40"></div>
+                        <div className="shrink-0 bg-blue-600 px-3 py-1 rounded-full border border-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.3)]">
+                          <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
                         </div>
-                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-indigo-500/40 to-indigo-500/40"></div>
+                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-blue-500/40 to-blue-500/40"></div>
                       </div>
 
-                      {aiDisplayLevels.belowSpot.map((level, i) => (
-                        <AILevelRow
-                          key={`ai-below-${i}`}
-                          level={level}
-                          spot={quantAnalysis.spot}
-                        />
-                      ))}
-                    </>
-                  ) : (
-                    /* Fallback to algorithmic levels */
-                    <>
-                      {displayLevels.aboveSpot.map((l, i) => (
-                        <LevelRow
-                          key={`above-${i}`}
-                          level={l.level}
-                          type={l.type}
-                          spot={quantAnalysis.spot}
-                          expiries={l.expiries}
-                          oi={l.oi}
-                        />
-                      ))}
-
-                      {/* Spot Price Divider */}
-                      <div className="py-6 flex items-center gap-6">
-                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-indigo-500/40 to-indigo-500/40"></div>
-                        <div className="shrink-0 bg-indigo-600 px-6 py-2 rounded-full border border-indigo-400 shadow-[0_0_15px_rgba(79,70,229,0.3)]">
-                          <span className="text-[12px] font-black text-white uppercase tracking-[0.2em]">LIVE SPOT: {quantAnalysis.spot.toFixed(2)}</span>
-                        </div>
-                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-indigo-500/40 to-indigo-500/40"></div>
-                      </div>
-
-                      {displayLevels.belowSpot.map((l, i) => (
-                        <LevelRow
-                          key={`below-${i}`}
-                          level={l.level}
-                          type={l.type}
-                          spot={quantAnalysis.spot}
-                          expiries={l.expiries}
-                          oi={l.oi}
-                        />
-                      ))}
-                    </>
-                  )}
+                      {/* Algorithmic Levels Below Spot */}
+                      {displayLevels.belowSpot.map((l, i) => {
+                        const isMatch = aiDisplayLevels?.belowSpot.some(ai =>
+                          Math.abs(ai.prezzo - l.level) < quantAnalysis.spot * 0.003
+                        ) || false;
+                        return (
+                          <LevelRow
+                            key={`algo-below-${i}`}
+                            level={l.level}
+                            type={l.type}
+                            spot={quantAnalysis.spot}
+                            expiries={l.expiries}
+                            oi={l.oi}
+                            isMatch={isMatch}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
+
+                {/* Match Legend */}
+                {aiDisplayLevels && (
+                  <div className="mt-4 flex items-center justify-center gap-4 text-xs text-gray-500">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded border-2 border-cyan-500/50 bg-cyan-500/10"></div>
+                      <span>Matching level (AI & Algo agree)</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Quantitative Metrics Display */}
                 <QuantMetricsDisplay metrics={quantAnalysis.aggregatedMetrics} />
