@@ -236,15 +236,19 @@ export function getLastUpdateTime(data: VercelOptionsData): string {
   try {
     const date = new Date(data.generated);
     
-    // Format as YYYY-MM-DD HH:MM:SS UTC
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    const hours = String(date.getUTCHours()).padStart(2, '0');
-    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-    const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+    // Format in user's local timezone with timezone indication
+    const options: Intl.DateTimeFormatOptions = {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short'
+    };
     
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} UTC`;
+    return date.toLocaleString('it-IT', options);
   } catch (error) {
     console.error('[vercelDataService] Error formatting timestamp:', error);
     return 'Unknown';
@@ -269,7 +273,8 @@ export function getDataAgeMinutes(data: VercelOptionsData): number {
   try {
     const generatedTime = new Date(data.generated).getTime();
     const now = Date.now();
-    return Math.round((now - generatedTime) / 1000 / 60);
+    const ageMinutes = Math.floor((now - generatedTime) / (1000 * 60));
+    return Math.max(0, ageMinutes); // Ensure non-negative
   } catch {
     return -1;
   }

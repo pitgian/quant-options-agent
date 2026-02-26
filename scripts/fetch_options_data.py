@@ -22,7 +22,7 @@ import os
 import re
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -685,7 +685,7 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
             symbol=symbol,  # Usa il simbolo originale (senza ^)
             spot=round(spot, 2),
             spot_source=spot_source,
-            generated=datetime.now().isoformat(),
+            generated=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             expiries=expiries
         )
         
@@ -1352,7 +1352,7 @@ def main():
     # Scarica dati per ogni simbolo
     all_data = {
         "version": "2.0",
-        "generated": datetime.now().isoformat(),
+        "generated": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
         "symbols": {}
     }
     
