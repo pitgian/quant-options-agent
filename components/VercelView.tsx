@@ -493,78 +493,384 @@ function calculateSentiment(metrics: QuantMetrics): 'bullish' | 'bearish' | 'neu
   return 'neutral';
 }
 
+// ============================================================================
+// IMPROVED FALLBACK LEVEL GENERATION SYSTEM
+// ============================================================================
+
 /**
- * Identify Call Walls (resistance) and Put Walls (support)
+ * Wall type classification based on OI + Volume analysis
+ */
+type WallType = 'DOMINANT' | 'MODERATE' | 'WEAK' | 'ANOMALY';
+
+interface ScoredLevel {
+  strike: number;
+  score: number;
+  wallType: WallType;
+  oi: number;
+  volume: number;
+  iv: number;
+  distancePct: number;
+  side: 'CALL' | 'PUT';
+}
+
+interface ConfluenceLevel {
+  strike: number;
+  expiries: string[];
+  score: number;
+  avgOi: number;
+  avgVolume: number;
+}
+
+/**
+ * Calculate multi-factor score for a level
+ * Scoring weights: OI 35% + Volume 30% + IV 15% + Proximity 20%
+ */
+function calculateLevelScore(
+  oi: number,
+  volume: number,
+  iv: number,
+  distanceFromSpot: number,
+  maxOi: number,
+  maxVolume: number
+): number {
+  // Normalize each factor to 0-100 scale
+  const oiScore = maxOi > 0 ? (oi / maxOi) * 100 : 0;
+  const volScore = maxVolume > 0 ? (volume / maxVolume) * 100 : 0;
+  const ivScore = Math.min(iv * 100, 100); // IV is typically 0-1, cap at 100%
+  
+  // Proximity score: closer to spot = higher score (max at 0% distance, min at5%+ distance)
+  const proximityScore = Math.max(0, 100 - Math.abs(distanceFromSpot) * 20);
+  
+  // Weighted combination: OI35% + Volume30% + IV15% + Proximity20%
+  return oiScore * 0.35 + volScore * 0.30 + ivScore * 0.15 + proximityScore * 0.20;
+}
+
+/**
+ * Classify wall type based on OI and Volume relative to peers
+ */
+function classifyWallType(oi: number, volume: number, avgOi: number, avgVolume: number): WallType {
+  const oiRatio = avgOi > 0 ? oi / avgOi : 0;
+  const volRatio = avgVolume > 0 ? volume / avgVolume : 0;
+  const combinedRatio = (oiRatio + volRatio) / 2;
+  
+  // Check for anomaly: high IV but low OI/Volume (potential manipulation or data error)
+  if (combinedRatio < 0.5) {
+    return 'ANOMALY';
+  }
+  
+  if (combinedRatio >= 2.0) {
+    return 'DOMINANT';
+  } else if (combinedRatio >= 1.0) {
+    return 'MODERATE';
+  } else {
+    return 'WEAK';
+  }
+}
+
+/**
+ * Improved Call/Put Wall identification with multi-factor scoring
+ * Returns walls classified by strength
+ */
+function calculateWallsEnhanced(
+  options: OptionData[],
+  spot: number,
+  topN: number = 3
+): {
+  callWalls: ScoredLevel[];
+  putWalls: ScoredLevel[];
+} {
+  // Filter valid options
+  const callOptions = options.filter(opt => opt.side === 'CALL' && opt.strike > spot && opt.oi > 0);
+  const putOptions = options.filter(opt => opt.side === 'PUT' && opt.strike < spot && opt.oi > 0);
+  
+  // Calculate max values for normalization
+  const maxCallOi = Math.max(...callOptions.map(o => o.oi), 1);
+  const maxCallVol = Math.max(...callOptions.map(o => o.vol), 1);
+  const maxPutOi = Math.max(...putOptions.map(o => o.oi), 1);
+  const maxPutVol = Math.max(...putOptions.map(o => o.vol), 1);
+  
+  // Calculate averages for classification
+  const avgCallOi = callOptions.length > 0 ? callOptions.reduce((s, o) => s + o.oi, 0) / callOptions.length : 1;
+  const avgCallVol = callOptions.length > 0 ? callOptions.reduce((s, o) => s + o.vol, 0) / callOptions.length : 1;
+  const avgPutOi = putOptions.length > 0 ? putOptions.reduce((s, o) => s + o.oi, 0) / putOptions.length : 1;
+  const avgPutVol = putOptions.length > 0 ? putOptions.reduce((s, o) => s + o.vol, 0) / putOptions.length : 1;
+  
+  // Score and sort call walls
+  const scoredCalls: ScoredLevel[] = callOptions.map(opt => {
+    const distancePct = spot > 0 ? ((opt.strike - spot) / spot) * 100 : 0;
+    const score = calculateLevelScore(opt.oi, opt.vol, opt.iv, distancePct, maxCallOi, maxCallVol);
+    const wallType = classifyWallType(opt.oi, opt.vol, avgCallOi, avgCallVol);
+    return {
+      strike: opt.strike,
+      score,
+      wallType,
+      oi: opt.oi,
+      volume: opt.vol,
+      iv: opt.iv,
+      distancePct,
+      side: 'CALL' as const
+    };
+  }).sort((a, b) => b.score - a.score)
+    .slice(0, topN);
+  
+  // Score and sort put walls
+  const scoredPuts: ScoredLevel[] = putOptions.map(opt => {
+    const distancePct = spot > 0 ? ((opt.strike - spot) / spot) * 100 : 0;
+    const score = calculateLevelScore(opt.oi, opt.vol, opt.iv, distancePct, maxPutOi, maxPutVol);
+    const wallType = classifyWallType(opt.oi, opt.vol, avgPutOi, avgPutVol);
+    return {
+      strike: opt.strike,
+      score,
+      wallType,
+      oi: opt.oi,
+      volume: opt.vol,
+      iv: opt.iv,
+      distancePct,
+      side: 'PUT' as const
+    };
+  }).sort((a, b) => b.score - a.score)
+    .slice(0, topN);
+  
+  return { callWalls: scoredCalls, putWalls: scoredPuts };
+}
+
+/**
+ * Legacy compatibility wrapper for calculateWallsEnhanced
  */
 function calculateWalls(options: OptionData[], spot: number, topN: number = 3): { callWalls: number[]; putWalls: number[] } {
-  // Call walls: strike > spot, sorted by OI descending
-  const calls = options
-    .filter(opt => opt.side === 'CALL' && opt.strike > spot && opt.oi > 0)
-    .sort((a, b) => b.oi - a.oi)
-    .slice(0, topN)
-    .map(opt => opt.strike);
-
-  // Put walls: strike < spot, sorted by OI descending
-  const puts = options
-    .filter(opt => opt.side === 'PUT' && opt.strike < spot && opt.oi > 0)
-    .sort((a, b) => b.oi - a.oi)
-    .slice(0, topN)
-    .map(opt => opt.strike);
-
-  return { callWalls: calls, putWalls: puts };
+  const enhanced = calculateWallsEnhanced(options, spot, topN);
+  return {
+    callWalls: enhanced.callWalls.map(w => w.strike),
+    putWalls: enhanced.putWalls.map(w => w.strike)
+  };
 }
 
 /**
- * Find confluence levels (strike appears in multiple expiries)
+ * Tolerance constants for level clustering
+ */
+const RESONANCE_TOLERANCE_PCT = 0.3; // ±0.3% for RESONANCE
+const CONFLUENCE_TOLERANCE_PCT = 0.5; // ±0.5% for CONFLUENCE
+const MAX_RESONANCE_LEVELS = 2;
+const MAX_CONFLUENCE_LEVELS = 5;
+
+/**
+ * Cluster strikes within tolerance and return representative strike
+ */
+function clusterStrikes(strikes: number[], tolerancePct: number, spot: number): number[][] {
+  if (strikes.length === 0) return [];
+  
+  const sorted = [...strikes].sort((a, b) => a - b);
+  const clusters: number[][] = [];
+  let currentCluster = [sorted[0]];
+  
+  for (let i = 1; i < sorted.length; i++) {
+    const prevStrike = currentCluster[0];
+    const currStrike = sorted[i];
+    const tolerance = prevStrike * (tolerancePct / 100);
+    
+    if (Math.abs(currStrike - prevStrike) <= tolerance) {
+      currentCluster.push(currStrike);
+    } else {
+      clusters.push(currentCluster);
+      currentCluster = [currStrike];
+    }
+  }
+  clusters.push(currentCluster);
+  
+  return clusters;
+}
+
+/**
+ * Get representative strike from a cluster (weighted by OI)
+ */
+function getClusterRepresentative(
+  cluster: number[],
+  options: OptionData[]
+): number {
+  if (cluster.length === 1) return cluster[0];
+  
+  // Weight by OI
+  let totalOi = 0;
+  let weightedSum = 0;
+  
+  for (const strike of cluster) {
+    const opt = options.find(o => o.strike === strike);
+    const oi = opt?.oi || 0;
+    weightedSum += strike * oi;
+    totalOi += oi;
+  }
+  
+  return totalOi > 0 ? weightedSum / totalOi : cluster[Math.floor(cluster.length / 2)];
+}
+
+/**
+ * Find confluence levels with strict tolerance and limits
+ * Uses ±0.5% tolerance and limits to max 5 levels
+ */
+function findConfluenceLevelsEnhanced(
+  expiries: ExpiryData[],
+  spot: number
+): ConfluenceLevel[] {
+  if (expiries.length < 2) return [];
+  
+  // Collect all options with expiry info
+  const strikeData: Map<number, { expiries: string[]; oi: number[]; vol: number[] }> = new Map();
+  
+  for (const expiry of expiries) {
+    const seenStrikes = new Set<number>();
+    
+    for (const opt of expiry.options) {
+      if (seenStrikes.has(opt.strike)) continue;
+      seenStrikes.add(opt.strike);
+      
+      if (!strikeData.has(opt.strike)) {
+        strikeData.set(opt.strike, { expiries: [], oi: [], vol: [] });
+      }
+      const data = strikeData.get(opt.strike)!;
+      data.expiries.push(expiry.label);
+      data.oi.push(opt.oi);
+      data.vol.push(opt.vol);
+    }
+  }
+  
+  // Filter to strikes appearing in exactly 2 expiries (not all - those are resonance)
+  const totalExpiries = expiries.length;
+  const confluenceStrikes: number[] = [];
+  const strikeScores: Map<number, number> = new Map();
+  
+  const allOptions = expiries.flatMap(e => e.options);
+  const maxOi = Math.max(...allOptions.map(o => o.oi), 1);
+  const maxVol = Math.max(...allOptions.map(o => o.vol), 1);
+  
+  for (const [strike, data] of strikeData) {
+    // Confluence: appears in 2+ expiries but NOT all (resonance is for all)
+    if (data.expiries.length >= 2 && data.expiries.length < totalExpiries) {
+      confluenceStrikes.push(strike);
+      const avgOi = data.oi.reduce((a, b) => a + b, 0) / data.oi.length;
+      const avgVol = data.vol.reduce((a, b) => a + b, 0) / data.vol.length;
+      const distancePct = spot > 0 ? Math.abs((strike - spot) / spot) * 100 : 0;
+      const score = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
+      strikeScores.set(strike, score);
+    }
+  }
+  
+  // Cluster strikes within tolerance
+  const clusters = clusterStrikes(confluenceStrikes, CONFLUENCE_TOLERANCE_PCT, spot);
+  
+  // Get representatives and score them
+  const candidates: ConfluenceLevel[] = clusters.map(cluster => {
+    const representative = getClusterRepresentative(cluster, allOptions);
+    const originalData = strikeData.get(cluster[0])!;
+    const avgScore = cluster.reduce((sum, s) => sum + (strikeScores.get(s) || 0), 0) / cluster.length;
+    
+    return {
+      strike: representative,
+      expiries: originalData.expiries,
+      score: avgScore,
+      avgOi: originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length,
+      avgVolume: originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length
+    };
+  });
+  
+  // Sort by score and limit to MAX_CONFLUENCE_LEVELS
+  return candidates
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_CONFLUENCE_LEVELS);
+}
+
+/**
+ * Legacy compatibility wrapper for findConfluenceLevels
  */
 function findConfluenceLevels(expiries: ExpiryData[], spot: number): Map<number, string[]> {
-  const strikeExpiries: Map<number, string[]> = new Map();
-
-  for (const expiry of expiries) {
-    const strikes = new Set(expiry.options.map(opt => opt.strike));
-    for (const strike of strikes) {
-      if (!strikeExpiries.has(strike)) {
-        strikeExpiries.set(strike, []);
-      }
-      strikeExpiries.get(strike)!.push(expiry.label);
-    }
+  const enhanced = findConfluenceLevelsEnhanced(expiries, spot);
+  const result = new Map<number, string[]>();
+  for (const level of enhanced) {
+    result.set(level.strike, level.expiries);
   }
-
-  // Filter to only strikes appearing in 2+ expiries
-  const confluenceLevels: Map<number, string[]> = new Map();
-  for (const [strike, expiryList] of strikeExpiries) {
-    if (expiryList.length >= 2) {
-      confluenceLevels.set(strike, expiryList);
-    }
-  }
-
-  return confluenceLevels;
+  return result;
 }
 
 /**
- * Find resonance levels (strike appears in ALL expiries)
+ * Find resonance levels with strict tolerance and limits
+ * Uses ±0.3% tolerance and limits to max 2 levels
+ */
+function findResonanceLevelsEnhanced(
+  expiries: ExpiryData[],
+  spot: number
+): ConfluenceLevel[] {
+  if (expiries.length < 2) return [];
+  
+  // Collect strikes appearing in ALL expiries
+  const strikeCounts: Map<number, { count: number; oi: number[]; vol: number[] }> = new Map();
+  
+  for (const expiry of expiries) {
+    const seenStrikes = new Set<number>();
+    
+    for (const opt of expiry.options) {
+      if (seenStrikes.has(opt.strike)) continue;
+      seenStrikes.add(opt.strike);
+      
+      if (!strikeCounts.has(opt.strike)) {
+        strikeCounts.set(opt.strike, { count: 0, oi: [], vol: [] });
+      }
+      const data = strikeCounts.get(opt.strike)!;
+      data.count++;
+      data.oi.push(opt.oi);
+      data.vol.push(opt.vol);
+    }
+  }
+  
+  // Filter to strikes appearing in ALL expiries
+  const totalExpiries = expiries.length;
+  const resonanceStrikes: number[] = [];
+  const strikeScores: Map<number, number> = new Map();
+  
+  const allOptions = expiries.flatMap(e => e.options);
+  const maxOi = Math.max(...allOptions.map(o => o.oi), 1);
+  const maxVol = Math.max(...allOptions.map(o => o.vol), 1);
+  
+  for (const [strike, data] of strikeCounts) {
+    if (data.count === totalExpiries) {
+      resonanceStrikes.push(strike);
+      const avgOi = data.oi.reduce((a, b) => a + b, 0) / data.oi.length;
+      const avgVol = data.vol.reduce((a, b) => a + b, 0) / data.vol.length;
+      const distancePct = spot > 0 ? Math.abs((strike - spot) / spot) * 100 : 0;
+      const score = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
+      strikeScores.set(strike, score);
+    }
+  }
+  
+  // Cluster strikes within tolerance
+  const clusters = clusterStrikes(resonanceStrikes, RESONANCE_TOLERANCE_PCT, spot);
+  
+  // Get representatives and score them
+  const candidates: ConfluenceLevel[] = clusters.map(cluster => {
+    const representative = getClusterRepresentative(cluster, allOptions);
+    const originalData = strikeCounts.get(cluster[0])!;
+    const avgScore = cluster.reduce((sum, s) => sum + (strikeScores.get(s) || 0), 0) / cluster.length;
+    const expiryLabels = expiries.map(e => e.label);
+    
+    return {
+      strike: representative,
+      expiries: expiryLabels,
+      score: avgScore,
+      avgOi: originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length,
+      avgVolume: originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length
+    };
+  });
+  
+  // Sort by score and limit to MAX_RESONANCE_LEVELS
+  return candidates
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_RESONANCE_LEVELS);
+}
+
+/**
+ * Legacy compatibility wrapper for findResonanceLevels
  */
 function findResonanceLevels(expiries: ExpiryData[], spot: number): number[] {
-  if (expiries.length < 2) return [];
-
-  const strikeCounts: Map<number, number> = new Map();
-
-  for (const expiry of expiries) {
-    const strikes = new Set(expiry.options.map(opt => opt.strike));
-    for (const strike of strikes) {
-      strikeCounts.set(strike, (strikeCounts.get(strike) || 0) + 1);
-    }
-  }
-
-  // Resonance = appears in all expiries
-  const resonanceLevels: number[] = [];
-  for (const [strike, count] of strikeCounts) {
-    if (count === expiries.length) {
-      resonanceLevels.push(strike);
-    }
-  }
-
-  return resonanceLevels.sort((a, b) => a - b);
+  const enhanced = findResonanceLevelsEnhanced(expiries, spot);
+  return enhanced.map(l => l.strike).sort((a, b) => a - b);
 }
 
 // ============================================================================
