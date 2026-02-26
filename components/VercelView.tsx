@@ -1923,6 +1923,26 @@ export function VercelView(): ReactElement {
     }> = [];
 
     const spot = quantAnalysis.spot;
+    
+    // Track used strikes to avoid duplicates (with ±0.5% tolerance for confluence matching)
+    const usedStrikes = new Set<number>();
+    const TOLERANCE_PCT = 0.5; // ±0.5% tolerance for strike matching
+    
+    // Helper function to check if a strike is already used (within tolerance)
+    const isStrikeUsed = (strike: number): boolean => {
+      for (const usedStrike of usedStrikes) {
+        const tolerance = usedStrike * (TOLERANCE_PCT / 100);
+        if (Math.abs(strike - usedStrike) <= tolerance) {
+          return true;
+        }
+      }
+      return false;
+    };
+    
+    // Helper function to add strike to used set (rounded for consistency)
+    const markStrikeUsed = (strike: number): void => {
+      usedStrikes.add(Math.round(strike));
+    };
 
     // Add Gamma Flip
     if (quantAnalysis.aggregatedMetrics) {
@@ -1940,68 +1960,84 @@ export function VercelView(): ReactElement {
       });
     }
 
-    // Add Resonance levels
+    // 1. Add Resonance levels first (highest priority)
     for (const strike of quantAnalysis.resonanceLevels) {
       levels.push({
         level: strike,
         type: 'RESONANCE',
         expiries: ['0DTE', 'WEEKLY', 'MONTHLY']
       });
+      markStrikeUsed(strike);
     }
 
-    // Add Confluence levels
+    // 2. Add Confluence levels (skip if already added as resonance)
     for (const [strike, expiryList] of quantAnalysis.confluenceLevels) {
-      // Skip if already added as resonance
-      if (!quantAnalysis.resonanceLevels.includes(strike)) {
+      // Skip if already added as resonance (check with tolerance)
+      if (!isStrikeUsed(strike)) {
         levels.push({
           level: strike,
           type: 'CONFLUENCE',
           expiries: expiryList
         });
+        markStrikeUsed(strike);
       }
     }
 
-    // Add Call Walls - use selectedLevels OI if available, otherwise lookup
+    // 3. Add Call Walls - use selectedLevels OI if available, otherwise lookup
+    // Skip if strike is already used in RESONANCE or CONFLUENCE
     if (quantAnalysis.selectedLevels) {
       for (const wall of quantAnalysis.selectedLevels.call_walls) {
-        levels.push({
-          level: wall.strike,
-          type: 'CALL_WALL',
-          expiries: [wall.expiry],
-          oi: wall.oi
-        });
+        if (!isStrikeUsed(wall.strike)) {
+          levels.push({
+            level: wall.strike,
+            type: 'CALL_WALL',
+            expiries: [wall.expiry],
+            oi: wall.oi
+          });
+          markStrikeUsed(wall.strike);
+        }
       }
     } else {
       for (const strike of quantAnalysis.walls.callWalls) {
-        const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'CALL');
-        levels.push({
-          level: strike,
-          type: 'CALL_WALL',
-          expiries: ['0DTE'],
-          oi: opt?.oi
-        });
+        if (!isStrikeUsed(strike)) {
+          const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'CALL');
+          levels.push({
+            level: strike,
+            type: 'CALL_WALL',
+            expiries: ['0DTE'],
+            oi: opt?.oi
+          });
+          markStrikeUsed(strike);
+        }
       }
     }
 
-    // Add Put Walls - use selectedLevels OI if available, otherwise lookup
+    // 4. Add Put Walls - use selectedLevels OI if available, otherwise lookup
+    // Skip if strike is already used in RESONANCE or CONFLUENCE
     if (quantAnalysis.selectedLevels) {
       for (const wall of quantAnalysis.selectedLevels.put_walls) {
-        levels.push({
-          level: wall.strike,
-          type: 'PUT_WALL',
-          expiries: [wall.expiry],
-          oi: wall.oi
-        });
+        if (!isStrikeUsed(wall.strike)) {
+          levels.push({
+            level: wall.strike,
+            type: 'PUT_WALL',
+            expiries: [wall.expiry],
+            oi: wall.oi
+          });
+          markStrikeUsed(wall.strike);
+        }
       }
     } else {
       for (const strike of quantAnalysis.walls.putWalls) {
-        const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'PUT');
-        levels.push({
-          level: strike,
-          type: 'PUT_WALL',
-          expiries: ['0DTE'],
-          oi: opt?.oi
-        });
+        if (!isStrikeUsed(strike)) {
+          const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'PUT');
+          levels.push({
+            level: strike,
+            type: 'PUT_WALL',
+            expiries: ['0DTE'],
+            oi: opt?.oi
+          });
+          markStrikeUsed(strike);
+        }
       }
     }
 
