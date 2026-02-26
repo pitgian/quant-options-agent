@@ -1777,7 +1777,7 @@ function OptionsChart({
                 <div
                   key={strike}
                   className="relative flex items-center justify-end"
-                  style={{ height: `${barHeight + barGap}px` }}
+                  style={{ height: `${barHeight + barGap}px`, width: '100%' }}
                 >
                   {/* OI Bar */}
                   <div
@@ -1835,7 +1835,7 @@ function OptionsChart({
                 <div
                   key={strike}
                   className="relative flex items-center"
-                  style={{ height: `${barHeight + barGap}px` }}
+                  style={{ height: `${barHeight + barGap}px`, width: '100%' }}
                 >
                   {/* OI Bar */}
                   <div
