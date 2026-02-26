@@ -1783,7 +1783,7 @@ function OptionsChart({
                   <div
                     className="absolute h-3 rounded-l-sm bg-gradient-to-l from-green-500 to-green-400 cursor-pointer transition-all hover:from-green-400 hover:to-green-300"
                     style={{
-                      right: `${chartWidth - oiWidth}px`,
+                      right: '0',
                       width: `${oiWidth}px`,
                       top: '2px'
                     }}
@@ -1793,7 +1793,7 @@ function OptionsChart({
                   <div
                     className="absolute h-2 rounded-l-sm bg-green-300/40 cursor-pointer transition-all hover:bg-green-300/60"
                     style={{
-                      right: `${chartWidth - volWidth}px`,
+                      right: '0',
                       width: `${volWidth}px`,
                       top: '12px'
                     }}
