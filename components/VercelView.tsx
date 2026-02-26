@@ -1637,58 +1637,256 @@ const SentimentDisplay: React.FC<{
 };
 
 /**
- * Options table component
+ * Options Chart Component - Visual horizontal bar chart for OI and Volume
  */
-function OptionsTable({
-  title,
-  options,
-  side
+function OptionsChart({
+  callOptions,
+  putOptions,
+  spot
 }: {
-  title: string;
-  options: OptionData[];
-  side: 'CALL' | 'PUT';
+  callOptions: OptionData[];
+  putOptions: OptionData[];
+  spot: number;
 }): ReactElement {
-  const sideColor = side === 'CALL' ? 'text-green-400' : 'text-red-400';
-  const borderColor = side === 'CALL' ? 'border-green-500/30' : 'border-red-500/30';
+  const [hoveredBar, setHoveredBar] = useState<{type: 'CALL' | 'PUT'; option: OptionData; x: number; y: number} | null>(null);
+
+  // If no options, show empty state
+  if (callOptions.length === 0 && putOptions.length === 0) {
+    return (
+      <div className="bg-gray-800/30 rounded-lg p-8 text-center text-gray-500">
+        No options data available
+      </div>
+    );
+  }
+
+  // Combine and sort all strikes for consistent Y-axis
+  const allStrikes = new Set<number>();
+  callOptions.forEach(opt => allStrikes.add(opt.strike));
+  putOptions.forEach(opt => allStrikes.add(opt.strike));
+  const sortedStrikes = Array.from(allStrikes).sort((a, b) => b - a); // Descending for Y-axis top-to-bottom
+
+  // Find max values for scaling
+  const maxOi = Math.max(
+    ...callOptions.map(o => o.oi || 0),
+    ...putOptions.map(o => o.oi || 0),
+    1
+  );
+  const maxVol = Math.max(
+    ...callOptions.map(o => o.vol || 0),
+    ...putOptions.map(o => o.vol || 0),
+    1
+  );
+
+  // Create lookup maps
+  const callMap = new Map(callOptions.map(o => [o.strike, o]));
+  const putMap = new Map(putOptions.map(o => [o.strike, o]));
+
+  // Chart dimensions
+  const barHeight = 24;
+  const barGap = 4;
+  const labelWidth = 80;
+  const chartWidth = 200; // Width for each side (call/put)
+  const chartHeight = sortedStrikes.length * (barHeight + barGap);
+
+  // Handle mouse events for tooltips
+  const handleMouseEnter = (type: 'CALL' | 'PUT', option: OptionData, event: React.MouseEvent) => {
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    setHoveredBar({
+      type,
+      option,
+      x: event.clientX,
+      y: event.clientY
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setHoveredBar(null);
+  };
 
   return (
-    <div className={`bg-gray-800/30 rounded-lg border ${borderColor} overflow-hidden`}>
-      <div className={`px-4 py-2 bg-gray-800/50 border-b ${borderColor}`}>
-        <h5 className={`font-medium ${sideColor}`}>{title}</h5>
+    <div className="relative" onMouseLeave={handleMouseLeave}>
+      {/* Legend */}
+      <div className="flex items-center justify-center gap-6 mb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-3 rounded-sm bg-gradient-to-r from-green-500 to-green-400"></div>
+          <span className="text-xs text-gray-400">CALL (OI/Volume)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-3 rounded-sm bg-gradient-to-r from-red-400 to-red-500"></div>
+          <span className="text-xs text-gray-400">PUT (OI/Volume)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-yellow-400/30 border border-yellow-400"></div>
+          <span className="text-xs text-gray-400">Spot: {formatCurrency(spot)}</span>
+        </div>
       </div>
+
+      {/* Chart Container */}
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-gray-500 text-xs uppercase tracking-wider">
-              <th className="px-4 py-2 text-left">Strike</th>
-              <th className="px-4 py-2 text-right">OI</th>
-              <th className="px-4 py-2 text-right">Vol</th>
-              <th className="px-4 py-2 text-right">IV</th>
-            </tr>
-          </thead>
-          <tbody>
-            {options.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-4 text-center text-gray-500">
-                  No {side} options available
-                </td>
-              </tr>
-            ) : (
-              options.map((opt, idx) => (
-                <tr
-                  key={`${opt.strike}-${idx}`}
-                  className="border-t border-gray-700/30 hover:bg-gray-700/20 transition-colors"
+        <div
+          className="relative mx-auto"
+          style={{
+            width: `${labelWidth + chartWidth * 2 + 40}px`,
+            minWidth: '100%'
+          }}
+        >
+          {/* Center strike labels */}
+          <div
+            className="absolute left-0 top-0 flex flex-col justify-center"
+            style={{
+              width: `${labelWidth}px`,
+              height: `${chartHeight}px`
+            }}
+          >
+            {sortedStrikes.map((strike) => {
+              const isSpot = Math.abs(strike - spot) < spot * 0.001;
+              const isITM = strike < spot;
+              return (
+                <div
+                  key={strike}
+                  className={`flex items-center justify-end pr-2 text-xs font-mono ${
+                    isSpot ? 'text-yellow-400 font-bold' : isITM ? 'text-gray-300' : 'text-gray-500'
+                  }`}
+                  style={{ height: `${barHeight + barGap}px` }}
                 >
-                  <td className="px-4 py-2 font-mono">{formatCurrency(opt.strike)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{formatNumber(opt.oi, 0)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{formatNumber(opt.vol, 0)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{formatNumber(opt.iv * 100, 1)}%</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+                  {formatCurrency(strike)}
+                  {isSpot && <span className="ml-1 text-yellow-400">●</span>}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* CALL bars (left side) */}
+          <div
+            className="absolute flex flex-col justify-center"
+            style={{
+              left: `${labelWidth}px`,
+              width: `${chartWidth}px`,
+              height: `${chartHeight}px`
+            }}
+          >
+            {sortedStrikes.map((strike) => {
+              const opt = callMap.get(strike);
+              if (!opt) {
+                return <div key={strike} style={{ height: `${barHeight + barGap}px` }} />;
+              }
+              const oiWidth = (opt.oi / maxOi) * (chartWidth - 20);
+              const volWidth = (opt.vol / maxVol) * (chartWidth - 20);
+              
+              return (
+                <div
+                  key={strike}
+                  className="relative flex items-center justify-end"
+                  style={{ height: `${barHeight + barGap}px` }}
+                >
+                  {/* OI Bar */}
+                  <div
+                    className="absolute h-3 rounded-l-sm bg-gradient-to-l from-green-500 to-green-400 cursor-pointer transition-all hover:from-green-400 hover:to-green-300"
+                    style={{
+                      right: `${chartWidth - oiWidth}px`,
+                      width: `${oiWidth}px`,
+                      top: '2px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('CALL', opt, e)}
+                  />
+                  {/* Volume Bar (overlaid, semi-transparent) */}
+                  <div
+                    className="absolute h-2 rounded-l-sm bg-green-300/40 cursor-pointer transition-all hover:bg-green-300/60"
+                    style={{
+                      right: `${chartWidth - volWidth}px`,
+                      width: `${volWidth}px`,
+                      top: '12px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('CALL', opt, e)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Center divider */}
+          <div
+            className="absolute bg-gray-600"
+            style={{
+              left: `${labelWidth + chartWidth}px`,
+              width: '1px',
+              height: `${chartHeight}px`
+            }}
+          />
+
+          {/* PUT bars (right side) */}
+          <div
+            className="absolute flex flex-col justify-center"
+            style={{
+              left: `${labelWidth + chartWidth + 1}px`,
+              width: `${chartWidth}px`,
+              height: `${chartHeight}px`
+            }}
+          >
+            {sortedStrikes.map((strike) => {
+              const opt = putMap.get(strike);
+              if (!opt) {
+                return <div key={strike} style={{ height: `${barHeight + barGap}px` }} />;
+              }
+              const oiWidth = (opt.oi / maxOi) * (chartWidth - 20);
+              const volWidth = (opt.vol / maxVol) * (chartWidth - 20);
+              
+              return (
+                <div
+                  key={strike}
+                  className="relative flex items-center"
+                  style={{ height: `${barHeight + barGap}px` }}
+                >
+                  {/* OI Bar */}
+                  <div
+                    className="absolute h-3 rounded-r-sm bg-gradient-to-r from-red-400 to-red-500 cursor-pointer transition-all hover:from-red-300 hover:to-red-400"
+                    style={{
+                      left: '0',
+                      width: `${oiWidth}px`,
+                      top: '2px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('PUT', opt, e)}
+                  />
+                  {/* Volume Bar (overlaid, semi-transparent) */}
+                  <div
+                    className="absolute h-2 rounded-r-sm bg-red-300/40 cursor-pointer transition-all hover:bg-red-300/60"
+                    style={{
+                      left: '0',
+                      width: `${volWidth}px`,
+                      top: '12px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('PUT', opt, e)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
+
+      {/* Tooltip */}
+      {hoveredBar && (
+        <div
+          className="fixed z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-3 text-sm pointer-events-none"
+          style={{
+            left: `${hoveredBar.x + 10}px`,
+            top: `${hoveredBar.y + 10}px`,
+            transform: 'translate(0, 0)'
+          }}
+        >
+          <div className={`font-bold mb-1 ${hoveredBar.type === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>
+            {hoveredBar.type} @ {formatCurrency(hoveredBar.option.strike)}
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-300">
+            <span className="text-gray-500">OI:</span>
+            <span className="font-mono text-right">{formatNumber(hoveredBar.option.oi, 0)}</span>
+            <span className="text-gray-500">Volume:</span>
+            <span className="font-mono text-right">{formatNumber(hoveredBar.option.vol, 0)}</span>
+            <span className="text-gray-500">IV:</span>
+            <span className="font-mono text-right">{formatNumber(hoveredBar.option.iv * 100, 1)}%</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2302,10 +2500,11 @@ export function VercelView(): ReactElement {
                         </h4>
                       </div>
                       <div className="p-4">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                          <OptionsTable title="Top 5 CALL Levels (by OI)" options={topCalls} side="CALL" />
-                          <OptionsTable title="Top 5 PUT Levels (by OI)" options={topPuts} side="PUT" />
-                        </div>
+                        <OptionsChart
+                          callOptions={topCalls}
+                          putOptions={topPuts}
+                          spot={activeSymbolData.spot}
+                        />
                       </div>
                     </div>
                   );
