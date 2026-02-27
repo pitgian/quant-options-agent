@@ -1676,6 +1676,21 @@ function OptionsChart({
     ...putOptions.map(o => o.vol || 0),
     1
   );
+  
+  // DEBUG: Log chart data
+  console.log('=== OptionsChart DEBUG ===');
+  console.log('callOptions count:', callOptions.length);
+  console.log('putOptions count:', putOptions.length);
+  console.log('sortedStrikes count:', sortedStrikes.length);
+  console.log('maxOi:', maxOi, 'maxVol:', maxVol);
+  console.log('chartHeight:', chartHeight, 'chartWidth:', chartWidth);
+  if (callOptions.length > 0) {
+    console.log('Sample CALL:', callOptions[0]);
+  }
+  if (putOptions.length > 0) {
+    console.log('Sample PUT:', putOptions[0]);
+  }
+  console.log('========================');
 
   // Create lookup maps
   const callMap = new Map(callOptions.map(o => [o.strike, o]));
@@ -1722,12 +1737,13 @@ function OptionsChart({
       </div>
 
       {/* Chart Container */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto border-2 border-blue-500">
         <div
-          className="relative mx-auto"
+          className="relative mx-auto border-2 border-yellow-500"
           style={{
             width: `${labelWidth + chartWidth * 2 + 40}px`,
-            minWidth: '100%'
+            minWidth: '100%',
+            height: `${chartHeight}px`
           }}
         >
           {/* Center strike labels */}
@@ -1773,10 +1789,13 @@ function OptionsChart({
               const oiWidth = (opt.oi / maxOi) * (chartWidth - 20);
               const volWidth = (opt.vol / maxVol) * (chartWidth - 20);
               
+              // DEBUG: Log bar widths
+              console.log(`CALL ${strike}: oiWidth=${oiWidth}px, volWidth=${volWidth}px, oi=${opt.oi}, vol=${opt.vol}`);
+              
               return (
                 <div
                   key={strike}
-                  className="relative flex items-center justify-end"
+                  className="relative flex items-center justify-end border border-dashed border-green-900"
                   style={{ height: `${barHeight + barGap}px`, width: '100%' }}
                 >
                   {/* OI Bar */}
@@ -1784,8 +1803,9 @@ function OptionsChart({
                     className="absolute h-3 rounded-l-sm bg-gradient-to-l from-green-500 to-green-400 cursor-pointer transition-all hover:from-green-400 hover:to-green-300"
                     style={{
                       right: '0',
-                      width: `${oiWidth}px`,
-                      top: '2px'
+                      width: `${Math.max(oiWidth, 2)}px`,
+                      top: '2px',
+                      backgroundColor: oiWidth > 0 ? undefined : 'white'
                     }}
                     onMouseEnter={(e) => handleMouseEnter('CALL', opt, e)}
                   />
@@ -1794,7 +1814,7 @@ function OptionsChart({
                     className="absolute h-2 rounded-l-sm bg-green-300/40 cursor-pointer transition-all hover:bg-green-300/60"
                     style={{
                       right: '0',
-                      width: `${volWidth}px`,
+                      width: `${Math.max(volWidth, 2)}px`,
                       top: '12px'
                     }}
                     onMouseEnter={(e) => handleMouseEnter('CALL', opt, e)}

@@ -8,16 +8,6 @@ export default defineConfig(({ mode }) => {
     
     const plugins = [react()];
     
-    // Solo in development: usa il plugin Python server
-    if (mode === 'development') {
-      try {
-        const { pythonServerPlugin } = require('./vitePlugins/pythonServerPlugin');
-        plugins.push(pythonServerPlugin());
-      } catch (e) {
-        console.warn('Python server plugin not available:', e);
-      }
-    }
-    
     // Copy data folder to dist for Vercel deployment
     plugins.push(viteStaticCopy({
       targets: [
