@@ -650,8 +650,8 @@ function calculateWalls(options: OptionData[], spot: number, topN: number = 3): 
  */
 const RESONANCE_TOLERANCE_PCT = 0.3; // ±0.3% for RESONANCE
 const CONFLUENCE_TOLERANCE_PCT = 0.5; // ±0.5% for CONFLUENCE
-const MAX_RESONANCE_LEVELS = 2;
-const MAX_CONFLUENCE_LEVELS = 5;
+const MAX_RESONANCE_LEVELS = 1; // Reduced: only the strongest resonance
+const MAX_CONFLUENCE_LEVELS = 2; // Reduced: more selective filtering
 
 /**
  * Cluster strikes within tolerance and return representative strike
@@ -2110,16 +2110,17 @@ export function VercelView(): ReactElement {
     };
   }, [quantAnalysis]);
 
-  // Build levels array for display (algorithmic fallback - always computed for comparison)
+  // Build levels array for display (algorithmic fallback - ONLY used when AI is unavailable)
   const displayLevels = useMemo(() => {
-    // Always compute algorithmic levels for side-by-side comparison
-    if (!quantAnalysis) return { aboveSpot: [], belowSpot: [] };
+    // Only compute algorithmic levels as fallback when AI is not available
+    if (!quantAnalysis || quantAnalysis.aiAnalysis?.levels?.length) return { aboveSpot: [], belowSpot: [] };
 
     const levels: Array<{
       level: number;
       type: 'CALL_WALL' | 'PUT_WALL' | 'GAMMA_FLIP' | 'MAX_PAIN' | 'CONFLUENCE' | 'RESONANCE';
       expiries: string[];
       oi?: number;
+      wallType?: WallType;
     }> = [];
 
     const spot = quantAnalysis.spot;
@@ -2183,61 +2184,36 @@ export function VercelView(): ReactElement {
       }
     }
 
-    // 3. Add Call Walls - use selectedLevels OI if available, otherwise lookup
-    // Skip if strike is already used in RESONANCE or CONFLUENCE
-    if (quantAnalysis.selectedLevels) {
-      for (const wall of quantAnalysis.selectedLevels.call_walls) {
-        if (!isStrikeUsed(wall.strike)) {
-          levels.push({
-            level: wall.strike,
-            type: 'CALL_WALL',
-            expiries: [wall.expiry],
-            oi: wall.oi
-          });
-          markStrikeUsed(wall.strike);
-        }
-      }
-    } else {
-      for (const strike of quantAnalysis.walls.callWalls) {
-        if (!isStrikeUsed(strike)) {
-          const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'CALL');
-          levels.push({
-            level: strike,
-            type: 'CALL_WALL',
-            expiries: ['0DTE'],
-            oi: opt?.oi
-          });
-          markStrikeUsed(strike);
-        }
+    // 3. Add Call Walls - ONLY DOMINANT walls (more selective fallback)
+    // Use enhanced wall calculation to get wall types
+    const enhancedWalls = calculateWallsEnhanced(quantAnalysis.allOptions, spot, 5);
+    
+    for (const wall of enhancedWalls.callWalls) {
+      // Only include DOMINANT walls (score >= 70 effectively)
+      if (wall.wallType === 'DOMINANT' && !isStrikeUsed(wall.strike)) {
+        levels.push({
+          level: wall.strike,
+          type: 'CALL_WALL',
+          expiries: ['0DTE'],
+          oi: wall.oi,
+          wallType: wall.wallType
+        });
+        markStrikeUsed(wall.strike);
       }
     }
 
-    // 4. Add Put Walls - use selectedLevels OI if available, otherwise lookup
-    // Skip if strike is already used in RESONANCE or CONFLUENCE
-    if (quantAnalysis.selectedLevels) {
-      for (const wall of quantAnalysis.selectedLevels.put_walls) {
-        if (!isStrikeUsed(wall.strike)) {
-          levels.push({
-            level: wall.strike,
-            type: 'PUT_WALL',
-            expiries: [wall.expiry],
-            oi: wall.oi
-          });
-          markStrikeUsed(wall.strike);
-        }
-      }
-    } else {
-      for (const strike of quantAnalysis.walls.putWalls) {
-        if (!isStrikeUsed(strike)) {
-          const opt = quantAnalysis.allOptions.find(o => o.strike === strike && o.side === 'PUT');
-          levels.push({
-            level: strike,
-            type: 'PUT_WALL',
-            expiries: ['0DTE'],
-            oi: opt?.oi
-          });
-          markStrikeUsed(strike);
-        }
+    // 4. Add Put Walls - ONLY DOMINANT walls (more selective fallback)
+    for (const wall of enhancedWalls.putWalls) {
+      // Only include DOMINANT walls
+      if (wall.wallType === 'DOMINANT' && !isStrikeUsed(wall.strike)) {
+        levels.push({
+          level: wall.strike,
+          type: 'PUT_WALL',
+          expiries: ['0DTE'],
+          oi: wall.oi,
+          wallType: wall.wallType
+        });
+        markStrikeUsed(wall.strike);
       }
     }
 
@@ -2348,87 +2324,63 @@ export function VercelView(): ReactElement {
                   />
                 )}
 
-                {/* Two-Column Levels Display - AI vs Algorithmic */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* AI Column (Left) */}
+                {/* Single Column Levels Display - AI preferred, Algorithmic as fallback */}
+                {aiDisplayLevels ? (
+                  /* AI Analysis Section - Primary Display */
                   <div className="border border-purple-500/30 rounded-xl p-4 bg-purple-500/5">
                     <div className="flex items-center gap-2 mb-4">
                       <span className="text-xl">🤖</span>
                       <h3 className="text-lg font-bold text-purple-400">AI Analysis</h3>
-                      {aiDisplayLevels && (
-                        <span className="text-[10px] font-bold text-green-400 bg-green-500/20 px-2 py-0.5 rounded-full">
-                          ACTIVE
-                        </span>
-                      )}
-                    </div>
-                    
-                    {aiDisplayLevels ? (
-                      <div className="flex flex-col gap-2">
-                        {/* AI Levels Above Spot */}
-                        {aiDisplayLevels.aboveSpot.map((level, i) => {
-                          const isMatch = displayLevels.aboveSpot.some(l =>
-                            Math.abs(l.level - level.prezzo) < quantAnalysis.spot * 0.003
-                          );
-                          return (
-                            <AILevelRow
-                              key={`ai-above-${i}`}
-                              level={level}
-                              spot={quantAnalysis.spot}
-                              isMatch={isMatch}
-                            />
-                          );
-                        })}
-
-                        {/* Spot Price Divider */}
-                        <div className="py-3 flex items-center gap-3">
-                          <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-purple-500/40 to-purple-500/40"></div>
-                          <div className="shrink-0 bg-purple-600 px-3 py-1 rounded-full border border-purple-400 shadow-[0_0_10px_rgba(147,51,234,0.3)]">
-                            <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
-                          </div>
-                          <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-purple-500/40 to-purple-500/40"></div>
-                        </div>
-
-                        {/* AI Levels Below Spot */}
-                        {aiDisplayLevels.belowSpot.map((level, i) => {
-                          const isMatch = displayLevels.belowSpot.some(l =>
-                            Math.abs(l.level - level.prezzo) < quantAnalysis.spot * 0.003
-                          );
-                          return (
-                            <AILevelRow
-                              key={`ai-below-${i}`}
-                              level={level}
-                              spot={quantAnalysis.spot}
-                              isMatch={isMatch}
-                            />
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-gray-500">
-                        <span className="text-4xl mb-2 block">🚫</span>
-                        <p className="text-sm font-medium">AI Analysis Not Available</p>
-                        <p className="text-xs text-gray-600 mt-1">Using algorithmic fallback only</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Algorithmic Column (Right) */}
-                  <div className="border border-blue-500/30 rounded-xl p-4 bg-blue-500/5">
-                    <div className="flex items-center gap-2 mb-4">
-                      <span className="text-xl">⚙️</span>
-                      <h3 className="text-lg font-bold text-blue-400">Algorithmic Fallback</h3>
-                      <span className="text-[10px] font-bold text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded-full">
-                        {displayLevels.aboveSpot.length + displayLevels.belowSpot.length} LEVELS
+                      <span className="text-[10px] font-bold text-green-400 bg-green-500/20 px-2 py-0.5 rounded-full">
+                        ACTIVE
                       </span>
                     </div>
                     
                     <div className="flex flex-col gap-2">
-                      {/* Algorithmic Levels Above Spot */}
-                      {displayLevels.aboveSpot.map((l, i) => {
-                        const isMatch = aiDisplayLevels?.aboveSpot.some(ai =>
-                          Math.abs(ai.prezzo - l.level) < quantAnalysis.spot * 0.003
-                        ) || false;
-                        return (
+                      {/* AI Levels Above Spot */}
+                      {aiDisplayLevels.aboveSpot.map((level, i) => (
+                        <AILevelRow
+                          key={`ai-above-${i}`}
+                          level={level}
+                          spot={quantAnalysis.spot}
+                        />
+                      ))}
+
+                      {/* Spot Price Divider */}
+                      <div className="py-3 flex items-center gap-3">
+                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-purple-500/40 to-purple-500/40"></div>
+                        <div className="shrink-0 bg-purple-600 px-3 py-1 rounded-full border border-purple-400 shadow-[0_0_10px_rgba(147,51,234,0.3)]">
+                          <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                        </div>
+                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-purple-500/40 to-purple-500/40"></div>
+                      </div>
+
+                      {/* AI Levels Below Spot */}
+                      {aiDisplayLevels.belowSpot.map((level, i) => (
+                        <AILevelRow
+                          key={`ai-below-${i}`}
+                          level={level}
+                          spot={quantAnalysis.spot}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  /* Algorithmic Fallback Section - Only shown when AI is unavailable */
+                  <div className="border border-amber-500/30 rounded-xl p-4 bg-amber-500/5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <span className="text-xl">⚙️</span>
+                      <h3 className="text-lg font-bold text-amber-400">Fallback Analysis</h3>
+                      <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded-full">
+                        {displayLevels.aboveSpot.length + displayLevels.belowSpot.length} LEVELS
+                      </span>
+                      <span className="text-[9px] text-gray-500 italic ml-2">AI unavailable - using algorithmic analysis</span>
+                    </div>
+                    
+                    {(displayLevels.aboveSpot.length + displayLevels.belowSpot.length) > 0 ? (
+                      <div className="flex flex-col gap-2">
+                        {/* Algorithmic Levels Above Spot */}
+                        {displayLevels.aboveSpot.map((l, i) => (
                           <LevelRow
                             key={`algo-above-${i}`}
                             level={l.level}
@@ -2436,26 +2388,21 @@ export function VercelView(): ReactElement {
                             spot={quantAnalysis.spot}
                             expiries={l.expiries}
                             oi={l.oi}
-                            isMatch={isMatch}
+                            wallType={l.wallType}
                           />
-                        );
-                      })}
+                        ))}
 
-                      {/* Spot Price Divider */}
-                      <div className="py-3 flex items-center gap-3">
-                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-blue-500/40 to-blue-500/40"></div>
-                        <div className="shrink-0 bg-blue-600 px-3 py-1 rounded-full border border-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.3)]">
-                          <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                        {/* Spot Price Divider */}
+                        <div className="py-3 flex items-center gap-3">
+                          <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-amber-500/40 to-amber-500/40"></div>
+                          <div className="shrink-0 bg-amber-600 px-3 py-1 rounded-full border border-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
+                            <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                          </div>
+                          <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-amber-500/40 to-amber-500/40"></div>
                         </div>
-                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-blue-500/40 to-blue-500/40"></div>
-                      </div>
 
-                      {/* Algorithmic Levels Below Spot */}
-                      {displayLevels.belowSpot.map((l, i) => {
-                        const isMatch = aiDisplayLevels?.belowSpot.some(ai =>
-                          Math.abs(ai.prezzo - l.level) < quantAnalysis.spot * 0.003
-                        ) || false;
-                        return (
+                        {/* Algorithmic Levels Below Spot */}
+                        {displayLevels.belowSpot.map((l, i) => (
                           <LevelRow
                             key={`algo-below-${i}`}
                             level={l.level}
@@ -2463,21 +2410,17 @@ export function VercelView(): ReactElement {
                             spot={quantAnalysis.spot}
                             expiries={l.expiries}
                             oi={l.oi}
-                            isMatch={isMatch}
+                            wallType={l.wallType}
                           />
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Match Legend */}
-                {aiDisplayLevels && (
-                  <div className="mt-4 flex items-center justify-center gap-4 text-xs text-gray-500">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded border-2 border-cyan-500/50 bg-cyan-500/10"></div>
-                      <span>Matching level (AI & Algo agree)</span>
-                    </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <span className="text-4xl mb-2 block">📊</span>
+                        <p className="text-sm font-medium">No Significant Levels Detected</p>
+                        <p className="text-xs text-gray-600 mt-1">Only DOMINANT walls are shown in fallback mode</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
