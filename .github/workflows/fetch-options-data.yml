@@ -1,0 +1,56 @@
+name: Fetch Options Data
+
+on:
+  schedule:
+    # US Session (14:30-21:00 UTC = 9:30 AM - 4:00 PM ET) - Every 15 minutes
+    - cron: '0,15,30,45 15-20 * * 1-5'   # 15:00-20:45 UTC (covers 10:00-15:45 ET)
+    - cron: '30,45 14 * * 1-5'           # 14:30-14:45 UTC (covers 9:30-9:45 ET)
+    - cron: '0,15 21 * * 1-5'            # 21:00-21:15 UTC (covers 16:00-16:15 ET)
+    # Outside US Session - Every hour
+    - cron: '0 0-13 * * 1-5'             # 00:00-13:00 UTC (before US session)
+    - cron: '0 22-23 * * 1-5'            # 22:00-23:00 UTC (after US session)
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+          
+      - name: Fetch options data
+        run: |
+          python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
+        env:
+          TZ: America/New_York
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          
+      - name: Commit changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/options_data.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update options data [skip ci]"
+          git stash
+          git pull --rebase origin master
+          git stash pop || true
+          git push
