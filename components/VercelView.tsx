@@ -1676,21 +1676,6 @@ function OptionsChart({
     ...putOptions.map(o => o.vol || 0),
     1
   );
-  
-  // DEBUG: Log chart data
-  console.log('=== OptionsChart DEBUG ===');
-  console.log('callOptions count:', callOptions.length);
-  console.log('putOptions count:', putOptions.length);
-  console.log('sortedStrikes count:', sortedStrikes.length);
-  console.log('maxOi:', maxOi, 'maxVol:', maxVol);
-  console.log('chartHeight:', chartHeight, 'chartWidth:', chartWidth);
-  if (callOptions.length > 0) {
-    console.log('Sample CALL:', callOptions[0]);
-  }
-  if (putOptions.length > 0) {
-    console.log('Sample PUT:', putOptions[0]);
-  }
-  console.log('========================');
 
   // Create lookup maps
   const callMap = new Map(callOptions.map(o => [o.strike, o]));
@@ -1788,10 +1773,7 @@ function OptionsChart({
               }
               const oiWidth = (opt.oi / maxOi) * (chartWidth - 20);
               const volWidth = (opt.vol / maxVol) * (chartWidth - 20);
-              
-              // DEBUG: Log bar widths
-              console.log(`CALL ${strike}: oiWidth=${oiWidth}px, volWidth=${volWidth}px, oi=${opt.oi}, vol=${opt.vol}`);
-              
+
               return (
                 <div
                   key={strike}
