@@ -92,9 +92,22 @@ export interface LegacyExpiryContent {
   date: string;
 }
 
+// Legacy format for confluence (backward compatibility)
+export interface LegacyConfluenceLevel {
+  strike: number;
+  distance_pct: number;
+}
+
+// Legacy format for resonance (backward compatibility)
+export interface LegacyResonanceLevel {
+  strike: number;
+  distance_pct: number;
+}
+
 export interface SelectedLevels {
-  resonance: Array<{strike: number; distance_pct: number}>;
-  confluence: Array<{strike: number; distance_pct: number}>;
+  // Enhanced format: full ConfluenceLevel objects, or legacy format with just strike/distance
+  resonance: Array<ResonanceLevel | LegacyResonanceLevel>;
+  confluence: Array<ConfluenceLevel | LegacyConfluenceLevel>;
   call_walls: Array<{strike: number; oi: number; expiry: string}>;
   put_walls: Array<{strike: number; oi: number; expiry: string}>;
   gamma_flip: number;
@@ -221,4 +234,67 @@ export interface QuantMetrics {
   put_call_ratios: PutCallRatios;
   volatility_skew: VolatilitySkew;
   gex_by_strike: GEXData[];
+}
+
+// ============================================================================
+// ENHANCED CONFLUENCE LEVEL TYPES
+// ============================================================================
+
+/**
+ * Per-expiry details at a confluence strike
+ */
+export interface ConfluenceExpiryDetail {
+  expiry_label: string;       // e.g., "0DTE", "WEEKLY"
+  call_oi: number;
+  put_oi: number;
+  call_vol: number;
+  put_vol: number;
+  call_gamma: number;
+  put_gamma: number;
+}
+
+/**
+ * Enhanced confluence level with detailed metrics
+ */
+export interface ConfluenceLevel {
+  strike: number;
+  expiries: string[];          // ["0DTE", "WEEKLY"]
+  expiry_label: string;        // "0DTE+WEEKLY"
+  total_call_oi: number;
+  total_put_oi: number;
+  total_call_vol: number;
+  total_put_vol: number;
+  put_call_ratio: number;
+  total_gamma: number;
+  expiry_details: ConfluenceExpiryDetail[];
+  distance_pct?: number;       // Distance from spot price (optional for backward compat)
+}
+
+/**
+ * Enhanced resonance level (same structure as ConfluenceLevel, but with 3 expiries)
+ */
+export interface ResonanceLevel extends ConfluenceLevel {
+  // Same structure as ConfluenceLevel, but expiries will have 3 items
+}
+
+// ============================================================================
+// TYPE GUARDS FOR ENHANCED LEVELS
+// ============================================================================
+
+/**
+ * Type guard to check if a confluence level is enhanced (has detailed metrics)
+ */
+export function isEnhancedConfluenceLevel(
+  level: ConfluenceLevel | LegacyConfluenceLevel
+): level is ConfluenceLevel {
+  return 'expiry_label' in level && 'total_call_oi' in level;
+}
+
+/**
+ * Type guard to check if a resonance level is enhanced (has detailed metrics)
+ */
+export function isEnhancedResonanceLevel(
+  level: ResonanceLevel | LegacyResonanceLevel
+): level is ResonanceLevel {
+  return 'expiry_label' in level && 'total_call_oi' in level;
 }

@@ -1,6 +1,17 @@
 
 import { GoogleGenAI, Type, Content } from "@google/genai";
-import { AnalysisLevel, AnalysisResponse, MarketDataset } from '../types';
+import {
+  AnalysisLevel,
+  AnalysisResponse,
+  MarketDataset,
+  ConfluenceLevel,
+  ResonanceLevel,
+  LegacyConfluenceLevel,
+  LegacyResonanceLevel,
+  SelectedLevels,
+  isEnhancedConfluenceLevel,
+  isEnhancedResonanceLevel
+} from '../types';
 
 const MAX_RETRIES = 3;
 
@@ -172,8 +183,107 @@ ${quantMetrics.gex_by_strike.slice(0, 5).map(s =>
 `;
 };
 
-export const getAnalysis = async (datasets: MarketDataset[], currentPrice: string, model?: string): Promise<AnalysisResponse> => {
+/**
+ * Formats a single enhanced confluence/resonance level for AI prompt
+ */
+const formatEnhancedLevel = (
+  level: ConfluenceLevel | ResonanceLevel,
+  spotPrice: number,
+  levelType: 'CONFLUENCE' | 'RESONANCE'
+): string => {
+  const distancePct = ((level.strike - spotPrice) / spotPrice * 100).toFixed(2);
+  const bias = level.put_call_ratio < 0.7 ? 'Bullish bias' :
+               level.put_call_ratio > 1.0 ? 'Bearish bias' : 'Neutral';
+  
+  let details = `- Strike ${level.strike.toFixed(2)} [${level.expiry_label}] (Distance: ${distancePct}%)
+  - Call OI: ${level.total_call_oi.toLocaleString()} | Put OI: ${level.total_put_oi.toLocaleString()}
+  - Call Vol: ${level.total_call_vol.toLocaleString()} | Put Vol: ${level.total_put_vol.toLocaleString()}
+  - PCR: ${level.put_call_ratio.toFixed(2)} (${bias})
+  - Total Gamma: ${level.total_gamma.toFixed(2)}`;
+  
+  // Add per-expiry breakdown if available
+  if (level.expiry_details && level.expiry_details.length > 0) {
+    level.expiry_details.forEach(expiry => {
+      details += `
+  - ${expiry.expiry_label}: Call OI ${expiry.call_oi.toLocaleString()}, Put OI ${expiry.put_oi.toLocaleString()}, Call Vol ${expiry.call_vol.toLocaleString()}, Put Vol ${expiry.put_vol.toLocaleString()}`;
+    });
+  }
+  
+  return details;
+};
+
+/**
+ * Formats selected levels including enhanced confluence/resonance data
+ */
+const formatSelectedLevels = (selectedLevels: SelectedLevels, spotPrice: number): string => {
+  let output = '\n=== PRE-CALCULATED KEY LEVELS ===\n';
+  
+  // Format Gamma Flip
+  if (selectedLevels.gamma_flip) {
+    output += `\nGAMMA FLIP: ${selectedLevels.gamma_flip}\n`;
+  }
+  
+  // Format Max Pain
+  if (selectedLevels.max_pain) {
+    output += `MAX PAIN: ${selectedLevels.max_pain}\n`;
+  }
+  
+  // Format Call Walls
+  if (selectedLevels.call_walls && selectedLevels.call_walls.length > 0) {
+    output += '\nCALL WALLS:\n';
+    selectedLevels.call_walls.slice(0, 5).forEach(wall => {
+      output += `- Strike ${wall.strike}: OI ${wall.oi?.toLocaleString() || 'N/A'} (${wall.expiry || 'unknown'})\n`;
+    });
+  }
+  
+  // Format Put Walls
+  if (selectedLevels.put_walls && selectedLevels.put_walls.length > 0) {
+    output += '\nPUT WALLS:\n';
+    selectedLevels.put_walls.slice(0, 5).forEach(wall => {
+      output += `- Strike ${wall.strike}: OI ${wall.oi?.toLocaleString() || 'N/A'} (${wall.expiry || 'unknown'})\n`;
+    });
+  }
+  
+  // Format Confluence Levels (enhanced or legacy)
+  if (selectedLevels.confluence && selectedLevels.confluence.length > 0) {
+    output += '\nCONFLUENCE LEVELS (Multi-Expiry Support):\n';
+    selectedLevels.confluence.forEach(level => {
+      if (isEnhancedConfluenceLevel(level)) {
+        output += formatEnhancedLevel(level, spotPrice, 'CONFLUENCE') + '\n';
+      } else {
+        // Legacy format
+        const distancePct = level.distance_pct || ((level.strike - spotPrice) / spotPrice * 100);
+        output += `- Strike ${level.strike.toFixed(2)} (Distance: ${distancePct.toFixed(2)}%) [Legacy Format]\n`;
+      }
+    });
+  }
+  
+  // Format Resonance Levels (enhanced or legacy)
+  if (selectedLevels.resonance && selectedLevels.resonance.length > 0) {
+    output += '\nRESONANCE LEVELS (Triple-Expiry Alignment):\n';
+    selectedLevels.resonance.forEach(level => {
+      if (isEnhancedResonanceLevel(level)) {
+        output += formatEnhancedLevel(level, spotPrice, 'RESONANCE') + '\n';
+      } else {
+        // Legacy format
+        const distancePct = level.distance_pct || ((level.strike - spotPrice) / spotPrice * 100);
+        output += `- Strike ${level.strike.toFixed(2)} (Distance: ${distancePct.toFixed(2)}%) [Legacy Format]\n`;
+      }
+    });
+  }
+  
+  return output;
+};
+
+export const getAnalysis = async (
+  datasets: MarketDataset[],
+  currentPrice: string,
+  model?: string,
+  selectedLevels?: SelectedLevels
+): Promise<AnalysisResponse> => {
   const selectedModel = model || 'gemini-2.5-flash';
+  const spotPrice = parseFloat(currentPrice) || 0;
+  
   const apiCall = async () => {
     // Format each dataset with its quantitative metrics if available
     const formattedData = datasets.map(d => {
@@ -187,14 +297,24 @@ export const getAnalysis = async (datasets: MarketDataset[], currentPrice: strin
       return section;
     }).join('\n\n---\n\n');
     
+    // Add enhanced selected levels if available
+    let levelsSection = '';
+    if (selectedLevels) {
+      levelsSection = formatSelectedLevels(selectedLevels, spotPrice);
+    }
+    
+    const prompt = `EXECUTE DEEP QUANT ANALYSIS. SPOT: ${currentPrice}.
+    Provide concise and decisive trading signals for each level.
+    Use ADVANCED QUANTITATIVE METRICS to identify additional levels (Max Pain, Gamma Flip).
+    Integrate skew sentiment and PCR to validate level importance.
+    
+    ${levelsSection ? 'IMPORTANT: Pre-calculated CONFLUENCE and RESONANCE levels are provided below. Use these for multi-expiry analysis:\n' + levelsSection : ''}
+    
+    ${formattedData}`;
+    
     const response = await ai.models.generateContent({
         model: selectedModel,
-        contents: `EXECUTE DEEP QUANT ANALYSIS. SPOT: ${currentPrice}.
-        Provide concise and decisive trading signals for each level.
-        Use ADVANCED QUANTITATIVE METRICS to identify additional levels (Max Pain, Gamma Flip).
-        Integrate skew sentiment and PCR to validate level importance.
-        
-        ${formattedData}`,
+        contents: prompt,
         config: {
             systemInstruction: harmonicSystemInstruction,
             responseMimeType: "application/json",

@@ -18,7 +18,11 @@ import {
   getLastUpdateTime,
   getDataAgeMinutes
 } from '../services/vercelDataService';
-import { SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios, VolatilitySkew, GEXData, SelectedLevels, AIAnalysis, AILevel, AIOutlook } from '../types';
+import {
+  SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios,
+  VolatilitySkew, GEXData, SelectedLevels, AIAnalysis, AILevel, AIOutlook,
+  ConfluenceLevel, ResonanceLevel, ConfluenceExpiryDetail, LegacyConfluenceLevel, LegacyResonanceLevel
+} from '../types';
 
 // ============================================================================
 // CONSTANTS
@@ -513,7 +517,8 @@ interface ScoredLevel {
   side: 'CALL' | 'PUT';
 }
 
-interface ConfluenceLevel {
+// Local interface for internal confluence calculation (different from types.ts ConfluenceLevel)
+interface LocalConfluenceScore {
   strike: number;
   expiries: string[];
   score: number;
@@ -710,7 +715,7 @@ function getClusterRepresentative(
 function findConfluenceLevelsEnhanced(
   expiries: ExpiryData[],
   spot: number
-): ConfluenceLevel[] {
+): LocalConfluenceScore[] {
   if (expiries.length < 2) return [];
   
   // Collect all options with expiry info
@@ -758,7 +763,7 @@ function findConfluenceLevelsEnhanced(
   const clusters = clusterStrikes(confluenceStrikes, CONFLUENCE_TOLERANCE_PCT, spot);
   
   // Get representatives and score them
-  const candidates: ConfluenceLevel[] = clusters.map(cluster => {
+  const candidates: LocalConfluenceScore[] = clusters.map(cluster => {
     const representative = getClusterRepresentative(cluster, allOptions);
     const originalData = strikeData.get(cluster[0])!;
     const avgScore = cluster.reduce((sum, s) => sum + (strikeScores.get(s) || 0), 0) / cluster.length;
@@ -797,7 +802,7 @@ function findConfluenceLevels(expiries: ExpiryData[], spot: number): Map<number,
 function findResonanceLevelsEnhanced(
   expiries: ExpiryData[],
   spot: number
-): ConfluenceLevel[] {
+): LocalConfluenceScore[] {
   if (expiries.length < 2) return [];
   
   // Collect strikes appearing in ALL expiries
@@ -844,7 +849,7 @@ function findResonanceLevelsEnhanced(
   const clusters = clusterStrikes(resonanceStrikes, RESONANCE_TOLERANCE_PCT, spot);
   
   // Get representatives and score them
-  const candidates: ConfluenceLevel[] = clusters.map(cluster => {
+  const candidates: LocalConfluenceScore[] = clusters.map(cluster => {
     const representative = getClusterRepresentative(cluster, allOptions);
     const originalData = strikeCounts.get(cluster[0])!;
     const avgScore = cluster.reduce((sum, s) => sum + (strikeScores.get(s) || 0), 0) / cluster.length;
@@ -1195,6 +1200,20 @@ const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) =
 };
 
 /**
+ * Helper function to check if confluence data is enhanced format
+ */
+function isEnhancedConfluenceLevel(data: ConfluenceLevel | LegacyConfluenceLevel): data is ConfluenceLevel {
+  return 'expiry_label' in data && data.expiry_label !== undefined;
+}
+
+/**
+ * Helper function to check if resonance data is enhanced format
+ */
+function isEnhancedResonanceLevel(data: ResonanceLevel | LegacyResonanceLevel): data is ResonanceLevel {
+  return 'expiry_label' in data && data.expiry_label !== undefined;
+}
+
+/**
  * Level Row Component (matching QuantPanel LevelRow)
  */
 const LevelRow: React.FC<{
@@ -1205,7 +1224,8 @@ const LevelRow: React.FC<{
   oi?: number;
   isMatch?: boolean;
   wallType?: WallType;
-}> = ({ level, type, spot, expiries = [], oi, isMatch = false, wallType }) => {
+  enhancedData?: ConfluenceLevel | ResonanceLevel | LegacyConfluenceLevel | LegacyResonanceLevel;
+}> = ({ level, type, spot, expiries = [], oi, isMatch = false, wallType, enhancedData }) => {
   const distancePct = spot > 0 ? ((level - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
@@ -1326,6 +1346,14 @@ const LevelRow: React.FC<{
     );
   };
 
+  // Check if we have enhanced data to display
+  const hasEnhancedData = enhancedData && (isEnhancedConfluenceLevel(enhancedData) || isEnhancedResonanceLevel(enhancedData));
+  const enhanced = hasEnhancedData ? (enhancedData as ConfluenceLevel | ResonanceLevel) : null;
+  
+  // Use expiry_label from enhanced data if available, otherwise fall back to expiries array
+  const displayExpiries = enhanced?.expiry_label ? enhanced.expiry_label.split('+') : expiries;
+  const expiryLabelDisplay = enhanced?.expiry_label || (expiries.length > 0 ? expiries.join('+') : '');
+
   return (
     <div
       className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-6
@@ -1343,9 +1371,14 @@ const LevelRow: React.FC<{
               ✓ MATCH
             </span>
           )}
-          {expiries.length > 0 && (
-            <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">
-              {expiries.join(' • ')}
+          {/* Display expiry label badge for confluence/resonance */}
+          {(type === 'CONFLUENCE' || type === 'RESONANCE') && expiryLabelDisplay && (
+            <span className={`text-[9px] font-black px-2 py-0.5 rounded ${
+              type === 'RESONANCE'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                : 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+            }`}>
+              {expiryLabelDisplay}
             </span>
           )}
           {isVeryClose && (
@@ -1360,7 +1393,52 @@ const LevelRow: React.FC<{
           </h4>
         </div>
 
-        {oi !== undefined && oi > 0 && (
+        {/* Enhanced metrics display for CONFLUENCE/RESONANCE */}
+        {enhanced && (type === 'CONFLUENCE' || type === 'RESONANCE') && (
+          <div className="mt-2 space-y-1.5">
+            {/* OI Row */}
+            <div className="flex items-center gap-4 text-[11px]">
+              <span className="text-gray-500">📊</span>
+              <span className="text-green-400 font-mono">
+                Call OI: <span className="font-bold">{enhanced.total_call_oi?.toLocaleString() || 'N/A'}</span>
+              </span>
+              <span className="text-red-400 font-mono">
+                Put OI: <span className="font-bold">{enhanced.total_put_oi?.toLocaleString() || 'N/A'}</span>
+              </span>
+            </div>
+            {/* Volume Row */}
+            <div className="flex items-center gap-4 text-[11px]">
+              <span className="text-gray-500">📈</span>
+              <span className="text-green-400 font-mono">
+                Call Vol: <span className="font-bold">{enhanced.total_call_vol?.toLocaleString() || 'N/A'}</span>
+              </span>
+              <span className="text-red-400 font-mono">
+                Put Vol: <span className="font-bold">{enhanced.total_put_vol?.toLocaleString() || 'N/A'}</span>
+              </span>
+            </div>
+            {/* PCR Row */}
+            {enhanced.put_call_ratio !== undefined && enhanced.put_call_ratio > 0 && (
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-gray-500">⚖️</span>
+                <span className={`font-mono font-bold ${
+                  enhanced.put_call_ratio > 1 ? 'text-red-400' :
+                  enhanced.put_call_ratio < 0.7 ? 'text-green-400' : 'text-gray-300'
+                }`}>
+                  PCR: {enhanced.put_call_ratio.toFixed(2)}
+                </span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                  enhanced.put_call_ratio > 1 ? 'bg-red-500/20 text-red-300' :
+                  enhanced.put_call_ratio < 0.7 ? 'bg-green-500/20 text-green-300' : 'bg-gray-500/20 text-gray-400'
+                }`}>
+                  {enhanced.put_call_ratio > 1 ? 'Bearish' : enhanced.put_call_ratio < 0.7 ? 'Bullish' : 'Neutral'}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Legacy OI display for walls */}
+        {!enhanced && oi !== undefined && oi > 0 && (
           <p className="text-[12px] font-medium text-gray-500 italic">
             OI: {oi.toLocaleString()}
           </p>
@@ -2028,6 +2106,10 @@ export function VercelView(): ReactElement {
     let walls: { callWalls: number[]; putWalls: number[] };
     let confluenceLevels: Map<number, string[]>;
     let resonanceLevels: number[];
+    
+    // Store enhanced confluence data for detailed display
+    let enhancedConfluenceData: Map<number, ConfluenceLevel | LegacyConfluenceLevel> = new Map();
+    let enhancedResonanceData: Map<number, ResonanceLevel | LegacyResonanceLevel> = new Map();
 
     if (selectedLevels) {
       // Use pre-selected levels from Python
@@ -2037,9 +2119,27 @@ export function VercelView(): ReactElement {
       };
       
       // Convert confluence array to Map for compatibility
+      // Support both enhanced format (with expiry_label) and legacy format (just strike)
       confluenceLevels = new Map();
       for (const c of selectedLevels.confluence) {
-        confluenceLevels.set(c.strike, ['MULTI']); // Generic label for pre-selected
+        // Check if enhanced format with expiry_label
+        if ('expiry_label' in c && c.expiry_label) {
+          confluenceLevels.set(c.strike, c.expiries || c.expiry_label.split('+'));
+          enhancedConfluenceData.set(c.strike, c as ConfluenceLevel);
+        } else {
+          // Legacy format fallback
+          confluenceLevels.set(c.strike, ['MULTI']);
+          enhancedConfluenceData.set(c.strike, c as LegacyConfluenceLevel);
+        }
+      }
+      
+      // Store enhanced resonance data
+      for (const r of selectedLevels.resonance) {
+        if ('expiry_label' in r && r.expiry_label) {
+          enhancedResonanceData.set(r.strike, r as ResonanceLevel);
+        } else {
+          enhancedResonanceData.set(r.strike, r as LegacyResonanceLevel);
+        }
       }
       
       resonanceLevels = selectedLevels.resonance.map(r => r.strike);
@@ -2091,7 +2191,9 @@ export function VercelView(): ReactElement {
       expiryMetrics,
       allOptions,
       selectedLevels, // Pass through for displayLevels
-      aiAnalysis // Pass through AI analysis
+      aiAnalysis, // Pass through AI analysis
+      enhancedConfluenceData, // Enhanced confluence data with metrics
+      enhancedResonanceData // Enhanced resonance data with metrics
     };
   }, [activeSymbolData]);
 
@@ -2121,6 +2223,7 @@ export function VercelView(): ReactElement {
       expiries: string[];
       oi?: number;
       wallType?: WallType;
+      enhancedData?: ConfluenceLevel | ResonanceLevel | LegacyConfluenceLevel | LegacyResonanceLevel;
     }> = [];
 
     const spot = quantAnalysis.spot;
@@ -2163,10 +2266,15 @@ export function VercelView(): ReactElement {
 
     // 1. Add Resonance levels first (highest priority)
     for (const strike of quantAnalysis.resonanceLevels) {
+      // Get enhanced data if available
+      const resonanceEnhanced = quantAnalysis.enhancedResonanceData?.get(strike);
       levels.push({
         level: strike,
         type: 'RESONANCE',
-        expiries: ['0DTE', 'WEEKLY', 'MONTHLY']
+        expiries: resonanceEnhanced && isEnhancedResonanceLevel(resonanceEnhanced)
+          ? resonanceEnhanced.expiries
+          : ['0DTE', 'WEEKLY', 'MONTHLY'],
+        enhancedData: resonanceEnhanced
       });
       markStrikeUsed(strike);
     }
@@ -2175,10 +2283,13 @@ export function VercelView(): ReactElement {
     for (const [strike, expiryList] of quantAnalysis.confluenceLevels) {
       // Skip if already added as resonance (check with tolerance)
       if (!isStrikeUsed(strike)) {
+        // Get enhanced data if available
+        const confluenceEnhanced = quantAnalysis.enhancedConfluenceData?.get(strike);
         levels.push({
           level: strike,
           type: 'CONFLUENCE',
-          expiries: expiryList
+          expiries: expiryList,
+          enhancedData: confluenceEnhanced
         });
         markStrikeUsed(strike);
       }
@@ -2389,6 +2500,7 @@ export function VercelView(): ReactElement {
                             expiries={l.expiries}
                             oi={l.oi}
                             wallType={l.wallType}
+                            enhancedData={l.enhancedData}
                           />
                         ))}
 
@@ -2411,6 +2523,7 @@ export function VercelView(): ReactElement {
                             expiries={l.expiries}
                             oi={l.oi}
                             wallType={l.wallType}
+                            enhancedData={l.enhancedData}
                           />
                         ))}
                       </div>

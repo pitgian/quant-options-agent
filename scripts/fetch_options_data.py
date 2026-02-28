@@ -1170,6 +1170,341 @@ def find_confluence_levels(expiries: List[Dict], spot: float, tolerance_pct: flo
     ]
 
 
+def get_options_at_strike(options: List[Dict], strike: float, tolerance_pct: float = 0.01) -> Dict[str, Any]:
+    """
+    Find call and put options at a specific strike price within tolerance.
+    
+    Args:
+        options: List of option dictionaries for a single expiry
+        strike: Target strike price
+        tolerance_pct: Tolerance percentage for strike matching (default 1%)
+    
+    Returns:
+        {
+            'call_oi': int,
+            'put_oi': int,
+            'call_vol': int,
+            'put_vol': int,
+            'call_gamma': float,
+            'put_gamma': float
+        }
+    """
+    result = {
+        'call_oi': 0,
+        'put_oi': 0,
+        'call_vol': 0,
+        'put_vol': 0,
+        'call_gamma': 0.0,
+        'put_gamma': 0.0
+    }
+    
+    for opt in options:
+        opt_strike = opt.get('strike', 0)
+        # Check if strike is within tolerance
+        if abs(opt_strike - strike) / max(strike, opt_strike, 1) > tolerance_pct:
+            continue
+        
+        if opt.get('side') == 'CALL':
+            result['call_oi'] += opt.get('oi', 0)
+            result['call_vol'] += opt.get('vol', 0)
+            # Gamma will be calculated separately if needed
+        else:  # PUT
+            result['put_oi'] += opt.get('oi', 0)
+            result['put_vol'] += opt.get('vol', 0)
+    
+    return result
+
+
+def find_confluence_levels_enhanced(expiries: List[Dict], spot: float, tolerance_pct: float = 0.01) -> List[Dict]:
+    """
+    Trova i livelli di CONFLUENCE con metriche dettagliate per expiry.
+    
+    Args:
+        expiries: Lista di expiry data con options e quantMetrics
+        spot: Prezzo spot corrente
+        tolerance_pct: Tolleranza percentuale per considerare strike uguali (default 1%)
+    
+    Returns:
+        Lista di max 5 strike con dettagli completi:
+        {
+            "strike": float,
+            "expiries": ["0DTE", "WEEKLY"],
+            "expiry_label": "0DTE+WEEKLY",
+            "total_call_oi": int,
+            "total_put_oi": int,
+            "total_call_vol": int,
+            "total_put_vol": int,
+            "put_call_ratio": float,
+            "total_gamma": float,
+            "expiry_details": [...]
+        }
+    """
+    if len(expiries) < 2:
+        return []
+    
+    # Build strike presence map: strike -> list of (expiry_index, expiry_label)
+    strike_presence = {}  # strike -> [(expiry_idx, expiry_label, actual_strike), ...]
+    
+    for idx, expiry in enumerate(expiries):
+        expiry_label = expiry.get('label', 'UNKNOWN')
+        options = expiry.get('options', [])
+        
+        for opt in options:
+            opt_strike = round(opt.get('strike', 0), 2)
+            if opt_strike <= 0:
+                continue
+            
+            # Check if we already have a similar strike
+            found_key = None
+            for existing_strike in strike_presence.keys():
+                if abs(existing_strike - opt_strike) / max(existing_strike, opt_strike) <= tolerance_pct:
+                    found_key = existing_strike
+                    break
+            
+            if found_key is not None:
+                # Add to existing if not already from this expiry
+                existing_expiry_indices = [e[0] for e in strike_presence[found_key]]
+                if idx not in existing_expiry_indices:
+                    strike_presence[found_key].append((idx, expiry_label, opt_strike))
+            else:
+                if opt_strike not in strike_presence:
+                    strike_presence[opt_strike] = [(idx, expiry_label, opt_strike)]
+    
+    # Filter strikes that appear in exactly 2 expiries
+    confluence_strikes = {
+        s: exp_list for s, exp_list in strike_presence.items()
+        if len(exp_list) == 2
+    }
+    
+    # Sort by distance from spot
+    sorted_strikes = sorted(confluence_strikes.keys(), key=lambda s: abs(s - spot))
+    
+    # Build enhanced results
+    results = []
+    for strike in sorted_strikes[:5]:  # Max 5 confluence levels
+        expiry_info = confluence_strikes[strike]
+        expiry_labels = [e[1] for e in expiry_info]
+        
+        # Aggregate metrics
+        total_call_oi = 0
+        total_put_oi = 0
+        total_call_vol = 0
+        total_put_vol = 0
+        total_gamma = 0.0
+        
+        expiry_details = []
+        
+        for exp_idx, exp_label, actual_strike in expiry_info:
+            expiry = expiries[exp_idx]
+            options = expiry.get('options', [])
+            quant_metrics = expiry.get('quantMetrics', {})
+            
+            # Get options at this strike
+            opts_at_strike = get_options_at_strike(options, actual_strike, tolerance_pct=tolerance_pct)
+            
+            # Calculate gamma for this strike using Black-Scholes
+            expiry_date = expiry.get('date', '')
+            T = calculate_time_to_expiry(expiry_date)
+            r = 0.05
+            
+            # Get IV from options (average of call and put IV)
+            call_iv = 0.3
+            put_iv = 0.3
+            for opt in options:
+                if abs(opt.get('strike', 0) - actual_strike) / max(actual_strike, 1) <= tolerance_pct:
+                    if opt.get('side') == 'CALL':
+                        call_iv = opt.get('iv', 0.3)
+                    else:
+                        put_iv = opt.get('iv', 0.3)
+            
+            call_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, call_iv)
+            put_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, put_iv)
+            
+            # Update totals
+            total_call_oi += opts_at_strike['call_oi']
+            total_put_oi += opts_at_strike['put_oi']
+            total_call_vol += opts_at_strike['call_vol']
+            total_put_vol += opts_at_strike['put_vol']
+            total_gamma += (call_gamma * opts_at_strike['call_oi'] + put_gamma * opts_at_strike['put_oi']) * 100 * spot * spot * 0.01 / 1e9
+            
+            # Add expiry detail
+            expiry_details.append({
+                'expiry_label': exp_label,
+                'call_oi': opts_at_strike['call_oi'],
+                'put_oi': opts_at_strike['put_oi'],
+                'call_vol': opts_at_strike['call_vol'],
+                'put_vol': opts_at_strike['put_vol'],
+                'call_gamma': round(call_gamma, 6),
+                'put_gamma': round(put_gamma, 6)
+            })
+        
+        # Calculate put/call ratio
+        if total_call_oi > 0:
+            put_call_ratio = round(total_put_oi / total_call_oi, 2)
+        else:
+            put_call_ratio = 0.0 if total_put_oi == 0 else 99.99
+        
+        results.append({
+            'strike': round(strike, 2),
+            'expiries': expiry_labels,
+            'expiry_label': '+'.join(expiry_labels),
+            'total_call_oi': total_call_oi,
+            'total_put_oi': total_put_oi,
+            'total_call_vol': total_call_vol,
+            'total_put_vol': total_put_vol,
+            'put_call_ratio': put_call_ratio,
+            'total_gamma': round(total_gamma, 6),
+            'expiry_details': expiry_details
+        })
+    
+    return results
+
+
+def find_resonance_levels_enhanced(expiries: List[Dict], spot: float, tolerance_pct: float = 0.005) -> List[Dict]:
+    """
+    Trova i livelli di RESONANCE con metriche dettagliate per expiry.
+    
+    Args:
+        expiries: Lista di expiry data con options e quantMetrics
+        spot: Prezzo spot corrente
+        tolerance_pct: Tolleranza percentuale per considerare strike uguali (default 0.5%)
+    
+    Returns:
+        Lista di max 2 strike con dettagli completi:
+        {
+            "strike": float,
+            "expiries": ["0DTE", "WEEKLY", "MONTHLY"],
+            "expiry_label": "0DTE+WEEKLY+MONTHLY",
+            "total_call_oi": int,
+            "total_put_oi": int,
+            "total_call_vol": int,
+            "total_put_vol": int,
+            "put_call_ratio": float,
+            "total_gamma": float,
+            "expiry_details": [...]
+        }
+    """
+    if len(expiries) < 3:
+        return []
+    
+    # Build strike presence map: strike -> list of (expiry_index, expiry_label)
+    strike_presence = {}  # strike -> [(expiry_idx, expiry_label, actual_strike), ...]
+    
+    for idx, expiry in enumerate(expiries):
+        expiry_label = expiry.get('label', 'UNKNOWN')
+        options = expiry.get('options', [])
+        
+        for opt in options:
+            opt_strike = round(opt.get('strike', 0), 2)
+            if opt_strike <= 0:
+                continue
+            
+            # Check if we already have a similar strike
+            found_key = None
+            for existing_strike in strike_presence.keys():
+                if abs(existing_strike - opt_strike) / max(existing_strike, opt_strike) <= tolerance_pct:
+                    found_key = existing_strike
+                    break
+            
+            if found_key is not None:
+                # Add to existing if not already from this expiry
+                existing_expiry_indices = [e[0] for e in strike_presence[found_key]]
+                if idx not in existing_expiry_indices:
+                    strike_presence[found_key].append((idx, expiry_label, opt_strike))
+            else:
+                if opt_strike not in strike_presence:
+                    strike_presence[opt_strike] = [(idx, expiry_label, opt_strike)]
+    
+    # Filter strikes that appear in all 3 expiries
+    resonance_strikes = {
+        s: exp_list for s, exp_list in strike_presence.items()
+        if len(exp_list) == 3
+    }
+    
+    # Sort by distance from spot
+    sorted_strikes = sorted(resonance_strikes.keys(), key=lambda s: abs(s - spot))
+    
+    # Build enhanced results
+    results = []
+    for strike in sorted_strikes[:2]:  # Max 2 resonance levels
+        expiry_info = resonance_strikes[strike]
+        expiry_labels = [e[1] for e in expiry_info]
+        
+        # Aggregate metrics
+        total_call_oi = 0
+        total_put_oi = 0
+        total_call_vol = 0
+        total_put_vol = 0
+        total_gamma = 0.0
+        
+        expiry_details = []
+        
+        for exp_idx, exp_label, actual_strike in expiry_info:
+            expiry = expiries[exp_idx]
+            options = expiry.get('options', [])
+            quant_metrics = expiry.get('quantMetrics', {})
+            
+            # Get options at this strike
+            opts_at_strike = get_options_at_strike(options, actual_strike, tolerance_pct=tolerance_pct)
+            
+            # Calculate gamma for this strike using Black-Scholes
+            expiry_date = expiry.get('date', '')
+            T = calculate_time_to_expiry(expiry_date)
+            r = 0.05
+            
+            # Get IV from options (average of call and put IV)
+            call_iv = 0.3
+            put_iv = 0.3
+            for opt in options:
+                if abs(opt.get('strike', 0) - actual_strike) / max(actual_strike, 1) <= tolerance_pct:
+                    if opt.get('side') == 'CALL':
+                        call_iv = opt.get('iv', 0.3)
+                    else:
+                        put_iv = opt.get('iv', 0.3)
+            
+            call_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, call_iv)
+            put_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, put_iv)
+            
+            # Update totals
+            total_call_oi += opts_at_strike['call_oi']
+            total_put_oi += opts_at_strike['put_oi']
+            total_call_vol += opts_at_strike['call_vol']
+            total_put_vol += opts_at_strike['put_vol']
+            total_gamma += (call_gamma * opts_at_strike['call_oi'] + put_gamma * opts_at_strike['put_oi']) * 100 * spot * spot * 0.01 / 1e9
+            
+            # Add expiry detail
+            expiry_details.append({
+                'expiry_label': exp_label,
+                'call_oi': opts_at_strike['call_oi'],
+                'put_oi': opts_at_strike['put_oi'],
+                'call_vol': opts_at_strike['call_vol'],
+                'put_vol': opts_at_strike['put_vol'],
+                'call_gamma': round(call_gamma, 6),
+                'put_gamma': round(put_gamma, 6)
+            })
+        
+        # Calculate put/call ratio
+        if total_call_oi > 0:
+            put_call_ratio = round(total_put_oi / total_call_oi, 2)
+        else:
+            put_call_ratio = 0.0 if total_put_oi == 0 else 99.99
+        
+        results.append({
+            'strike': round(strike, 2),
+            'expiries': expiry_labels,
+            'expiry_label': '+'.join(expiry_labels),
+            'total_call_oi': total_call_oi,
+            'total_put_oi': total_put_oi,
+            'total_call_vol': total_call_vol,
+            'total_put_vol': total_put_vol,
+            'put_call_ratio': put_call_ratio,
+            'total_gamma': round(total_gamma, 6),
+            'expiry_details': expiry_details
+        })
+    
+    return results
+
+
 def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3) -> Dict[str, List[Dict]]:
     """
     Seleziona le Call Walls e Put Walls per ogni expiry.
@@ -1255,11 +1590,11 @@ def select_important_levels(expiries: List[Dict], spot: float) -> Dict:
             'max_pain': float
         }
     """
-    # Trova livelli resonance
-    resonance = find_resonance_levels(expiries, spot, tolerance_pct=0.005)
+    # Trova livelli resonance (enhanced with detailed metrics)
+    resonance = find_resonance_levels_enhanced(expiries, spot, tolerance_pct=0.005)
     
-    # Trova livelli confluence
-    confluence = find_confluence_levels(expiries, spot, tolerance_pct=0.01)
+    # Trova livelli confluence (enhanced with detailed metrics)
+    confluence = find_confluence_levels_enhanced(expiries, spot, tolerance_pct=0.01)
     
     # Seleziona walls
     walls = select_walls_by_expiry(expiries, spot, top_n=3)
