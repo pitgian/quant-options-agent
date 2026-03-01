@@ -666,7 +666,7 @@ def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirat
             for _, row in chain.calls.iterrows():
                 if row['openInterest'] > 0 and not pd.isna(row.get('impliedVolatility', 0)):
                     gamma = calculate_black_scholes_gamma(spot, row['strike'], T, r, row['impliedVolatility'])
-                    gex = gamma * row['openInterest'] * 100
+                    gex = gamma * row['openInterest'] * 100 * spot * spot * 0.01
                     expiry_gamma += gex
                     total_gamma += gex
                     if gex > 0:
@@ -677,7 +677,7 @@ def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirat
             for _, row in chain.puts.iterrows():
                 if row['openInterest'] > 0 and not pd.isna(row.get('impliedVolatility', 0)):
                     gamma = calculate_black_scholes_gamma(spot, row['strike'], T, r, row['impliedVolatility'])
-                    gex = -gamma * row['openInterest'] * 100  # Negative for puts
+                    gex = -gamma * row['openInterest'] * 100 * spot * spot * 0.01  # Negative for puts
                     expiry_gamma += gex
                     total_gamma += gex
                     if gex > 0:
