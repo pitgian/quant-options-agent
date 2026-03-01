@@ -153,10 +153,13 @@ export interface AIAnalysis {
 export interface SymbolData {
   spot: number;
   generated: string;
+  /** Up to 5 expiries: 0DTE, WEEKLY_1, WEEKLY_2, MONTHLY_1, MONTHLY_2 */
   expiries: ExpiryData[];
   legacy?: Record<string, LegacyExpiryContent>;
   selected_levels?: SelectedLevels;
   ai_analysis?: AIAnalysis;
+  /** Total GEX data calculated across all expiries (optional for backward compatibility) */
+  totalGexData?: TotalGexData;
 }
 
 export interface OptionsDataResponse {
@@ -191,6 +194,30 @@ export interface GEXData {
   strike: number;
   gex: number;  // in billions
   cumulative_gex: number;
+}
+
+/**
+ * Total GEX data calculated across all expiries
+ * Provides aggregate market gamma exposure analysis
+ */
+export interface TotalGexData {
+  /** Total GEX across all expiries in billions */
+  total_gex: number;
+  /** GEX breakdown by expiry date */
+  gex_by_expiry: Array<{
+    /** Expiry date string */
+    date: string;
+    /** GEX for this expiry in billions */
+    gex: number;
+    /** Relative weight (0-1) of this expiry's contribution */
+    weight: number;
+  }>;
+  /** Sum of positive GEX in billions */
+  positive_gex: number;
+  /** Sum of negative GEX in billions */
+  negative_gex: number;
+  /** Estimated gamma flip point across all expiries */
+  flip_point: number;
 }
 
 /**

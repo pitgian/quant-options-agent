@@ -86,22 +86,31 @@ Examples:
 ⚠️ ATTENTION: Multi-expiry classification is RARE and must be applied with EXTREME precision.
 
 1. **RESONANCE** (VERY RARE - max 1-2 total levels):
-   - Condition: The SAME exact strike (±0.5%) must be a significant level in ALL THREE expirations (0DTE + WEEKLY + MONTHLY)
-   - VALID EXAMPLES: Strike 25000 is Call Wall in 0DTE, Put Wall in WEEKLY, and Max Pain in MONTHLY
-   - INVALID EXAMPLES: Strike 24700 in 0DTE, strike 24750 in WEEKLY, strike 24800 in MONTHLY → NOT RESONANCE (too different)
-   - Importance: 98-100
-   - Use this ONLY when there is perfect alignment across all expirations
+   - Condition: The SAME exact strike (±0.5%) must be a significant level in 3+ expirations
+   - Valid combinations: 0DTE + WEEKLY_1 + MONTHLY_1, or WEEKLY_1 + WEEKLY_2 + MONTHLY_1 + MONTHLY_2
+   - INVALID EXAMPLES: Strike 24700 in 0DTE, strike 24750 in WEEKLY_1, strike 24800 in MONTHLY_1 → NOT RESONANCE
+   - Importance: 95-100
 
 2. **CONFLUENCE** (RARE - max 3-5 total levels):
    - Condition: The SAME strike (±1%) is significant in EXACTLY TWO expirations
+   - Valid combinations: 0DTE+WEEKLY_1, WEEKLY_1+WEEKLY_2, MONTHLY_1+MONTHLY_2, etc.
    - Importance: 85-94
-   - Example: Strike 24500 is Wall in 0DTE and Wall in WEEKLY, but not present in MONTHLY
 
 3. **SINGLE EXPIRY** (THE MAJORITY of levels):
    - Condition: Significant level in only one expiration
    - Roles: WALL, PIVOT, MAGNET, FRICTION
    - Importance: 60-84
    - This should cover ~80% of levels
+
+**EXPIRY LABELS IN OUTPUT:**
+- Use exact labels: '0DTE', 'WEEKLY_1', 'WEEKLY_2', 'MONTHLY_1', 'MONTHLY_2'
+- For multi-expiry: combine with '+', e.g., '0DTE+WEEKLY_1', 'WEEKLY_1+MONTHLY_1+MONTHLY_2'
+
+**TOTAL GEX INTERPRETATION:**
+- Use totalGexData.total_gex for overall market gamma exposure
+- Positive total GEX = dealers long gamma = stable market, suppresses volatility
+- Negative total GEX = dealers short gamma = volatile market, amplifies moves
+- Compare total_gex vs individual expiry GEX to see concentration risk
 
 ⚠️ COMMON MISTAKES TO AVOID:
 - DO NOT assign RESONANCE to levels that appear in different expirations but at different strikes
@@ -182,19 +191,31 @@ def clean_json_response(text: str) -> str:
     return cleaned
 
 
-def format_quant_metrics_for_ai(quant_metrics: Dict[str, Any]) -> str:
-    """Format quantitative metrics for AI analysis - same as formatQuantMetrics in glmService.ts"""
+def format_quant_metrics_for_ai(quant_metrics: Dict[str, Any], total_gex_data: Dict[str, Any] = None) -> str:
+    """Format quantitative metrics for AI analysis - includes total GEX across all expiries"""
     gex_sign = 'positive/stable' if quant_metrics.get('total_gex', 0) > 0 else 'negative/volatile'
     skew = quant_metrics.get('volatility_skew', {})
     skew_type = skew.get('skew_type', 'unknown')
     sentiment = skew.get('sentiment', 'neutral')
     
+    # Add total GEX information if available
+    total_gex_section = ""
+    if total_gex_data:
+        total_sign = 'positive/stable' if total_gex_data.get('total_gex', 0) > 0 else 'negative/volatile'
+        total_gex_section = f"""
+=== TOTAL GEX (ALL EXPIRATIONS) ===
+Total Market GEX: {total_gex_data.get('total_gex', 0):.2f}B ({total_sign})
+Positive GEX: {total_gex_data.get('positive_gex', 0):.2f}B
+Negative GEX: {total_gex_data.get('negative_gex', 0):.2f}B
+GEX Concentration: {len(total_gex_data.get('gex_by_expiry', []))} expiries analyzed
+"""
+    
     return f"""
 === ADVANCED QUANTITATIVE METRICS ===
 Gamma Flip: {quant_metrics.get('gamma_flip', 'N/A')}
-Total GEX: {quant_metrics.get('total_gex', 0):.2f}B ({gex_sign})
+Total GEX (Selected Expiries): {quant_metrics.get('total_gex', 0):.2f}B ({gex_sign})
 Max Pain: {quant_metrics.get('max_pain', 'N/A')}
-
+{total_gex_section}
 Put/Call Ratios:
 - OI-Based: {quant_metrics.get('put_call_ratios', {}).get('oi_based', 0):.2f}
 - Volume-Based: {quant_metrics.get('put_call_ratios', {}).get('volume_based', 0):.2f}
@@ -423,6 +444,7 @@ class OptionsDataset:
     generated: str
     expiries: List[Dict[str, Any]]
     spot_source: str = 'yahoo'  # 'twelvedata', 'yahoo', 'none'
+    total_gex_data: Dict[str, Any] = None  # GEX calcolato su TUTTE le scadenze
 
 
 def is_friday(date_str: str) -> bool:
@@ -534,12 +556,14 @@ def get_spot_price(ticker: yf.Ticker, symbol: str = None) -> Tuple[Optional[floa
     return (None, 'none')
 
 
-def select_expirations(expirations: List[str]) -> List[tuple]:
+def select_expirations_enhanced(expirations: List[str]) -> List[tuple]:
     """
-    Select 3 distinct expirations following standard options expiry rules:
-    1. 0DTE - First available expiration
-    2. WEEKLY - Next Friday that is NOT the third Friday (monthly)
-    3. MONTHLY - Third Friday of the month (day 15-21, weekday=4)
+    Select 5 distinct expirations for comprehensive analysis:
+    1. 0DTE - First available (intraday gamma)
+    2. WEEKLY_1 - First weekly (short-term)
+    3. WEEKLY_2 - Second weekly (roll detection)
+    4. MONTHLY_1 - First monthly (standard expiry)
+    5. MONTHLY_2 - Second monthly (medium-term target)
     
     Returns list of (label, date) tuples.
     """
@@ -553,36 +577,135 @@ def select_expirations(expirations: List[str]) -> List[tuple]:
     selected.append(("0DTE", expirations[0]))
     used_dates.add(expirations[0])
     
-    # 2. WEEKLY - Next Friday that is NOT the monthly (third Friday)
+    # 2-3. WEEKLY - First two weekly Fridays (not monthly)
+    weekly_count = 0
     for exp in expirations:
         if exp not in used_dates and is_weekly_friday(exp):
-            selected.append(("WEEKLY", exp))
+            weekly_count += 1
+            selected.append((f"WEEKLY_{weekly_count}", exp))
             used_dates.add(exp)
-            break
+            if weekly_count >= 2:
+                break
     
-    # 3. MONTHLY - First third Friday not yet used
+    # 4-5. MONTHLY - First two third Fridays not yet used
+    monthly_count = 0
     for exp in expirations:
         if exp not in used_dates and is_monthly(exp):
-            selected.append(("MONTHLY", exp))
+            monthly_count += 1
+            selected.append((f"MONTHLY_{monthly_count}", exp))
             used_dates.add(exp)
-            break
+            if monthly_count >= 2:
+                break
     
-    # Fallback: If no weekly Friday found, use next Friday after 0DTE
-    if len(selected) < 2:
+    # Fallback: If no weekly Friday found, use next Fridays after 0DTE
+    if len(selected) < 3:
         for exp in expirations:
             if exp not in used_dates and is_friday(exp):
-                selected.insert(1, ("WEEKLY", exp))
+                selected.insert(len(selected) - monthly_count, ("WEEKLY_1", exp))
                 used_dates.add(exp)
                 break
     
-    # Fallback: If no monthly found, use any Friday after weekly
-    if len(selected) < 3:
+    # Fallback: If still missing monthly, use any remaining
+    while len(selected) < 5 and len(used_dates) < len(expirations):
         for exp in expirations:
             if exp not in used_dates:
-                selected.append(("MONTHLY", exp))
+                # Determine if it's more like weekly or monthly based on distance
+                days_to_expiry = (datetime.strptime(exp, '%Y-%m-%d') - datetime.now()).days
+                if days_to_expiry > 30:
+                    monthly_count += 1
+                    selected.append((f"MONTHLY_{monthly_count}", exp))
+                else:
+                    weekly_count += 1
+                    selected.append((f"WEEKLY_{weekly_count}", exp))
+                used_dates.add(exp)
                 break
     
     return selected
+
+
+def select_expirations(expirations: List[str]) -> List[tuple]:
+    """
+    Legacy function - now calls select_expirations_enhanced.
+    Kept for backward compatibility.
+    
+    Select 5 distinct expirations for comprehensive analysis.
+    Returns list of (label, date) tuples.
+    """
+    return select_expirations_enhanced(expirations)
+
+
+def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirations: List[str]) -> Dict[str, Any]:
+    """
+    Calculate total GEX across ALL available expirations for accurate gamma exposure.
+    This is separate from the 5 selected expirations and provides a complete picture.
+    
+    Returns:
+        {
+            'total_gex': float,  # Sum of all GEX in billions
+            'gex_by_expiry': [{'date': str, 'gex': float, 'weight': float}, ...],
+            'positive_gex': float,
+            'negative_gex': float,
+            'flip_point': float,  # Estimated gamma flip considering all expiries
+        }
+    """
+    r = 0.05  # Risk-free rate
+    
+    total_gamma = 0
+    positive_gamma = 0
+    negative_gamma = 0
+    gex_by_expiry = []
+    
+    # Limit to first 12 expirations to avoid timeout (covers ~3 months)
+    for expiry_date in all_expirations[:12]:
+        try:
+            chain = ticker.option_chain(expiry_date)
+            T = calculate_time_to_expiry(expiry_date)
+            
+            expiry_gamma = 0
+            
+            for _, row in chain.calls.iterrows():
+                if row['openInterest'] > 0 and not pd.isna(row.get('impliedVolatility', 0)):
+                    gamma = calculate_black_scholes_gamma(spot, row['strike'], T, r, row['impliedVolatility'])
+                    gex = gamma * row['openInterest'] * 100
+                    expiry_gamma += gex
+                    total_gamma += gex
+                    if gex > 0:
+                        positive_gamma += gex
+                    else:
+                        negative_gamma += gex
+            
+            for _, row in chain.puts.iterrows():
+                if row['openInterest'] > 0 and not pd.isna(row.get('impliedVolatility', 0)):
+                    gamma = calculate_black_scholes_gamma(spot, row['strike'], T, r, row['impliedVolatility'])
+                    gex = -gamma * row['openInterest'] * 100  # Negative for puts
+                    expiry_gamma += gex
+                    total_gamma += gex
+                    if gex > 0:
+                        positive_gamma += gex
+                    else:
+                        negative_gamma += gex
+            
+            gex_by_expiry.append({
+                'date': expiry_date,
+                'gex': round(expiry_gamma / 1e9, 4),
+            })
+            
+        except Exception as e:
+            logger.warning(f"Error calculating GEX for {expiry_date}: {e}")
+            continue
+    
+    # Calculate weights
+    total_abs = abs(positive_gamma) + abs(negative_gamma)
+    for item in gex_by_expiry:
+        item['weight'] = round(abs(item['gex']) / (total_abs / 1e9), 4) if total_abs > 0 else 0
+    
+    return {
+        'total_gex': round(total_gamma / 1e9, 4),
+        'gex_by_expiry': gex_by_expiry,
+        'positive_gex': round(positive_gamma / 1e9, 4),
+        'negative_gex': round(negative_gamma / 1e9, 4),
+        'flip_point': spot if total_gamma > 0 else spot * 0.99,  # Simplified
+    }
 
 
 def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Optional[ExpiryData]:
@@ -659,12 +782,12 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
             return None
         logger.info(f"  -> Trovate {len(expirations)} scadenze")
         
-        # Seleziona 3 scadenze
-        selected = select_expirations(expirations)
-        logger.info(f"  -> Selezionate: {[f'{l}({d})' for l, d in selected]}")
+        # Seleziona 5 scadenze con il nuovo metodo enhanced
+        selected = select_expirations_enhanced(expirations)
+        logger.info(f"  -> Selezionate {len(selected)} scadenze: {[f'{l}({d})' for l, d in selected]}")
         
         # Scarica options chains
-        logger.info("[3/3] Download options chains...")
+        logger.info("[3/4] Download options chains...")
         expiries = []
         for label, date in selected:
             data = fetch_options_chain(ticker, date, label)
@@ -681,12 +804,18 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
             logger.error(f"❌ Nessun dato scaricato per {symbol}")
             return None
         
+        # Calculate total GEX across ALL expirations (not just selected 5)
+        logger.info("[4/4] Calcolando GEX totale su tutte le scadenze...")
+        total_gex_data = calculate_total_gex_all_expiries(ticker, spot, expirations)
+        logger.info(f"  -> GEX Totale: {total_gex_data['total_gex']:.2f}B (Positive: {total_gex_data['positive_gex']:.2f}B, Negative: {total_gex_data['negative_gex']:.2f}B)")
+        
         return OptionsDataset(
             symbol=symbol,  # Usa il simbolo originale (senza ^)
             spot=round(spot, 2),
             spot_source=spot_source,
             generated=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-            expiries=expiries
+            expiries=expiries,
+            total_gex_data=total_gex_data  # NUOVO: GEX su tutte le scadenze
         )
         
     except Exception as e:
@@ -1715,6 +1844,7 @@ def main():
                 "expiries": data.expiries,
                 "selected_levels": selected_levels,
                 "ai_analysis": ai_analysis,  # Aggiungi analisi AI
+                "totalGexData": data.total_gex_data,  # GEX totale su tutte le scadenze
                 "legacy": legacy
             }
             successful += 1

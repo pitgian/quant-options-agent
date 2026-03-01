@@ -21,7 +21,8 @@ import {
 import {
   SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios,
   VolatilitySkew, GEXData, SelectedLevels, AIAnalysis, AILevel, AIOutlook,
-  ConfluenceLevel, ResonanceLevel, ConfluenceExpiryDetail, LegacyConfluenceLevel, LegacyResonanceLevel
+  ConfluenceLevel, ResonanceLevel, ConfluenceExpiryDetail, LegacyConfluenceLevel, LegacyResonanceLevel,
+  TotalGexData
 } from '../types';
 
 // ============================================================================
@@ -36,11 +37,16 @@ type Symbol = typeof SYMBOLS[number];
 
 /**
  * Expiry type labels for display
+ * Updated to support 5 expiries: 0DTE, WEEKLY_1, WEEKLY_2, MONTHLY_1, MONTHLY_2
  */
 const EXPIRY_LABELS: Record<string, string> = {
   '0DTE': '0DTE (Today)',
   'WEEKLY': 'Weekly',
+  'WEEKLY_1': 'Weekly 1',
+  'WEEKLY_2': 'Weekly 2',
   'MONTHLY': 'Monthly',
+  'MONTHLY_1': 'Monthly 1',
+  'MONTHLY_2': 'Monthly 2',
 };
 
 // Tooltips for metrics
@@ -1195,6 +1201,87 @@ const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) =
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+/**
+ * Total GEX Display Component
+ * Shows aggregate GEX data across all expiries
+ */
+const TotalGexDisplay: React.FC<{ totalGexData: TotalGexData; spot: number }> = ({ totalGexData, spot }) => {
+  const getGexColor = (gex: number) =>
+    gex >= 0 ? 'text-green-400' : 'text-red-400';
+
+  const getGexEmoji = (gex: number) =>
+    gex >= 0 ? '🟢' : '🔴';
+
+  return (
+    <div className="bg-gradient-to-r from-gray-900/80 to-gray-800/60 p-4 rounded-xl border border-gray-600/50 mt-4">
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-xl">🌐</span>
+        <h3 className="text-base font-black text-white uppercase tracking-wider">Total Market GEX (All Expiries)</h3>
+      </div>
+
+      {/* Main GEX Value */}
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <span className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest">Aggregate GEX</span>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{getGexEmoji(totalGexData.total_gex)}</span>
+            <span className={`text-2xl font-black font-mono ${getGexColor(totalGexData.total_gex)}`}>
+              {totalGexData.total_gex > 0 ? '+' : ''}{totalGexData.total_gex.toFixed(2)}B
+            </span>
+          </div>
+        </div>
+        <div className="text-right">
+          <span className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest">Gamma Flip Point</span>
+          <span className="text-xl font-black text-indigo-400 font-mono">
+            ${totalGexData.flip_point?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+          </span>
+        </div>
+      </div>
+
+      {/* Positive/Negative Breakdown */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="bg-black/30 p-3 rounded-lg border border-green-900/30">
+          <span className="text-xs font-bold text-green-400/70 uppercase block mb-1">Positive GEX</span>
+          <span className="text-lg font-bold text-green-400 font-mono">
+            +{totalGexData.positive_gex.toFixed(2)}B
+          </span>
+        </div>
+        <div className="bg-black/30 p-3 rounded-lg border border-red-900/30">
+          <span className="text-xs font-bold text-red-400/70 uppercase block mb-1">Negative GEX</span>
+          <span className="text-lg font-bold text-red-400 font-mono">
+            {totalGexData.negative_gex.toFixed(2)}B
+          </span>
+        </div>
+      </div>
+
+      {/* GEX by Expiry */}
+      {totalGexData.gex_by_expiry && totalGexData.gex_by_expiry.length > 0 && (
+        <div className="bg-black/20 p-3 rounded-lg border border-gray-800/40">
+          <span className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">GEX by Expiry</span>
+          <div className="space-y-2">
+            {totalGexData.gex_by_expiry.map((expiry, idx) => (
+              <div key={idx} className="flex items-center justify-between">
+                <span className="text-sm text-gray-300">{expiry.date}</span>
+                <div className="flex items-center gap-3">
+                  <div className="w-24 bg-gray-700/50 rounded-full h-2 overflow-hidden">
+                    <div
+                      className={`h-full ${expiry.gex >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
+                      style={{ width: `${Math.min(Math.abs(expiry.weight) * 100, 100)}%` }}
+                    />
+                  </div>
+                  <span className={`text-sm font-mono font-bold w-20 text-right ${getGexColor(expiry.gex)}`}>
+                    {expiry.gex > 0 ? '+' : ''}{expiry.gex.toFixed(2)}B
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2539,6 +2626,11 @@ export function VercelView(): ReactElement {
 
                 {/* Quantitative Metrics Display */}
                 <QuantMetricsDisplay metrics={quantAnalysis.aggregatedMetrics} />
+
+                {/* Total GEX Display (if available) */}
+                {activeSymbolData.totalGexData && (
+                  <TotalGexDisplay totalGexData={activeSymbolData.totalGexData} spot={activeSymbolData.spot} />
+                )}
               </div>
             )}
 

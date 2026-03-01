@@ -8,6 +8,7 @@ import {
   LegacyConfluenceLevel,
   LegacyResonanceLevel,
   SelectedLevels,
+  TotalGexData,
   isEnhancedConfluenceLevel,
   isEnhancedResonanceLevel
 } from '../types';
@@ -224,6 +225,48 @@ ${quantMetrics.gex_by_strike.slice(0, 5).map(s =>
 };
 
 /**
+ * Formats total GEX data for AI analysis
+ * Provides aggregate market gamma exposure across all expiries
+ */
+const formatTotalGexData = (totalGexData: TotalGexData): string => {
+  const gexSign = totalGexData.total_gex > 0 ? 'positive/stable' : 'negative/volatile';
+  const netGex = totalGexData.positive_gex + totalGexData.negative_gex;
+  
+  let output = `
+=== TOTAL MARKET GEX (ALL EXPIRIES) ===
+Aggregate GEX: ${totalGexData.total_gex.toFixed(2)}B (${gexSign})
+Positive GEX: +${totalGexData.positive_gex.toFixed(2)}B
+Negative GEX: ${totalGexData.negative_gex.toFixed(2)}B
+Net GEX: ${netGex.toFixed(2)}B
+Estimated Gamma Flip: ${totalGexData.flip_point}
+
+GEX by Expiry:
+`;
+
+  if (totalGexData.gex_by_expiry && totalGexData.gex_by_expiry.length > 0) {
+    totalGexData.gex_by_expiry.forEach(expiry => {
+      const weightPct = (expiry.weight * 100).toFixed(1);
+      const gexSign = expiry.gex >= 0 ? '+' : '';
+      output += `  - ${expiry.date}: ${gexSign}${expiry.gex.toFixed(2)}B (weight: ${weightPct}%)\n`;
+    });
+  }
+
+  // Add interpretation guidance
+  output += `
+INTERPRETATION:
+${totalGexData.total_gex > 0
+  ? '- Positive aggregate GEX: Dealers are LONG gamma, expect mean-reversion behavior'
+  : '- Negative aggregate GEX: Dealers are SHORT gamma, expect trend-acceleration behavior'}
+- Gamma Flip at ${totalGexData.flip_point}: Key level where dealer behavior shifts
+- ${Math.abs(totalGexData.negative_gex) > totalGexData.positive_gex
+  ? 'Negative GEX dominates: Higher volatility expected, use tight stops'
+  : 'Positive GEX dominates: Range-bound behavior likely, fade extremes'}
+`;
+
+  return output;
+};
+
+/**
  * Formats a single enhanced confluence/resonance level for AI prompt
  */
 const formatEnhancedLevel = (
@@ -319,7 +362,8 @@ export const getAnalysis = async (
   datasets: MarketDataset[],
   currentPrice: string,
   model?: string,
-  selectedLevels?: SelectedLevels
+  selectedLevels?: SelectedLevels,
+  totalGexData?: TotalGexData
 ): Promise<AnalysisResponse> => {
     const selectedModel = model || GLM_MODEL;
     const spotPrice = parseFloat(currentPrice) || 0;
@@ -343,6 +387,12 @@ export const getAnalysis = async (
           levelsSection = formatSelectedLevels(selectedLevels, spotPrice);
         }
         
+        // Add total GEX data if available
+        let totalGexSection = '';
+        if (totalGexData) {
+          totalGexSection = formatTotalGexData(totalGexData);
+        }
+        
         const messages: GLMMessage[] = [
             { role: 'system', content: harmonicSystemInstruction },
             {
@@ -353,6 +403,8 @@ export const getAnalysis = async (
                 Integrate skew sentiment and PCR to validate level importance.
                 
                 ${levelsSection ? 'IMPORTANT: Pre-calculated CONFLUENCE and RESONANCE levels are provided below. Use these for multi-expiry analysis:\n' + levelsSection : ''}
+                
+                ${totalGexSection ? 'CRITICAL: Total Market GEX data across ALL expiries is provided below. Use this for overall market sentiment:\n' + totalGexSection : ''}
                 
                 ${formattedData}`
             }
