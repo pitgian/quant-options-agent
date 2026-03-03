@@ -2814,8 +2814,8 @@ export function VercelView(): ReactElement {
                   <TotalGexDisplay totalGexData={activeSymbolData.totalGexData} spot={activeSymbolData.spot} />
                 )}
 
-                {/* Aggregate Metrics Display */}
-                <AggregateMetricsDisplay metrics={quantAnalysis.aggregatedMetrics} spot={activeSymbolData.spot} />
+                {/* Aggregate Metrics Display - REMOVED: Redundant with TotalGexDisplay above */}
+                {/* <AggregateMetricsDisplay metrics={quantAnalysis.aggregatedMetrics} spot={activeSymbolData.spot} /> */}
               </div>
             )}
 
