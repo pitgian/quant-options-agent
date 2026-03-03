@@ -119,6 +119,92 @@ WHAT IT IS: Ratio between average OTM put and call implied volatility.
 • Ratio < 0.9 = BULLISH SKEW`
 };
 
+// Detailed tooltips for metrics with trading implications
+const DETAILED_TOOLTIPS = {
+  gex0dte: `GEX (Gamma Exposure) 0DTE measures the total gamma exposure for options expiring TODAY.
+
+How to use:
+• Positive GEX = Dealers are LONG gamma = market stability, price suppression
+• Negative GEX = Dealers are SHORT gamma = volatility amplification, trend acceleration
+• 0DTE GEX is critical for intraday trading as it affects same-day price action
+
+Trading implications:
+• Negative 0DTE GEX near spot = expect accelerated moves if support/resistance breaks
+• Positive 0DTE GEX = expect mean reversion, scalping opportunities`,
+
+  gammaFlip0dte: `Gamma Flip 0DTE is the price level where cumulative gamma exposure changes sign for TODAY's expiry.
+
+How to use:
+• Above flip = positive gamma regime (stability)
+• Below flip = negative gamma regime (volatility)
+• Spot near flip = HIGH inflection risk - directional breakout imminent
+
+Trading implications:
+• Long entries above flip have lower volatility risk
+• Short entries below flip benefit from volatility amplification
+• Flip acts as dynamic support/resistance`,
+
+  totalGex: `Total Market GEX aggregates gamma exposure across ALL available expiries.
+
+How to use:
+• Provides the complete picture of dealer positioning
+• More stable than single-expiry GEX
+• Negative total = bearish volatility regime
+• Positive total = bullish stability regime
+
+Trading implications:
+• Use for overall market bias, not intraday timing
+• Compare with 0DTE GEX to see near-term vs structural positioning`,
+
+  gammaFlipTotal: `Total Gamma Flip is calculated across all expiries.
+
+How to use:
+• More significant than single-expiry flip
+• Acts as major structural support/resistance
+• Price tends to be attracted to this level
+
+Trading implications:
+• Major level for swing trading decisions
+• Break above = bullish structural shift
+• Break below = bearish structural shift`,
+
+  maxPain: `Max Pain is the price where total option value is minimized = maximum loss for option buyers.
+
+How to use:
+• Acts as magnetic attractor for price
+• Dealers target this level to minimize payouts
+• Strongest effect in last week of expiry
+
+Trading implications:
+• Price tends to move toward max pain into expiry
+• Use as target for mean reversion trades
+• Combine with GEX for confluence`,
+
+  putCallRatio: `Put/Call Ratio measures sentiment via options positioning.
+
+How to use:
+• PCR > 1.0 = bearish sentiment (excessive pessimism)
+• PCR < 0.7 = bullish sentiment (excessive optimism)
+• Contrarian indicator at extremes
+
+Trading implications:
+• Very high PCR = potential bounce (too much bearishness)
+• Very low PCR = correction risk (complacency)
+• Use with price action for confirmation`,
+
+  volatilitySkew: `Volatility Skew shows the relative pricing of puts vs calls.
+
+Types:
+• SMIRK (ratio > 1.2): Expensive puts = fear, strong support
+• REVERSE SMIRK (ratio < 0.9): Expensive calls = euphoria, weak resistance
+• FLAT (ratio 0.9-1.2): Balanced market
+
+Trading implications:
+• Strong smirk = institutional hedging, expect support at put walls
+• Reverse smirk = call buying spree, resistance may fail
+• Use to validate wall levels`
+};
+
 // ============================================================================
 // QUANTITATIVE CALCULATION FUNCTIONS (Ported from Python)
 // ============================================================================
@@ -1047,9 +1133,13 @@ const MetricLabel: React.FC<{
 );
 
 /**
- * Quantitative Metrics Display Component (matching QuantPanel)
+ * 0DTE Metrics Display Component
+ * Shows metrics specifically for the first expiry (0DTE - Today)
  */
-const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) => {
+const ZeroDTEMetricsDisplay: React.FC<{
+  metrics: QuantMetrics;
+  spot: number;
+}> = ({ metrics, spot }) => {
   const getGexColor = (gex: number) =>
     gex >= 0 ? 'text-green-400' : 'text-red-400';
 
@@ -1061,94 +1151,93 @@ const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) =
     sentiment === 'bearish' ? 'text-red-400' : 'text-gray-400';
 
   return (
-    <div className="bg-gray-900/60 p-4 rounded-xl border border-gray-700/50 mt-4">
+    <div className="bg-gradient-to-r from-blue-900/40 to-indigo-900/40 p-4 rounded-xl border border-blue-600/50 mt-4">
       <div className="flex items-center gap-2 mb-4">
-        <span className="text-xl">📊</span>
-        <h3 className="text-base font-black text-white uppercase tracking-wider">Quantitative Metrics</h3>
+        <span className="text-xl">📅</span>
+        <h3 className="text-base font-black text-white uppercase tracking-wider">0DTE Metrics (Today)</h3>
+        <span className="text-xs text-blue-300 ml-2">First Expiry Only</span>
       </div>
 
-      {/* Key Metrics Row */}
+      {/* Key 0DTE Metrics Row */}
       <div className="grid grid-cols-3 gap-3 mb-4">
-        {/* Gamma Flip */}
-        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
+        {/* GEX 0DTE */}
+        <div className="bg-black/40 p-3 rounded-lg border border-blue-800/50">
           <MetricLabel
-            label="Gamma Flip"
-            tooltip={TOOLTIPS.gammaFlip}
-            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
-          />
-          <span className="text-xl font-black text-indigo-400 font-mono block mt-1">
-            ${metrics.gamma_flip?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
-          </span>
-        </div>
-
-        {/* Total GEX */}
-        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
-          <MetricLabel
-            label="Total GEX"
-            tooltip={TOOLTIPS.totalGex}
-            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+            label="GEX 0DTE"
+            tooltip={DETAILED_TOOLTIPS.gex0dte}
+            className="text-xs font-bold text-blue-300 uppercase block mb-1 tracking-widest"
           />
           <span className={`text-xl font-black font-mono block mt-1 ${getGexColor(metrics.total_gex)}`}>
             {formatGEX(metrics.total_gex)}
           </span>
           {metrics.total_gex < 0 && (
-            <span className="text-[10px] text-red-400/70 block">(negative)</span>
+            <span className="text-[10px] text-red-400/70 block">(volatility regime)</span>
           )}
         </div>
 
-        {/* Max Pain */}
-        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
+        {/* Gamma Flip 0DTE */}
+        <div className="bg-black/40 p-3 rounded-lg border border-blue-800/50">
           <MetricLabel
-            label="Max Pain"
-            tooltip={TOOLTIPS.maxPain}
-            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+            label="Gamma Flip 0DTE"
+            tooltip={DETAILED_TOOLTIPS.gammaFlip0dte}
+            className="text-xs font-bold text-blue-300 uppercase block mb-1 tracking-widest"
+          />
+          <span className="text-xl font-black text-indigo-400 font-mono block mt-1">
+            ${metrics.gamma_flip?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+          </span>
+          {metrics.gamma_flip && spot > 0 && (
+            <span className={`text-[10px] ${spot > metrics.gamma_flip ? 'text-green-400/70' : 'text-red-400/70'} block`}>
+              {spot > metrics.gamma_flip ? 'Above flip (stable)' : 'Below flip (volatile)'}
+            </span>
+          )}
+        </div>
+
+        {/* Max Pain 0DTE */}
+        <div className="bg-black/40 p-3 rounded-lg border border-blue-800/50">
+          <MetricLabel
+            label="Max Pain 0DTE"
+            tooltip={DETAILED_TOOLTIPS.maxPain}
+            className="text-xs font-bold text-blue-300 uppercase block mb-1 tracking-widest"
           />
           <span className="text-xl font-black text-amber-400 font-mono block mt-1">
             ${metrics.max_pain?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
           </span>
+          {metrics.max_pain && spot > 0 && (
+            <span className="text-[10px] text-amber-400/70 block">
+              {((Math.abs(spot - metrics.max_pain) / spot) * 100).toFixed(2)}% from spot
+            </span>
+          )}
         </div>
       </div>
 
       {/* Put/Call Ratios */}
-      <div className="bg-black/30 p-3 rounded-lg border border-gray-800/40 mb-3">
-        <span className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Put/Call Ratios</span>
+      <div className="bg-black/30 p-3 rounded-lg border border-blue-800/40 mb-3">
+        <MetricLabel
+          label="Put/Call Ratios"
+          tooltip={DETAILED_TOOLTIPS.putCallRatio}
+          className="text-xs font-bold text-blue-300 uppercase block mb-3 tracking-widest"
+        />
         <div className="grid grid-cols-4 gap-3">
           <div className="text-center">
-            <MetricLabel
-              label="OI-Based"
-              tooltip={TOOLTIPS.pcrOiBased}
-              className="text-[11px] text-gray-400 block"
-            />
+            <span className="text-[11px] text-gray-400 block">OI-Based</span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.oi_based)}`}>
               {metrics.put_call_ratios.oi_based.toFixed(2)}
             </span>
           </div>
           <div className="text-center">
-            <MetricLabel
-              label="Volume"
-              tooltip={TOOLTIPS.pcrVolume}
-              className="text-[11px] text-gray-400 block"
-            />
+            <span className="text-[11px] text-gray-400 block">Volume</span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.volume_based)}`}>
               {metrics.put_call_ratios.volume_based.toFixed(2)}
             </span>
           </div>
           <div className="text-center">
-            <MetricLabel
-              label="Weighted"
-              tooltip={TOOLTIPS.pcrWeighted}
-              className="text-[11px] text-gray-400 block"
-            />
+            <span className="text-[11px] text-gray-400 block">Weighted</span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.weighted)}`}>
               {metrics.put_call_ratios.weighted.toFixed(2)}
             </span>
           </div>
           <div className="text-center">
-            <MetricLabel
-              label="Delta-Adj"
-              tooltip={TOOLTIPS.pcrDeltaAdj}
-              className="text-[11px] text-gray-400 block"
-            />
+            <span className="text-[11px] text-gray-400 block">Delta-Adj</span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.delta_adjusted)}`}>
               {metrics.put_call_ratios.delta_adjusted.toFixed(2)}
             </span>
@@ -1157,40 +1246,28 @@ const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) =
       </div>
 
       {/* Volatility Skew */}
-      <div className="bg-black/30 p-3 rounded-lg border border-gray-800/40">
-        <span className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Volatility Skew</span>
+      <div className="bg-black/30 p-3 rounded-lg border border-blue-800/40">
+        <MetricLabel
+          label="Volatility Skew"
+          tooltip={DETAILED_TOOLTIPS.volatilitySkew}
+          className="text-xs font-bold text-blue-300 uppercase block mb-3 tracking-widest"
+        />
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-5">
             <div>
-              <MetricLabel
-                label="Type"
-                tooltip={TOOLTIPS.skewType}
-                className="text-[11px] text-gray-400 block"
-              />
+              <span className="text-[11px] text-gray-400 block">Type</span>
               <span className="text-base font-bold text-white capitalize block mt-1">{metrics.volatility_skew.skew_type.replace('_', ' ')}</span>
             </div>
             <div>
-              <MetricLabel
-                label="Put IV"
-                tooltip="Average OTM put implied volatility"
-                className="text-[11px] text-gray-400 block"
-              />
+              <span className="text-[11px] text-gray-400 block">Put IV</span>
               <span className="text-base font-bold text-red-400 font-mono block mt-1">{(metrics.volatility_skew.put_iv_avg * 100).toFixed(0)}%</span>
             </div>
             <div>
-              <MetricLabel
-                label="Call IV"
-                tooltip="Average OTM call implied volatility"
-                className="text-[11px] text-gray-400 block"
-              />
+              <span className="text-[11px] text-gray-400 block">Call IV</span>
               <span className="text-base font-bold text-green-400 font-mono block mt-1">{(metrics.volatility_skew.call_iv_avg * 100).toFixed(0)}%</span>
             </div>
             <div>
-              <MetricLabel
-                label="Ratio"
-                tooltip={TOOLTIPS.skewRatio}
-                className="text-[11px] text-gray-400 block"
-              />
+              <span className="text-[11px] text-gray-400 block">Ratio</span>
               <span className="text-base font-bold text-gray-300 font-mono block mt-1">{metrics.volatility_skew.skew_ratio.toFixed(2)}</span>
             </div>
           </div>
@@ -1201,6 +1278,60 @@ const QuantMetricsDisplay: React.FC<{ metrics: QuantMetrics }> = ({ metrics }) =
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+/**
+ * Aggregate Metrics Display Component (All Expiries Combined)
+ * Simplified version showing only aggregate metrics
+ */
+const AggregateMetricsDisplay: React.FC<{ metrics: QuantMetrics; spot: number }> = ({ metrics, spot }) => {
+  const getGexColor = (gex: number) =>
+    gex >= 0 ? 'text-green-400' : 'text-red-400';
+
+  return (
+    <div className="bg-gray-900/60 p-4 rounded-xl border border-gray-700/50 mt-4">
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-xl">📊</span>
+        <h3 className="text-base font-black text-white uppercase tracking-wider">Aggregate Metrics (All Expiries)</h3>
+      </div>
+
+      {/* Key Aggregate Metrics Row */}
+      <div className="grid grid-cols-2 gap-3">
+        {/* Total GEX */}
+        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
+          <MetricLabel
+            label="Aggregate GEX"
+            tooltip={DETAILED_TOOLTIPS.totalGex}
+            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+          />
+          <span className={`text-xl font-black font-mono block mt-1 ${getGexColor(metrics.total_gex)}`}>
+            {formatGEX(metrics.total_gex)}
+          </span>
+          {metrics.total_gex < 0 && (
+            <span className="text-[10px] text-red-400/70 block">(volatility regime)</span>
+          )}
+        </div>
+
+        {/* Gamma Flip */}
+        <div className="bg-black/40 p-3 rounded-lg border border-gray-800/50">
+          <MetricLabel
+            label="Gamma Flip (Total)"
+            tooltip={DETAILED_TOOLTIPS.gammaFlipTotal}
+            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+          />
+          <span className="text-xl font-black text-indigo-400 font-mono block mt-1">
+            ${metrics.gamma_flip?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+          </span>
+          {metrics.gamma_flip && spot > 0 && (
+            <span className={`text-[10px] ${spot > metrics.gamma_flip ? 'text-green-400/70' : 'text-red-400/70'} block`}>
+              {spot > metrics.gamma_flip ? 'Above flip' : 'Below flip'}
+            </span>
+          )}
+        </div>
+      </div>
+
     </div>
   );
 };
@@ -1226,7 +1357,11 @@ const TotalGexDisplay: React.FC<{ totalGexData: TotalGexData; spot: number }> = 
       {/* Main GEX Value */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <span className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest">Aggregate GEX</span>
+          <MetricLabel
+            label="Aggregate GEX"
+            tooltip={DETAILED_TOOLTIPS.totalGex}
+            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+          />
           <div className="flex items-center gap-2">
             <span className="text-2xl">{getGexEmoji(totalGexData.total_gex)}</span>
             <span className={`text-2xl font-black font-mono ${getGexColor(totalGexData.total_gex)}`}>
@@ -1235,10 +1370,19 @@ const TotalGexDisplay: React.FC<{ totalGexData: TotalGexData; spot: number }> = 
           </div>
         </div>
         <div className="text-right">
-          <span className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest">Gamma Flip Point</span>
+          <MetricLabel
+            label="Gamma Flip Point"
+            tooltip={DETAILED_TOOLTIPS.gammaFlipTotal}
+            className="text-xs font-bold text-gray-400 uppercase block mb-1 tracking-widest"
+          />
           <span className="text-xl font-black text-indigo-400 font-mono">
             ${totalGexData.flip_point?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
           </span>
+          {totalGexData.flip_point && spot > 0 && (
+            <span className={`text-[10px] ${spot > totalGexData.flip_point ? 'text-green-400/70' : 'text-red-400/70'} block`}>
+              {spot > totalGexData.flip_point ? 'Above flip (stable)' : 'Below flip (volatile)'}
+            </span>
+          )}
         </div>
       </div>
 
@@ -2210,7 +2354,7 @@ export function VercelView(): ReactElement {
       const gexByStrike = calculateGexByStrike(allOptionsForMetrics, spot, calculateTimeToExpiry(firstExpiryDate));
       
       aggregatedMetrics = {
-        total_gex: totalGexData.total_gex * 1e9, // Convert back from billions to match expected format
+        total_gex: totalGexData.total_gex, // Value is already in billions
         gamma_flip: totalGexData.flip_point,
         max_pain: maxPain,
         put_call_ratios: putCallRatios,
@@ -2657,13 +2801,21 @@ export function VercelView(): ReactElement {
                   </div>
                 )}
 
-                {/* Quantitative Metrics Display */}
-                <QuantMetricsDisplay metrics={quantAnalysis.aggregatedMetrics} />
+                {/* 0DTE Metrics Display - First Expiry Only */}
+                {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && activeSymbolData.expiries[0].quantMetrics && (
+                  <ZeroDTEMetricsDisplay
+                    metrics={activeSymbolData.expiries[0].quantMetrics}
+                    spot={activeSymbolData.spot}
+                  />
+                )}
 
-                {/* Total GEX Display (if available) */}
+                {/* Total GEX Display (All Expiries) */}
                 {activeSymbolData.totalGexData && (
                   <TotalGexDisplay totalGexData={activeSymbolData.totalGexData} spot={activeSymbolData.spot} />
                 )}
+
+                {/* Aggregate Metrics Display */}
+                <AggregateMetricsDisplay metrics={quantAnalysis.aggregatedMetrics} spot={activeSymbolData.spot} />
               </div>
             )}
 
