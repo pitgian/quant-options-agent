@@ -1220,26 +1220,26 @@ const ZeroDTEMetricsDisplay: React.FC<{
         <div className="grid grid-cols-4 gap-3">
           <div className="text-center">
             <span className="text-[11px] text-gray-400 block">OI-Based</span>
-            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.oi_based)}`}>
-              {metrics.put_call_ratios.oi_based.toFixed(2)}
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.oi_based ?? 0)}`}>
+              {metrics.put_call_ratios?.oi_based?.toFixed(2) ?? 'N/A'}
             </span>
           </div>
           <div className="text-center">
             <span className="text-[11px] text-gray-400 block">Volume</span>
-            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.volume_based)}`}>
-              {metrics.put_call_ratios.volume_based.toFixed(2)}
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.volume_based ?? 0)}`}>
+              {metrics.put_call_ratios?.volume_based?.toFixed(2) ?? 'N/A'}
             </span>
           </div>
           <div className="text-center">
             <span className="text-[11px] text-gray-400 block">Weighted</span>
-            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.weighted)}`}>
-              {metrics.put_call_ratios.weighted.toFixed(2)}
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.weighted ?? 0)}`}>
+              {metrics.put_call_ratios?.weighted?.toFixed(2) ?? 'N/A'}
             </span>
           </div>
           <div className="text-center">
             <span className="text-[11px] text-gray-400 block">Delta-Adj</span>
-            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios.delta_adjusted)}`}>
-              {metrics.put_call_ratios.delta_adjusted.toFixed(2)}
+            <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.delta_adjusted ?? 0)}`}>
+              {metrics.put_call_ratios?.delta_adjusted?.toFixed(2) ?? 'N/A'}
             </span>
           </div>
         </div>
@@ -1256,24 +1256,24 @@ const ZeroDTEMetricsDisplay: React.FC<{
           <div className="flex items-center gap-5">
             <div>
               <span className="text-[11px] text-gray-400 block">Type</span>
-              <span className="text-base font-bold text-white capitalize block mt-1">{metrics.volatility_skew.skew_type.replace('_', ' ')}</span>
+              <span className="text-base font-bold text-white capitalize block mt-1">{metrics.volatility_skew?.skew_type?.replace('_', ' ') ?? 'N/A'}</span>
             </div>
             <div>
               <span className="text-[11px] text-gray-400 block">Put IV</span>
-              <span className="text-base font-bold text-red-400 font-mono block mt-1">{(metrics.volatility_skew.put_iv_avg * 100).toFixed(0)}%</span>
+              <span className="text-base font-bold text-red-400 font-mono block mt-1">{metrics.volatility_skew?.put_iv_avg != null ? `${(metrics.volatility_skew.put_iv_avg * 100).toFixed(0)}%` : 'N/A'}</span>
             </div>
             <div>
               <span className="text-[11px] text-gray-400 block">Call IV</span>
-              <span className="text-base font-bold text-green-400 font-mono block mt-1">{(metrics.volatility_skew.call_iv_avg * 100).toFixed(0)}%</span>
+              <span className="text-base font-bold text-green-400 font-mono block mt-1">{metrics.volatility_skew?.call_iv_avg != null ? `${(metrics.volatility_skew.call_iv_avg * 100).toFixed(0)}%` : 'N/A'}</span>
             </div>
             <div>
               <span className="text-[11px] text-gray-400 block">Ratio</span>
-              <span className="text-base font-bold text-gray-300 font-mono block mt-1">{metrics.volatility_skew.skew_ratio.toFixed(2)}</span>
+              <span className="text-base font-bold text-gray-300 font-mono block mt-1">{metrics.volatility_skew?.skew_ratio?.toFixed(2) ?? 'N/A'}</span>
             </div>
           </div>
           <div className="text-right">
-            <span className={`text-sm font-black uppercase ${getSentimentColor(metrics.volatility_skew.sentiment)}`}>
-              {metrics.volatility_skew.sentiment}
+            <span className={`text-sm font-black uppercase ${getSentimentColor(metrics.volatility_skew?.sentiment ?? 'neutral')}`}>
+              {metrics.volatility_skew?.sentiment ?? 'N/A'}
             </span>
           </div>
         </div>
