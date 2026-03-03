@@ -634,6 +634,108 @@ def select_expirations(expirations: List[str]) -> List[tuple]:
     return select_expirations_enhanced(expirations)
 
 
+def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expirations: List[str]) -> float:
+    """
+    Calculate gamma flip point across ALL expirations.
+    
+    This aggregates all options from all expiries and calculates the cumulative GEX by strike
+    to find the exact flip point using interpolation.
+    
+    Returns:
+        Gamma flip price level
+    """
+    r = 0.05  # Risk-free rate
+    
+    # Collect all options data across all expiries
+    all_options: List[Dict] = []
+    
+    # Limit to first 12 expirations to avoid timeout
+    for expiry_date in all_expirations[:12]:
+        try:
+            chain = ticker.option_chain(expiry_date)
+            T = calculate_time_to_expiry(expiry_date)
+            
+            # Process calls
+            for _, row in chain.calls.iterrows():
+                if row['openInterest'] > 0 and not pd.isna(row.get('impliedVolatility', 0)):
+                    all_options.append({
+                        'strike': row['strike'],
+                        'side': 'CALL',
+                        'oi': row['openInterest'],
+                        'iv': row['impliedVolatility'],
+                        'T': T
+                    })
+            
+            # Process puts
+            for _, row in chain.puts.iterrows():
+                if row['openInterest'] > 0 and not pd.isna(row.get('impliedVolatility', 0)):
+                    all_options.append({
+                        'strike': row['strike'],
+                        'side': 'PUT',
+                        'oi': row['openInterest'],
+                        'iv': row['impliedVolatility'],
+                        'T': T
+                    })
+                    
+        except Exception as e:
+            logger.warning(f"Error fetching options for gamma flip calculation {expiry_date}: {e}")
+            continue
+    
+    if not all_options:
+        return spot
+    
+    # Group by strike and aggregate GEX
+    gex_by_strike: Dict[float, float] = {}
+    
+    for opt in all_options:
+        strike = opt['strike']
+        T = opt['T']
+        iv = opt['iv']
+        oi = opt['oi']
+        side = opt['side']
+        
+        gamma = calculate_black_scholes_gamma(spot, strike, T, r, iv)
+        gex = gamma * oi * 100 * spot * spot * 0.01
+        
+        # PUTs are negative for dealers
+        if side == 'PUT':
+            gex = -gex
+        
+        if strike not in gex_by_strike:
+            gex_by_strike[strike] = 0.0
+        gex_by_strike[strike] += gex
+    
+    if not gex_by_strike:
+        return spot
+    
+    # Calculate cumulative GEX and find flip point
+    cumulative_gex = 0.0
+    gex_cumulative: List[Tuple[float, float]] = []
+    
+    for strike in sorted(gex_by_strike.keys()):
+        cumulative_gex += gex_by_strike[strike]
+        gex_cumulative.append((strike, cumulative_gex))
+    
+    # Find where cumulative GEX crosses zero
+    for i in range(1, len(gex_cumulative)):
+        prev_gex = gex_cumulative[i-1][1]
+        curr_gex = gex_cumulative[i][1]
+        
+        # If sign changes, we have a flip
+        if prev_gex * curr_gex < 0:
+            prev_strike = gex_cumulative[i-1][0]
+            curr_strike = gex_cumulative[i][0]
+            
+            # Linear interpolation to find exact flip point
+            if abs(prev_gex) + abs(curr_gex) > 0:
+                ratio = abs(prev_gex) / (abs(prev_gex) + abs(curr_gex))
+                flip_point = prev_strike + ratio * (curr_strike - prev_strike)
+                return round(flip_point, 2)
+    
+    # If no flip found, return spot
+    return spot
+
+
 def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirations: List[str]) -> Dict[str, Any]:
     """
     Calculate total GEX across ALL available expirations for accurate gamma exposure.
@@ -699,12 +801,15 @@ def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirat
     for item in gex_by_expiry:
         item['weight'] = round(abs(item['gex']) / (total_abs / 1e9), 4) if total_abs > 0 else 0
     
+    # Calculate gamma flip using cumulative GEX across all strikes
+    flip_point = calculate_gamma_flip_all_expiries(ticker, spot, all_expirations[:12])
+    
     return {
         'total_gex': round(total_gamma / 1e9, 4),
         'gex_by_expiry': gex_by_expiry,
         'positive_gex': round(positive_gamma / 1e9, 4),
         'negative_gex': round(negative_gamma / 1e9, 4),
-        'flip_point': spot if total_gamma > 0 else spot * 0.99,  # Simplified
+        'flip_point': round(flip_point, 2),
     }
 
 

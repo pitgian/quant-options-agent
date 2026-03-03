@@ -2186,8 +2186,41 @@ export function VercelView(): ReactElement {
       allOptions.push(...expiry.options);
     }
 
-    // Calculate aggregated metrics (always needed for PCR, skew, etc.)
-    const aggregatedMetrics = calculateAggregatedMetrics(expiries, spot);
+    // Calculate aggregated metrics - prefer pre-calculated from Python (totalGexData)
+    // Fall back to local calculation if not available
+    let aggregatedMetrics: QuantMetrics | null = null;
+    
+    if (activeSymbolData.totalGexData) {
+      // Use pre-calculated values from Python for GEX and gamma flip
+      const totalGexData = activeSymbolData.totalGexData;
+      
+      // We still need to calculate PCR, skew, etc. from options data
+      const allOptionsForMetrics: OptionData[] = [];
+      for (const expiry of expiries) {
+        allOptionsForMetrics.push(...expiry.options);
+      }
+      
+      // Calculate PCR and skew locally (these are not in totalGexData)
+      const putCallRatios = calculatePutCallRatios(allOptionsForMetrics);
+      const volatilitySkew = calculateVolatilitySkew(allOptionsForMetrics, spot);
+      const maxPain = calculateMaxPain(allOptionsForMetrics, spot);
+      
+      // Use first expiry for T calculation
+      const firstExpiryDate = expiries[0]?.date || new Date().toISOString().split('T')[0];
+      const gexByStrike = calculateGexByStrike(allOptionsForMetrics, spot, calculateTimeToExpiry(firstExpiryDate));
+      
+      aggregatedMetrics = {
+        total_gex: totalGexData.total_gex * 1e9, // Convert back from billions to match expected format
+        gamma_flip: totalGexData.flip_point,
+        max_pain: maxPain,
+        put_call_ratios: putCallRatios,
+        volatility_skew: volatilitySkew,
+        gex_by_strike: gexByStrike,
+      };
+    } else {
+      // Fallback: calculate locally
+      aggregatedMetrics = calculateAggregatedMetrics(expiries, spot);
+    }
 
     // Use selected_levels if available, otherwise calculate locally (fallback)
     let walls: { callWalls: number[]; putWalls: number[] };
