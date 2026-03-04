@@ -2802,9 +2802,9 @@ export function VercelView(): ReactElement {
                 )}
 
                 {/* 0DTE Metrics Display - First Expiry Only */}
-                {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && activeSymbolData.expiries[0].quantMetrics && (
+                {quantAnalysis && quantAnalysis.expiryMetrics && quantAnalysis.expiryMetrics.length > 0 && quantAnalysis.expiryMetrics[0].calculatedMetrics && (
                   <ZeroDTEMetricsDisplay
-                    metrics={activeSymbolData.expiries[0].quantMetrics}
+                    metrics={quantAnalysis.expiryMetrics[0].calculatedMetrics}
                     spot={activeSymbolData.spot}
                   />
                 )}
