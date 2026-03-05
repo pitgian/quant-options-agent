@@ -1204,7 +1204,7 @@ const ZeroDTEMetricsDisplay: React.FC<{
           </span>
           {metrics.max_pain && spot > 0 && (
             <span className="text-[10px] text-amber-400/70 block">
-              {((Math.abs(spot - metrics.max_pain) / spot) * 100).toFixed(2)}% from spot
+              {metrics.max_pain != null && spot != null ? ((Math.abs(spot - metrics.max_pain) / spot) * 100).toFixed(2) : 'N/A'}% from spot
             </span>
           )}
         </div>
@@ -1364,8 +1364,8 @@ const TotalGexDisplay: React.FC<{ totalGexData: TotalGexData; spot: number }> = 
           />
           <div className="flex items-center gap-2">
             <span className="text-2xl">{getGexEmoji(totalGexData.total_gex)}</span>
-            <span className={`text-2xl font-black font-mono ${getGexColor(totalGexData.total_gex)}`}>
-              {totalGexData.total_gex > 0 ? '+' : ''}{totalGexData.total_gex.toFixed(2)}B
+            <span className={`text-2xl font-black font-mono ${getGexColor(totalGexData?.total_gex ?? 0)}`}>
+              {totalGexData?.total_gex != null ? `${totalGexData.total_gex > 0 ? '+' : ''}${totalGexData.total_gex.toFixed(2)}B` : 'N/A'}
             </span>
           </div>
         </div>
@@ -1391,13 +1391,13 @@ const TotalGexDisplay: React.FC<{ totalGexData: TotalGexData; spot: number }> = 
         <div className="bg-black/30 p-3 rounded-lg border border-green-900/30">
           <span className="text-xs font-bold text-green-400/70 uppercase block mb-1">Positive GEX</span>
           <span className="text-lg font-bold text-green-400 font-mono">
-            +{totalGexData.positive_gex.toFixed(2)}B
+            {totalGexData?.positive_gex != null ? `+${totalGexData.positive_gex.toFixed(2)}B` : 'N/A'}
           </span>
         </div>
         <div className="bg-black/30 p-3 rounded-lg border border-red-900/30">
           <span className="text-xs font-bold text-red-400/70 uppercase block mb-1">Negative GEX</span>
           <span className="text-lg font-bold text-red-400 font-mono">
-            {totalGexData.negative_gex.toFixed(2)}B
+            {totalGexData?.negative_gex != null ? `${totalGexData.negative_gex.toFixed(2)}B` : 'N/A'}
           </span>
         </div>
       </div>
@@ -1417,8 +1417,8 @@ const TotalGexDisplay: React.FC<{ totalGexData: TotalGexData; spot: number }> = 
                       style={{ width: `${Math.min(Math.abs(expiry.weight) * 100, 100)}%` }}
                     />
                   </div>
-                  <span className={`text-sm font-mono font-bold w-20 text-right ${getGexColor(expiry.gex)}`}>
-                    {expiry.gex > 0 ? '+' : ''}{expiry.gex.toFixed(2)}B
+                  <span className={`text-sm font-mono font-bold w-20 text-right ${getGexColor(expiry.gex ?? 0)}`}>
+                    {expiry.gex != null ? `${expiry.gex > 0 ? '+' : ''}${expiry.gex.toFixed(2)}B` : 'N/A'}
                   </span>
                 </div>
               </div>
@@ -1655,7 +1655,7 @@ const LevelRow: React.FC<{
                   enhanced.put_call_ratio > 1 ? 'text-red-400' :
                   enhanced.put_call_ratio < 0.7 ? 'text-green-400' : 'text-gray-300'
                 }`}>
-                  PCR: {enhanced.put_call_ratio.toFixed(2)}
+                  PCR: {enhanced.put_call_ratio?.toFixed(2) ?? 'N/A'}
                 </span>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded ${
                   enhanced.put_call_ratio > 1 ? 'bg-red-500/20 text-red-300' :
@@ -1694,11 +1694,11 @@ const LevelRow: React.FC<{
       <div className="text-right shrink-0">
         <div className="flex flex-col items-end">
           <span className={`text-2xl font-black font-mono tracking-tighter ${t.price}`}>
-            {level.toFixed(2)}
+            {level?.toFixed(2) ?? 'N/A'}
           </span>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span className={`text-[11px] font-black font-mono ${distancePct > 0 ? 'text-red-500' : 'text-green-500'}`}>
-              {distancePct > 0 ? '+' : ''}{distancePct.toFixed(2)}%
+            <span className={`text-[11px] font-black font-mono ${distancePct != null && distancePct > 0 ? 'text-red-500' : 'text-green-500'}`}>
+              {distancePct != null ? `${distancePct > 0 ? '+' : ''}${distancePct.toFixed(2)}%` : 'N/A'}
             </span>
             <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">DIST</span>
           </div>
@@ -1873,11 +1873,11 @@ const AILevelRow: React.FC<{
       <div className="text-right shrink-0">
         <div className="flex flex-col items-end">
           <span className={`text-2xl font-black font-mono tracking-tighter ${t.price}`}>
-            {level.prezzo.toFixed(2)}
+            {level.prezzo?.toFixed(2) ?? 'N/A'}
           </span>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span className={`text-[11px] font-black font-mono ${distancePct > 0 ? 'text-red-500' : 'text-green-500'}`}>
-              {distancePct > 0 ? '+' : ''}{distancePct.toFixed(2)}%
+            <span className={`text-[11px] font-black font-mono ${distancePct != null && distancePct > 0 ? 'text-red-500' : 'text-green-500'}`}>
+              {distancePct != null ? `${distancePct > 0 ? '+' : ''}${distancePct.toFixed(2)}%` : 'N/A'}
             </span>
             <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">DIST</span>
           </div>
@@ -1906,7 +1906,7 @@ const AIOutlookDisplay: React.FC<{
         </div>
         <div className="bg-gray-800/20 p-4 rounded-xl border border-gray-700/30 text-center">
           <span className="text-[9px] font-bold text-gray-500 uppercase block mb-1 tracking-widest">GAMMA FLIP CLUSTER</span>
-          <span className="text-lg font-black text-indigo-400">${outlook.gammaFlipZone.toFixed(2)}</span>
+          <span className="text-lg font-black text-indigo-400">{outlook.gammaFlipZone != null ? `$${outlook.gammaFlipZone.toFixed(2)}` : 'N/A'}</span>
         </div>
       </div>
       <div className="bg-gray-800/20 p-4 rounded-xl border border-gray-700/30">
@@ -1939,7 +1939,7 @@ const SentimentDisplay: React.FC<{
       </div>
       <div className="bg-gray-800/20 p-4 rounded-xl border border-gray-700/30 text-center">
         <span className="text-[9px] font-bold text-gray-500 uppercase block mb-1 tracking-widest">GAMMA FLIP CLUSTER</span>
-        <span className="text-lg font-black text-indigo-400">{gammaFlipCluster.toFixed(2)}</span>
+        <span className="text-lg font-black text-indigo-400">{gammaFlipCluster != null ? gammaFlipCluster.toFixed(2) : 'N/A'}</span>
       </div>
     </div>
   );
@@ -2195,6 +2195,457 @@ function OptionsChart({
             <span className="font-mono text-right">{formatNumber(hoveredBar.option.vol, 0)}</span>
             <span className="text-gray-500">IV:</span>
             <span className="font-mono text-right">{formatNumber(hoveredBar.option.iv * 100, 1)}%</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Aggregated strike data across all expiries
+ */
+interface AggregatedStrike {
+  strike: number;
+  total_call_oi: number;
+  total_put_oi: number;
+  total_call_vol: number;
+  total_put_vol: number;
+  max_oi: number;
+  max_vol: number;
+}
+
+/**
+ * Aggregates options data from all expiries by strike price
+ */
+function aggregateOptionsByStrike(expiries: ExpiryData[]): AggregatedStrike[] {
+  const strikeMap = new Map<number, AggregatedStrike>();
+  
+  for (const expiry of expiries) {
+    for (const option of expiry.options) {
+      const existing = strikeMap.get(option.strike) || {
+        strike: option.strike,
+        total_call_oi: 0,
+        total_put_oi: 0,
+        total_call_vol: 0,
+        total_put_vol: 0,
+        max_oi: 0,
+        max_vol: 0
+      };
+      
+      if (option.side === 'CALL') {
+        existing.total_call_oi += option.oi || 0;
+        existing.total_call_vol += option.vol || 0;
+      } else {
+        existing.total_put_oi += option.oi || 0;
+        existing.total_put_vol += option.vol || 0;
+      }
+      
+      strikeMap.set(option.strike, existing);
+    }
+  }
+  
+  // Calculate max values for scaling
+  const strikes = Array.from(strikeMap.values());
+  const maxOi = Math.max(
+    ...strikes.map(s => s.total_call_oi),
+    ...strikes.map(s => s.total_put_oi),
+    1
+  );
+  const maxVol = Math.max(
+    ...strikes.map(s => s.total_call_vol),
+    ...strikes.map(s => s.total_put_vol),
+    1
+  );
+  
+  // Update max values in each strike
+  strikes.forEach(s => {
+    s.max_oi = maxOi;
+    s.max_vol = maxVol;
+  });
+  
+  return strikes.sort((a, b) => a.strike - b.strike);
+}
+
+/**
+ * Filters strikes to show top N by total OI plus strikes near spot
+ */
+function filterRelevantStrikes(
+  aggregatedStrikes: AggregatedStrike[],
+  spot: number,
+  topN: number = 12
+): AggregatedStrike[] {
+  // Sort by total OI (call + put)
+  const sortedByOI = [...aggregatedStrikes].sort(
+    (a, b) => (b.total_call_oi + b.total_put_oi) - (a.total_call_oi + a.total_put_oi)
+  );
+  
+  // Take top N strikes
+  const topStrikes = sortedByOI.slice(0, topN);
+  
+  // Ensure strikes around spot are included (within 1%)
+  const spotRange = spot * 0.01;
+  const nearSpot = aggregatedStrikes.filter(
+    s => Math.abs(s.strike - spot) <= spotRange
+  );
+  
+  // Merge and deduplicate by strike
+  const allRelevant = [...new Map(
+    [...topStrikes, ...nearSpot].map(s => [s.strike, s])
+  ).values()];
+  
+  // Sort by strike descending for display (top to bottom)
+  return allRelevant.sort((a, b) => b.strike - a.strike);
+}
+
+/**
+ * Unified Options Chart Component - Aggregates all expiries with key level markers
+ */
+function UnifiedOptionsChart({
+  expiries,
+  spot,
+  gammaFlip,
+  maxPain,
+  topStrikesCount = 12
+}: {
+  expiries: ExpiryData[];
+  spot: number;
+  gammaFlip?: number;
+  maxPain?: number;
+  topStrikesCount?: number;
+}): ReactElement {
+  const [hoveredBar, setHoveredBar] = useState<{
+    type: 'CALL' | 'PUT';
+    strike: number;
+    callOi: number;
+    putOi: number;
+    callVol: number;
+    putVol: number;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // Aggregate options data
+  const aggregatedStrikes = useMemo(
+    () => aggregateOptionsByStrike(expiries),
+    [expiries]
+  );
+
+  // Filter to relevant strikes
+  const relevantStrikes = useMemo(
+    () => filterRelevantStrikes(aggregatedStrikes, spot, topStrikesCount),
+    [aggregatedStrikes, spot, topStrikesCount]
+  );
+
+  // If no options, show empty state
+  if (relevantStrikes.length === 0) {
+    return (
+      <div className="bg-gray-800/30 rounded-lg p-8 text-center text-gray-500">
+        No options data available
+      </div>
+    );
+  }
+
+  // Chart dimensions
+  const barHeight = 24;
+  const barGap = 4;
+  const labelWidth = 80;
+  const chartWidth = 200;
+  const chartHeight = relevantStrikes.length * (barHeight + barGap);
+
+  // Calculate strike range for marker positioning
+  const minStrike = Math.min(...relevantStrikes.map(s => s.strike));
+  const maxStrike = Math.max(...relevantStrikes.map(s => s.strike));
+  const strikeRange = maxStrike - minStrike || 1;
+
+  // Calculate marker positions as percentages
+  const getMarkerPosition = (value: number): number => {
+    return ((value - minStrike) / strikeRange) * 100;
+  };
+
+  // Check if markers are within visible range
+  const spotVisible = spot >= minStrike && spot <= maxStrike;
+  const gammaFlipVisible = gammaFlip !== undefined && gammaFlip >= minStrike && gammaFlip <= maxStrike;
+  const maxPainVisible = maxPain !== undefined && maxPain >= minStrike && maxPain <= maxStrike;
+
+  // Handle mouse events for tooltips
+  const handleMouseEnter = (
+    type: 'CALL' | 'PUT',
+    strike: AggregatedStrike,
+    event: React.MouseEvent
+  ) => {
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    setHoveredBar({
+      type,
+      strike: strike.strike,
+      callOi: strike.total_call_oi,
+      putOi: strike.total_put_oi,
+      callVol: strike.total_call_vol,
+      putVol: strike.total_put_vol,
+      x: event.clientX,
+      y: event.clientY
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setHoveredBar(null);
+  };
+
+  return (
+    <div className="relative" onMouseLeave={handleMouseLeave}>
+      {/* Legend */}
+      <div className="flex items-center justify-center gap-4 mb-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-3 rounded-sm bg-gradient-to-r from-green-500 to-green-400"></div>
+          <span className="text-xs text-gray-400">CALL (OI/Volume)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-3 rounded-sm bg-gradient-to-r from-red-400 to-red-500"></div>
+          <span className="text-xs text-gray-400">PUT (OI/Volume)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-0.5 bg-yellow-400"></div>
+          <span className="text-yellow-400 text-xs">●</span>
+          <span className="text-xs text-gray-400">Spot: {formatCurrency(spot)}</span>
+        </div>
+        {gammaFlip !== undefined && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-0 border-t-2 border-dashed border-purple-500"></div>
+            <span className="text-purple-400 text-xs">◆</span>
+            <span className="text-xs text-gray-400">G.Flip: {formatCurrency(gammaFlip)}</span>
+          </div>
+        )}
+        {maxPain !== undefined && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-0.5 bg-orange-500"></div>
+            <span className="text-orange-400 text-xs">■</span>
+            <span className="text-xs text-gray-400">Max Pain: {formatCurrency(maxPain)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Chart Container */}
+      <div className="overflow-x-auto">
+        <div
+          className="relative mx-auto"
+          style={{
+            width: `${labelWidth + chartWidth * 2 + 40}px`,
+            minWidth: '100%',
+            height: `${chartHeight + 30}px` // Extra space for marker labels
+          }}
+        >
+          {/* Vertical Markers Layer */}
+          <div
+            className="absolute top-6 bottom-0 pointer-events-none z-10"
+            style={{
+              left: `${labelWidth}px`,
+              width: `${chartWidth * 2}px`
+            }}
+          >
+            {/* Spot Marker */}
+            {spotVisible && (
+              <div
+                className="absolute top-0 bottom-0"
+                style={{ left: `${getMarkerPosition(spot)}%` }}
+              >
+                <div className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                  <span className="text-yellow-400 text-xs font-bold">● SPOT</span>
+                </div>
+                <div className="absolute top-0 bottom-0 w-0.5 bg-yellow-400/80" />
+                <div className="absolute top-0 bottom-0 w-8 -ml-4 bg-yellow-400/5" />
+              </div>
+            )}
+
+            {/* Gamma Flip Marker */}
+            {gammaFlipVisible && gammaFlip !== undefined && (
+              <div
+                className="absolute top-0 bottom-0"
+                style={{ left: `${getMarkerPosition(gammaFlip)}%` }}
+              >
+                <div className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                  <span className="text-purple-400 text-xs font-bold">◆ G.FLIP</span>
+                </div>
+                <div className="absolute top-0 bottom-0 w-0 border-l-2 border-dashed border-purple-500" />
+                <div className="absolute top-0 bottom-0 w-8 -ml-4 bg-purple-500/5" />
+              </div>
+            )}
+
+            {/* Max Pain Marker */}
+            {maxPainVisible && maxPain !== undefined && (
+              <div
+                className="absolute top-0 bottom-0"
+                style={{ left: `${getMarkerPosition(maxPain)}%` }}
+              >
+                <div className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                  <span className="text-orange-400 text-xs font-bold">■ MAX PAIN</span>
+                </div>
+                <div className="absolute top-0 bottom-0 w-0.5 bg-orange-500" />
+                <div className="absolute top-0 bottom-0 w-8 -ml-4 bg-orange-500/5" />
+              </div>
+            )}
+          </div>
+
+          {/* Center strike labels */}
+          <div
+            className="absolute left-0 top-6 flex flex-col justify-center"
+            style={{
+              width: `${labelWidth}px`,
+              height: `${chartHeight}px`
+            }}
+          >
+            {relevantStrikes.map((strikeData) => {
+              const isSpot = Math.abs(strikeData.strike - spot) < spot * 0.002;
+              const isGammaFlip = gammaFlip !== undefined && Math.abs(strikeData.strike - gammaFlip) < spot * 0.002;
+              const isMaxPain = maxPain !== undefined && Math.abs(strikeData.strike - maxPain) < spot * 0.002;
+              const isITM = strikeData.strike < spot;
+              
+              let textColorClass = 'text-gray-500';
+              if (isSpot) textColorClass = 'text-yellow-400 font-bold';
+              else if (isGammaFlip) textColorClass = 'text-purple-400 font-bold';
+              else if (isMaxPain) textColorClass = 'text-orange-400 font-bold';
+              else if (isITM) textColorClass = 'text-gray-300';
+              
+              return (
+                <div
+                  key={strikeData.strike}
+                  className={`flex items-center justify-end pr-2 text-xs font-mono ${textColorClass}`}
+                  style={{ height: `${barHeight + barGap}px` }}
+                >
+                  {formatCurrency(strikeData.strike)}
+                  {isSpot && <span className="ml-1 text-yellow-400">●</span>}
+                  {isGammaFlip && <span className="ml-1 text-purple-400">◆</span>}
+                  {isMaxPain && <span className="ml-1 text-orange-400">■</span>}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* CALL bars (left side) */}
+          <div
+            className="absolute flex flex-col justify-center"
+            style={{
+              left: `${labelWidth}px`,
+              width: `${chartWidth}px`,
+              height: `${chartHeight}px`,
+              top: '24px'
+            }}
+          >
+            {relevantStrikes.map((strikeData) => {
+              const oiWidth = (strikeData.total_call_oi / strikeData.max_oi) * (chartWidth - 20);
+              const volWidth = (strikeData.total_call_vol / strikeData.max_vol) * (chartWidth - 20);
+
+              return (
+                <div
+                  key={strikeData.strike}
+                  className="relative flex items-center justify-end"
+                  style={{ height: `${barHeight + barGap}px`, width: '100%' }}
+                >
+                  {/* OI Bar */}
+                  <div
+                    className="absolute h-3 rounded-l-sm bg-gradient-to-l from-green-500 to-green-400 cursor-pointer transition-all hover:from-green-400 hover:to-green-300"
+                    style={{
+                      right: '0',
+                      width: `${Math.max(oiWidth, 2)}px`,
+                      top: '2px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('CALL', strikeData, e)}
+                  />
+                  {/* Volume Bar (overlaid, semi-transparent) */}
+                  <div
+                    className="absolute h-2 rounded-l-sm bg-green-300/40 cursor-pointer transition-all hover:bg-green-300/60"
+                    style={{
+                      right: '0',
+                      width: `${Math.max(volWidth, 2)}px`,
+                      top: '12px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('CALL', strikeData, e)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Center divider */}
+          <div
+            className="absolute bg-gray-600"
+            style={{
+              left: `${labelWidth + chartWidth}px`,
+              width: '1px',
+              height: `${chartHeight}px`,
+              top: '24px'
+            }}
+          />
+
+          {/* PUT bars (right side) */}
+          <div
+            className="absolute flex flex-col justify-center"
+            style={{
+              left: `${labelWidth + chartWidth + 1}px`,
+              width: `${chartWidth}px`,
+              height: `${chartHeight}px`,
+              top: '24px'
+            }}
+          >
+            {relevantStrikes.map((strikeData) => {
+              const oiWidth = (strikeData.total_put_oi / strikeData.max_oi) * (chartWidth - 20);
+              const volWidth = (strikeData.total_put_vol / strikeData.max_vol) * (chartWidth - 20);
+              
+              return (
+                <div
+                  key={strikeData.strike}
+                  className="relative flex items-center"
+                  style={{ height: `${barHeight + barGap}px`, width: '100%' }}
+                >
+                  {/* OI Bar */}
+                  <div
+                    className="absolute h-3 rounded-r-sm bg-gradient-to-r from-red-400 to-red-500 cursor-pointer transition-all hover:from-red-300 hover:to-red-400"
+                    style={{
+                      left: '0',
+                      width: `${Math.max(oiWidth, 2)}px`,
+                      top: '2px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('PUT', strikeData, e)}
+                  />
+                  {/* Volume Bar (overlaid, semi-transparent) */}
+                  <div
+                    className="absolute h-2 rounded-r-sm bg-red-300/40 cursor-pointer transition-all hover:bg-red-300/60"
+                    style={{
+                      left: '0',
+                      width: `${Math.max(volWidth, 2)}px`,
+                      top: '12px'
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter('PUT', strikeData, e)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Tooltip */}
+      {hoveredBar && (
+        <div
+          className="fixed z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-xl p-3 text-sm pointer-events-none"
+          style={{
+            left: `${hoveredBar.x + 10}px`,
+            top: `${hoveredBar.y + 10}px`,
+            transform: 'translate(0, 0)'
+          }}
+        >
+          <div className={`font-bold mb-1 ${hoveredBar.type === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>
+            {hoveredBar.type} @ {formatCurrency(hoveredBar.strike)}
+          </div>
+          <div className="text-xs text-gray-400 mb-2">Aggregated across all expiries</div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-300">
+            <span className="text-gray-500">CALL OI:</span>
+            <span className="font-mono text-right text-green-400">{formatNumber(hoveredBar.callOi, 0)}</span>
+            <span className="text-gray-500">PUT OI:</span>
+            <span className="font-mono text-right text-red-400">{formatNumber(hoveredBar.putOi, 0)}</span>
+            <span className="text-gray-500">CALL Vol:</span>
+            <span className="font-mono text-right text-green-300">{formatNumber(hoveredBar.callVol, 0)}</span>
+            <span className="text-gray-500">PUT Vol:</span>
+            <span className="font-mono text-right text-red-300">{formatNumber(hoveredBar.putVol, 0)}</span>
           </div>
         </div>
       )}
@@ -2725,7 +3176,7 @@ export function VercelView(): ReactElement {
                       <div className="py-3 flex items-center gap-3">
                         <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-purple-500/40 to-purple-500/40"></div>
                         <div className="shrink-0 bg-purple-600 px-3 py-1 rounded-full border border-purple-400 shadow-[0_0_10px_rgba(147,51,234,0.3)]">
-                          <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                          <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot?.toFixed(2) ?? 'N/A'}</span>
                         </div>
                         <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-purple-500/40 to-purple-500/40"></div>
                       </div>
@@ -2772,7 +3223,7 @@ export function VercelView(): ReactElement {
                         <div className="py-3 flex items-center gap-3">
                           <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-amber-500/40 to-amber-500/40"></div>
                           <div className="shrink-0 bg-amber-600 px-3 py-1 rounded-full border border-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
-                            <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot.toFixed(2)}</span>
+                            <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot?.toFixed(2) ?? 'N/A'}</span>
                           </div>
                           <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-amber-500/40 to-amber-500/40"></div>
                         </div>
@@ -2819,31 +3270,26 @@ export function VercelView(): ReactElement {
               </div>
             )}
 
-            {/* Expiry Details */}
+            {/* Unified Options Chart - Aggregated across all expiries */}
             {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-bold text-white uppercase tracking-wider">Expiry Details</h3>
-                {activeSymbolData.expiries.map((expiry, idx) => {
-                  const topCalls = getTopOptionsByOI(expiry.options, 'CALL', 5);
-                  const topPuts = getTopOptionsByOI(expiry.options, 'PUT', 5);
-
-                  return (
-                    <div key={`${expiry.label}-${expiry.date}-${idx}`} className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
-                      <div className="px-4 py-3 bg-gray-800/70 border-b border-gray-700/50">
-                        <h4 className="font-semibold text-white">
-                          {getExpiryDisplayLabel(expiry)}
-                        </h4>
-                      </div>
-                      <div className="p-4">
-                        <OptionsChart
-                          callOptions={topCalls}
-                          putOptions={topPuts}
-                          spot={activeSymbolData.spot}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
+                <div className="px-4 py-3 bg-gray-800/70 border-b border-gray-700/50">
+                  <h3 className="text-lg font-bold text-white uppercase tracking-wider">
+                    Unified Options Chart
+                    <span className="ml-2 text-sm font-normal text-gray-400">
+                      (All Expiries Aggregated)
+                    </span>
+                  </h3>
+                </div>
+                <div className="p-4">
+                  <UnifiedOptionsChart
+                    expiries={activeSymbolData.expiries}
+                    spot={activeSymbolData.spot}
+                    gammaFlip={activeSymbolData.selected_levels?.gamma_flip || activeSymbolData.totalGexData?.flip_point}
+                    maxPain={activeSymbolData.selected_levels?.max_pain}
+                    topStrikesCount={12}
+                  />
+                </div>
               </div>
             )}
           </div>
