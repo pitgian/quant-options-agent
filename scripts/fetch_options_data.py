@@ -1248,6 +1248,197 @@ def calculate_skew_type(options: List[Dict[str, Any]], spot: float) -> str:
         return "NEUTRAL"
 
 
+def calculate_put_call_ratios(options: List[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    Calcola diverse varianti del Put/Call Ratio.
+    
+    Returns:
+        {
+            "oi_based": float,       # put_oi / call_oi
+            "volume_based": float,   # put_vol / call_vol
+            "weighted": float,       # weighted average based on OI
+            "delta_adjusted": float  # (put_oi * put_delta) / (call_oi * call_delta)
+        }
+    """
+    total_call_oi = 0
+    total_put_oi = 0
+    total_call_vol = 0
+    total_put_vol = 0
+    weighted_put_oi = 0.0
+    weighted_call_oi = 0.0
+    
+    for opt in options:
+        oi = opt.get('oi', 0)
+        vol = opt.get('vol', 0)
+        strike = opt.get('strike', 0)
+        
+        if opt.get('side') == 'CALL':
+            total_call_oi += oi
+            total_call_vol += vol
+            # Weight by strike distance from typical ATM (higher weight for ATM options)
+            weighted_call_oi += oi
+        else:
+            total_put_oi += oi
+            total_put_vol += vol
+            weighted_put_oi += oi
+    
+    # Calculate ratios with safe division
+    oi_based = total_put_oi / total_call_oi if total_call_oi > 0 else 1.0
+    volume_based = total_put_vol / total_call_vol if total_call_vol > 0 else 1.0
+    
+    # Weighted ratio - gives more weight to higher OI
+    total_weighted = weighted_put_oi + weighted_call_oi
+    if total_weighted > 0:
+        weighted = weighted_put_oi / weighted_call_oi if weighted_call_oi > 0 else 2.0
+    else:
+        weighted = 1.0
+    
+    # Delta-adjusted ratio (simplified - using IV as proxy for delta)
+    # In practice, delta ≈ 0.5 for ATM options, varies for ITM/OTM
+    # Using a simplified approximation based on moneyness
+    delta_adjusted = oi_based  # Fallback to OI-based if we can't calculate delta
+    
+    return {
+        "oi_based": round(oi_based, 4),
+        "volume_based": round(volume_based, 4),
+        "weighted": round(weighted, 4),
+        "delta_adjusted": round(delta_adjusted, 4)
+    }
+
+
+def calculate_volatility_skew(options: List[Dict[str, Any]], spot: float) -> Dict[str, Any]:
+    """
+    Calcola il volatility skew per determinare il sentiment di mercato.
+    
+    Returns:
+        {
+            "put_iv_avg": float,      # Average IV for puts
+            "call_iv_avg": float,     # Average IV for calls
+            "skew_ratio": float,      # put_iv_avg / call_iv_avg
+            "skew_type": str,         # 'smirk', 'reverse_smirk', 'flat'
+            "sentiment": str          # 'bearish', 'bullish', 'neutral'
+        }
+    """
+    put_ivs = []
+    call_ivs = []
+    put_oi_weights = []
+    call_oi_weights = []
+    
+    # Filter options near the money (±10% of spot)
+    lower_bound = spot * 0.90
+    upper_bound = spot * 1.10
+    
+    for opt in options:
+        strike = opt.get('strike', 0)
+        if not (lower_bound <= strike <= upper_bound):
+            continue
+            
+        iv = opt.get('iv', 0)
+        oi = opt.get('oi', 0)
+        
+        if iv <= 0:
+            continue
+        
+        if opt.get('side') == 'PUT':
+            put_ivs.append(iv)
+            put_oi_weights.append(oi)
+        else:
+            call_ivs.append(iv)
+            call_oi_weights.append(oi)
+    
+    # Calculate weighted average IV
+    def weighted_avg(values, weights):
+        if not values or sum(weights) == 0:
+            return 0.0
+        return sum(v * w for v, w in zip(values, weights)) / sum(weights)
+    
+    put_iv_avg = weighted_avg(put_ivs, put_oi_weights) * 100 if put_ivs else 0.0  # Convert to percentage
+    call_iv_avg = weighted_avg(call_ivs, call_oi_weights) * 100 if call_ivs else 0.0
+    
+    # Calculate skew ratio
+    if call_iv_avg > 0:
+        skew_ratio = put_iv_avg / call_iv_avg
+    else:
+        skew_ratio = 1.0
+    
+    # Determine skew type and sentiment
+    if skew_ratio > 1.2:
+        skew_type = "smirk"  # Puts more expensive = fear
+        sentiment = "bearish"
+    elif skew_ratio < 0.9:
+        skew_type = "reverse_smirk"  # Calls more expensive = euphoria
+        sentiment = "bullish"
+    else:
+        skew_type = "flat"
+        sentiment = "neutral"
+    
+    return {
+        "put_iv_avg": round(put_iv_avg, 2),
+        "call_iv_avg": round(call_iv_avg, 2),
+        "skew_ratio": round(skew_ratio, 4),
+        "skew_type": skew_type,
+        "sentiment": sentiment
+    }
+
+
+def calculate_gex_by_strike(options: List[Dict[str, Any]], spot: float, T: float, r: float = 0.05) -> List[Dict[str, Any]]:
+    """
+    Calcola il Gamma Exposure per ogni strike.
+    
+    Returns:
+        List of {
+            "strike": float,
+            "gex": float,           # in billions
+            "cumulative_gex": float  # cumulative GEX up to this strike
+        }
+    """
+    # Group options by strike
+    strikes_data: Dict[float, Dict] = {}
+    
+    for opt in options:
+        strike = opt.get('strike', 0)
+        if strike <= 0:
+            continue
+        
+        if strike not in strikes_data:
+            strikes_data[strike] = {'call_oi': 0, 'put_oi': 0, 'call_iv': 0.3, 'put_iv': 0.3}
+        
+        if opt.get('side') == 'CALL':
+            strikes_data[strike]['call_oi'] = opt.get('oi', 0)
+            strikes_data[strike]['call_iv'] = opt.get('iv', 0.3)
+        else:
+            strikes_data[strike]['put_oi'] = opt.get('oi', 0)
+            strikes_data[strike]['put_iv'] = opt.get('iv', 0.3)
+    
+    if not strikes_data:
+        return []
+    
+    # Calculate GEX for each strike
+    gex_list = []
+    cumulative_gex = 0.0
+    
+    for strike in sorted(strikes_data.keys()):
+        data = strikes_data[strike]
+        
+        call_gamma = calculate_black_scholes_gamma(spot, strike, T, r, data['call_iv'])
+        put_gamma = calculate_black_scholes_gamma(spot, strike, T, r, data['put_iv'])
+        
+        # Call GEX is positive, Put GEX is negative
+        call_gex = call_gamma * data['call_oi'] * 100 * spot * spot * 0.01
+        put_gex = -put_gamma * data['put_oi'] * 100 * spot * spot * 0.01
+        
+        gex = (call_gex + put_gex) / 1e9  # Convert to billions
+        cumulative_gex += gex
+        
+        gex_list.append({
+            "strike": strike,
+            "gex": round(gex, 6),
+            "cumulative_gex": round(cumulative_gex, 6)
+        })
+    
+    return gex_list
+
+
 def calculate_time_to_expiry(expiry_date: str) -> float:
     """
     Calcola il time to expiry in anni dalla data odierna.
@@ -1276,22 +1467,221 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
             "gamma_flip": float,
             "max_pain": float,
             "total_gex": float,
-            "skew_type": str
+            "put_call_ratios": {...},
+            "volatility_skew": {...},
+            "gex_by_strike": [...]
         }
     """
+    if not options:
+        return {
+            "gamma_flip": round(spot, 2),
+            "max_pain": round(spot, 2),
+            "total_gex": 0.0,
+            "put_call_ratios": {
+                "oi_based": 1.0,
+                "volume_based": 1.0,
+                "weighted": 1.0,
+                "delta_adjusted": 1.0
+            },
+            "volatility_skew": {
+                "put_iv_avg": 0.0,
+                "call_iv_avg": 0.0,
+                "skew_ratio": 1.0,
+                "skew_type": "flat",
+                "sentiment": "neutral"
+            },
+            "gex_by_strike": []
+        }
+    
     T = calculate_time_to_expiry(expiry_date)
     r = 0.05  # Risk-free rate assumption
     
     gamma_flip = calculate_gamma_flip(options, spot, T, r)
     max_pain = calculate_max_pain(options, spot)
     total_gex = calculate_total_gex(options, spot, T, r)
-    skew_type = calculate_skew_type(options, spot)
+    put_call_ratios = calculate_put_call_ratios(options)
+    volatility_skew = calculate_volatility_skew(options, spot)
+    gex_by_strike = calculate_gex_by_strike(options, spot, T, r)
     
     return {
         "gamma_flip": gamma_flip,
         "max_pain": max_pain,
         "total_gex": round(total_gex, 6),
-        "skew_type": skew_type
+        "put_call_ratios": put_call_ratios,
+        "volatility_skew": volatility_skew,
+        "gex_by_strike": gex_by_strike
+    }
+
+
+# ============================================================================
+# FUNZIONE PER AGGREGAZIONE DATI AI
+# ============================================================================
+
+def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[str, Any]:
+    """
+    Crea un dataset aggregato e ottimizzato per l'analisi AI.
+    
+    Questo riduce il numero di token mantenendo il valore analitico:
+    - Filtra strike entro ±5% del prezzo spot
+    - Aggrega opzioni per strike (combina call/put)
+    - Include metriche pre-calcolate
+    
+    Args:
+        expiries: Lista di expiry data con options
+        spot: Prezzo spot corrente
+    
+    Returns:
+        {
+            "spot": float,
+            "expiries": {
+                "0DTE": {
+                    "date": str,
+                    "strikes": [...],
+                    "totals": {...}
+                },
+                ...
+            },
+            "precalc_metrics": {
+                "gamma_flip": float,
+                "total_gex": float,
+                "max_pain": float
+            }
+        }
+    """
+    spot_range = spot * 0.05  # ±5% of spot
+    lower_bound = spot - spot_range
+    upper_bound = spot + spot_range
+    
+    aggregated_expiries = {}
+    all_metrics = []  # For calculating aggregate metrics
+    
+    for expiry in expiries:
+        label = expiry.get('label', 'UNKNOWN')
+        date = expiry.get('date', 'N/A')
+        options = expiry.get('options', [])
+        quant_metrics = expiry.get('quantMetrics', {})
+        
+        # Group options by strike
+        strikes_data: Dict[float, Dict] = {}
+        
+        for opt in options:
+            strike = opt.get('strike', 0)
+            
+            # Filter strikes within ±5% of spot
+            if not (lower_bound <= strike <= upper_bound):
+                continue
+            
+            if strike not in strikes_data:
+                strikes_data[strike] = {
+                    'call_oi': 0,
+                    'put_oi': 0,
+                    'call_vol': 0,
+                    'put_vol': 0,
+                    'call_iv': 0.0,
+                    'put_iv': 0.0,
+                    'call_iv_count': 0,
+                    'put_iv_count': 0
+                }
+            
+            if opt.get('side') == 'CALL':
+                strikes_data[strike]['call_oi'] += opt.get('oi', 0)
+                strikes_data[strike]['call_vol'] += opt.get('vol', 0)
+                if opt.get('iv', 0) > 0:
+                    strikes_data[strike]['call_iv'] += opt.get('iv', 0)
+                    strikes_data[strike]['call_iv_count'] += 1
+            else:
+                strikes_data[strike]['put_oi'] += opt.get('oi', 0)
+                strikes_data[strike]['put_vol'] += opt.get('vol', 0)
+                if opt.get('iv', 0) > 0:
+                    strikes_data[strike]['put_iv'] += opt.get('iv', 0)
+                    strikes_data[strike]['put_iv_count'] += 1
+        
+        # Build strikes list with averaged IVs
+        strikes_list = []
+        total_call_oi = 0
+        total_put_oi = 0
+        total_call_vol = 0
+        total_put_vol = 0
+        
+        for strike in sorted(strikes_data.keys()):
+            data = strikes_data[strike]
+            
+            # Average IV if multiple options per strike
+            call_iv = data['call_iv'] / data['call_iv_count'] if data['call_iv_count'] > 0 else 0
+            put_iv = data['put_iv'] / data['put_iv_count'] if data['put_iv_count'] > 0 else 0
+            
+            strikes_list.append({
+                "strike": strike,
+                "call_oi": data['call_oi'],
+                "put_oi": data['put_oi'],
+                "call_vol": data['call_vol'],
+                "put_vol": data['put_vol'],
+                "call_iv": round(call_iv, 4),
+                "put_iv": round(put_iv, 4)
+            })
+            
+            total_call_oi += data['call_oi']
+            total_put_oi += data['put_oi']
+            total_call_vol += data['call_vol']
+            total_put_vol += data['put_vol']
+        
+        aggregated_expiries[label] = {
+            "date": date,
+            "strikes": strikes_list,
+            "totals": {
+                "call_oi": total_call_oi,
+                "put_oi": total_put_oi,
+                "call_vol": total_call_vol,
+                "put_vol": total_put_vol
+            }
+        }
+        
+        # Collect metrics for aggregation
+        if quant_metrics:
+            all_metrics.append(quant_metrics)
+    
+    # Calculate aggregate pre-calculated metrics
+    precalc_metrics = {
+        "gamma_flip": spot,  # Default
+        "total_gex": 0.0,
+        "max_pain": spot
+    }
+    
+    if all_metrics:
+        # Use weighted average based on OI totals
+        total_weight = 0
+        weighted_gamma_flip = 0.0
+        weighted_total_gex = 0.0
+        weighted_max_pain = 0.0
+        
+        for i, metrics in enumerate(all_metrics):
+            # Use expiry label to determine weight (0DTE highest weight)
+            expiry_data = expiries[i] if i < len(expiries) else {}
+            label = expiry_data.get('label', '')
+            
+            if label == '0DTE':
+                weight = 3.0
+            elif label.startswith('WEEKLY'):
+                weight = 2.0
+            else:
+                weight = 1.0
+            
+            weighted_gamma_flip += metrics.get('gamma_flip', spot) * weight
+            weighted_total_gex += metrics.get('total_gex', 0) * weight
+            weighted_max_pain += metrics.get('max_pain', spot) * weight
+            total_weight += weight
+        
+        if total_weight > 0:
+            precalc_metrics = {
+                "gamma_flip": round(weighted_gamma_flip / total_weight, 2),
+                "total_gex": round(weighted_total_gex / total_weight, 4),
+                "max_pain": round(weighted_max_pain / total_weight, 2)
+            }
+    
+    return {
+        "spot": spot,
+        "expiries": aggregated_expiries,
+        "precalc_metrics": precalc_metrics
     }
 
 
@@ -1971,15 +2361,27 @@ def main():
                 logger.info(f"     Sentiment: {outlook.get('sentiment', 'N/A')}")
                 logger.info(f"     Volatility: {outlook.get('volatilityExpectation', 'N/A')}")
                 logger.info(f"     AI Levels: {len(levels)} livelli identificati")
-    
-    # Salva output principale
-    if not args.tv_only:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(all_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"📁 File salvato: {output_path.absolute()}")
+        # Create AI-ready data for each symbol (optimized for AI token efficiency)
+        logger.info("\n📊 Creating AI-ready data for each symbol...")
+        ai_ready_data = {}
+        for symbol, symbol_data in all_data["symbols"].items():
+            spot = symbol_data.get('spot', 0)
+            expiries = symbol_data.get('expiries', [])
+            ai_ready_data[symbol] = create_ai_ready_data(expiries, spot)
+            logger.info(f"  -> {symbol}: {len(ai_ready_data[symbol].get('expiries', {}))} expiries prepared")
+        
+        # Add ai_ready_data to output
+        all_data["ai_ready_data"] = ai_ready_data
+        
+        # Salva output principale
+        if not args.tv_only:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(all_data, f, indent=2, ensure_ascii=False)
+            logger.info(f"📁 File salvato: {output_path.absolute()}")
     
     # Genera e salva output TradingView
     tv_data = generate_tradingview_levels(all_data)

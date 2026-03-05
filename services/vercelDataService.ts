@@ -7,7 +7,7 @@
  * @module services/vercelDataService
  */
 
-import { SymbolData, ExpiryData } from '../types';
+import { SymbolData, ExpiryData, AIReadyData } from '../types';
 
 // ============================================================================
 // CONFIGURATION
@@ -42,6 +42,8 @@ export interface VercelOptionsData {
   symbols: {
     [symbol: string]: SymbolData;
   };
+  /** Optional AI-ready data for each symbol */
+  ai_ready_data?: Record<string, AIReadyData>;
 }
 
 /**
@@ -318,3 +320,25 @@ export function getCacheStatus(): { timestamp: number; ageMinutes: number; symbo
     symbols: Object.keys(cachedData.data.symbols),
   };
 }
+
+/**
+ * Gets the current cached data.
+ * Returns null if no data is cached.
+ */
+function getCachedData(): VercelOptionsData | null {
+  return cachedData?.data ?? null;
+}
+
+/**
+ * Gets AI-ready data for a specific symbol.
+ *
+ * @param symbol - The symbol to get AI-ready data for
+ * @returns AIReadyData for the symbol, or null if not available
+ */
+export const getAIReadyData = (symbol: string): AIReadyData | null => {
+  const data = getCachedData();
+  if (data?.ai_ready_data?.[symbol]) {
+    return data.ai_ready_data[symbol];
+  }
+  return null;
+};

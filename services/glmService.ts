@@ -9,6 +9,7 @@ import {
   LegacyResonanceLevel,
   SelectedLevels,
   TotalGexData,
+  AIReadyData,
   isEnhancedConfluenceLevel,
   isEnhancedResonanceLevel
 } from '../types';
@@ -47,6 +48,13 @@ Examples:
 - "MM DEFENSE: Structural support"
 - "SCALPING: Expected volatility in range"
 - "ATTRACTION: Price magnet active"
+
+**HYBRID AI APPROACH - DYNAMIC LEVEL DETECTION:**
+When AGGREGATED OPTIONS DATA is provided, you MUST:
+1. DYNAMICALLY identify levels from the raw strike data - do NOT just rely on pre-calculated levels
+2. Use PRE-CALCULATED METRICS (Gamma Flip, Total GEX, Max Pain) as reference/validation points
+3. Discover patterns and levels that may not be in pre-calculated data
+4. Cross-reference your findings with pre-calculated metrics for accuracy
 
 **MANDATORY RULES FOR MULTI-EXPIRY CLASSIFICATION:**
 
@@ -267,6 +275,41 @@ ${totalGexData.total_gex > 0
 };
 
 /**
+ * Formats AI-ready aggregated data for hybrid AI analysis
+ * This provides raw strike data for dynamic level detection
+ */
+const formatAIReadyData = (data: AIReadyData): string => {
+  return `
+=== AGGREGATED OPTIONS DATA ===
+Spot Price: ${data.spot}
+
+${Object.entries(data.expiries).map(([label, expiry]) => `
+EXPIRY: ${label} (${expiry.date})
+Total Call OI: ${expiry.totals.call_oi.toLocaleString()}
+Total Put OI: ${expiry.totals.put_oi.toLocaleString()}
+
+Strikes (sorted by total OI):
+${expiry.strikes.slice(0, 25).map(s =>
+  `  ${s.strike}: Call OI ${s.call_oi.toLocaleString()}, Put OI ${s.put_oi.toLocaleString()}, Call IV ${(s.call_iv * 100).toFixed(1)}%, Put IV ${(s.put_iv * 100).toFixed(1)}%`
+).join('\n')}
+`).join('\n')}
+
+=== PRE-CALCULATED METRICS ===
+Gamma Flip: ${data.precalc_metrics.gamma_flip}
+Total GEX: ${data.precalc_metrics.total_gex.toFixed(2)}B
+Max Pain: ${data.precalc_metrics.max_pain}
+
+ANALYSIS INSTRUCTIONS:
+1. Identify CALL WALLS (strikes with dominant call OI above spot)
+2. Identify PUT WALLS (strikes with dominant put OI below spot)
+3. Find CONFLUENCE (same strike significant in 2+ expiries within ±1%)
+4. Find RESONANCE (same strike significant in ALL3 expiries within ±0.5%)
+5. Assess sentiment based on put/call ratios and IV skew
+6. Provide trading signals for each level identified
+`;
+};
+
+/**
  * Formats a single enhanced confluence/resonance level for AI prompt
  */
 const formatEnhancedLevel = (
@@ -363,7 +406,8 @@ export const getAnalysis = async (
   currentPrice: string,
   model?: string,
   selectedLevels?: SelectedLevels,
-  totalGexData?: TotalGexData
+  totalGexData?: TotalGexData,
+  aiReadyData?: AIReadyData
 ): Promise<AnalysisResponse> => {
     const selectedModel = model || GLM_MODEL;
     const spotPrice = parseFloat(currentPrice) || 0;
@@ -393,6 +437,12 @@ export const getAnalysis = async (
           totalGexSection = formatTotalGexData(totalGexData);
         }
         
+        // Add AI-ready aggregated data if available (hybrid approach)
+        let aiReadySection = '';
+        if (aiReadyData) {
+          aiReadySection = formatAIReadyData(aiReadyData);
+        }
+        
         const messages: GLMMessage[] = [
             { role: 'system', content: harmonicSystemInstruction },
             {
@@ -401,6 +451,8 @@ export const getAnalysis = async (
                 Provide concise and decisive trading signals for each level.
                 Use ADVANCED QUANTITATIVE METRICS to identify additional levels (Max Pain, Gamma Flip).
                 Integrate skew sentiment and PCR to validate level importance.
+                
+                ${aiReadySection ? 'HYBRID AI APPROACH: Use AGGREGATED OPTIONS DATA below to DYNAMICALLY identify levels. Pre-calculated metrics are for reference:\n' + aiReadySection : ''}
                 
                 ${levelsSection ? 'IMPORTANT: Pre-calculated CONFLUENCE and RESONANCE levels are provided below. Use these for multi-expiry analysis:\n' + levelsSection : ''}
                 

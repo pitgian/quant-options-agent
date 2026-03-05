@@ -325,3 +325,47 @@ export function isEnhancedResonanceLevel(
 ): level is ResonanceLevel {
   return 'expiry_label' in level && 'total_call_oi' in level;
 }
+
+// ============================================================================
+// AI-READY DATA TYPES (Hybrid AI Approach)
+// ============================================================================
+
+/**
+ * Strike-level data optimized for AI analysis
+ * Aggregated from raw options data
+ */
+export interface AIReadyStrike {
+  strike: number;
+  call_oi: number;
+  put_oi: number;
+  call_vol: number;
+  put_vol: number;
+  call_iv: number;
+  put_iv: number;
+}
+
+/**
+ * Expiry-level aggregated data for AI analysis
+ */
+export interface AIReadyExpiry {
+  date: string;
+  strikes: AIReadyStrike[];
+  totals: {
+    call_oi: number;
+    put_oi: number;
+  };
+}
+
+/**
+ * Complete AI-ready data structure for hybrid AI approach
+ * Combines aggregated strike data with pre-calculated metrics
+ */
+export interface AIReadyData {
+  spot: number;
+  expiries: Record<string, AIReadyExpiry>;
+  precalc_metrics: {
+    gamma_flip: number;
+    total_gex: number;
+    max_pain: number;
+  };
+}

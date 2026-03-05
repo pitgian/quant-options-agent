@@ -1,5 +1,5 @@
 
-import { AnalysisResponse, MarketDataset } from '../types';
+import { AnalysisResponse, MarketDataset, AIReadyData } from '../types';
 import { Content } from "@google/genai";
 import * as geminiService from './geminiService';
 import * as glmService from './glmService';
@@ -119,13 +119,19 @@ export const getProviderInfo = (provider: AIProvider, modelId?: string) => {
 
 // Unified analysis function
 export const getAnalysis = async (
-    datasets: MarketDataset[], 
+    datasets: MarketDataset[],
     currentPrice: string,
     provider?: AIProvider,
-    modelId?: string
+    modelId?: string,
+    aiReadyData?: AIReadyData  // NEW: Hybrid AI approach parameter
 ): Promise<AnalysisResponse> => {
     const selectedProvider = provider || getStoredProvider();
     const selectedModel = modelId || getStoredModel(selectedProvider);
+    
+    // Log if using hybrid approach
+    if (aiReadyData) {
+        console.log('[aiService] Using hybrid AI approach with aiReadyData');
+    }
     
     // Check if selected provider is available, fallback to other if not
     const status = getAPIStatus();
@@ -137,14 +143,14 @@ export const getAnalysis = async (
         // Use first available provider
         const fallbackProvider = availableProviders[0];
         console.log(`Provider ${selectedProvider} not available, falling back to ${fallbackProvider}`);
-        return getAnalysis(datasets, currentPrice, fallbackProvider);
+        return getAnalysis(datasets, currentPrice, fallbackProvider, undefined, aiReadyData);
     }
 
     try {
         if (selectedProvider === 'gemini') {
-            return await geminiService.getAnalysis(datasets, currentPrice, selectedModel);
+            return await geminiService.getAnalysis(datasets, currentPrice, selectedModel, undefined, aiReadyData);
         } else {
-            return await glmService.getAnalysis(datasets, currentPrice, selectedModel);
+            return await glmService.getAnalysis(datasets, currentPrice, selectedModel, undefined, undefined, aiReadyData);
         }
     } catch (error) {
         console.error(`Provider ${selectedProvider} failed:`, error);
@@ -155,9 +161,9 @@ export const getAnalysis = async (
             console.log(`Trying fallback to ${otherProvider}`);
             try {
                 if (otherProvider === 'gemini') {
-                    return await geminiService.getAnalysis(datasets, currentPrice);
+                    return await geminiService.getAnalysis(datasets, currentPrice, undefined, undefined, aiReadyData);
                 } else {
-                    return await glmService.getAnalysis(datasets, currentPrice);
+                    return await glmService.getAnalysis(datasets, currentPrice, undefined, undefined, undefined, aiReadyData);
                 }
             } catch (fallbackError) {
                 console.error(`Fallback to ${otherProvider} also failed:`, fallbackError);
