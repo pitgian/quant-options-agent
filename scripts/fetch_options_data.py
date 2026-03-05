@@ -682,7 +682,8 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
             continue
     
     if not all_options:
-        return spot
+        logger.warning("Cannot calculate gamma flip across all expiries: no options data available (OI may be zero - market closed)")
+        return None
     
     # Group by strike and aggregate GEX
     gex_by_strike: Dict[float, float] = {}
@@ -706,7 +707,8 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
         gex_by_strike[strike] += gex
     
     if not gex_by_strike:
-        return spot
+        logger.warning("Cannot calculate gamma flip across all expiries: no GEX by strike data available")
+        return None
     
     # Calculate cumulative GEX and find flip point
     cumulative_gex = 0.0
@@ -732,8 +734,9 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
                 flip_point = prev_strike + ratio * (curr_strike - prev_strike)
                 return round(flip_point, 2)
     
-    # If no flip found, return spot
-    return spot
+    # If no flip found, return None
+    logger.warning("Cannot calculate gamma flip across all expiries: no GEX sign change found (OI may be zero - market closed)")
+    return None
 
 
 def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirations: List[str]) -> Dict[str, Any]:
@@ -976,14 +979,14 @@ def generate_tradingview_levels(all_data: Dict[str, Any]) -> Dict[str, Any]:
         
         # Usa i quantMetrics già calcolati se disponibili
         quant_metrics = first_expiry.get("quantMetrics", {})
-        gamma_flip = quant_metrics.get("gamma_flip", spot)
+        gamma_flip = quant_metrics.get("gamma_flip")  # May be None if OI is zero
         
         # Calcola walls
         walls = calculate_walls(options, spot, top_n=3)
         
         tv_data["symbols"][symbol] = {
             "spot": spot,
-            "gamma_flip": gamma_flip,
+            "gamma_flip": gamma_flip,  # Will be None if cannot be calculated
             "call_walls": walls["call_walls"],
             "put_walls": walls["put_walls"]
         }
@@ -1122,7 +1125,8 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
             strikes_data[strike]['put_iv'] = opt.get('iv', 0.3)
     
     if not strikes_data:
-        return round(spot, 2)
+        logger.warning("Cannot calculate gamma flip: no valid strikes data (options list may be empty)")
+        return None
     
     # Calcola GEX cumulativo per strike
     cumulative_gex = 0.0
@@ -1142,7 +1146,7 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
         gex_by_strike.append((strike, cumulative_gex))
     
     # Trova il flip point
-    gamma_flip = spot  # Default
+    gamma_flip = None  # Default to None instead of spot
     for i in range(1, len(gex_by_strike)):
         prev_gex = gex_by_strike[i-1][1]
         curr_gex = gex_by_strike[i][1]
@@ -1154,6 +1158,10 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
             curr_strike = gex_by_strike[i][0]
             gamma_flip = (prev_strike + curr_strike) / 2
             break
+    
+    if gamma_flip is None:
+        logger.warning("Cannot calculate gamma flip: no valid GEX sign change found (OI may be zero - market closed)")
+        return None
     
     return round(gamma_flip, 2)
 
@@ -1169,7 +1177,8 @@ def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
         Strike price del max pain
     """
     if not options:
-        return round(spot, 2)
+        logger.warning("Cannot calculate max pain: options list is empty")
+        return None
     
     # Raggruppa per strike
     strikes_data: Dict[float, Dict] = {}
@@ -1188,12 +1197,19 @@ def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
             strikes_data[strike]['put_oi'] = opt.get('oi', 0)
     
     if not strikes_data:
-        return round(spot, 2)
+        logger.warning("Cannot calculate max pain: no valid strikes data (OI may be zero - market closed)")
+        return None
+    
+    # Check if all OI is zero
+    total_oi = sum(d['call_oi'] + d['put_oi'] for d in strikes_data.values())
+    if total_oi == 0:
+        logger.warning("Cannot calculate max pain: total OI is zero (market may be closed)")
+        return None
     
     # Testa ogni strike come possibile prezzo alla scadenza
     test_strikes = sorted(strikes_data.keys())
     min_value = float('inf')
-    max_pain = spot
+    max_pain = None
     
     for test_strike in test_strikes:
         total_value = 0
@@ -1208,6 +1224,10 @@ def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
         if total_value < min_value:
             min_value = total_value
             max_pain = test_strike
+    
+    if max_pain is None:
+        logger.warning("Cannot calculate max pain: no valid strike found")
+        return None
     
     return round(max_pain, 2)
 
@@ -1473,9 +1493,10 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
         }
     """
     if not options:
+        logger.warning("Returning None for gamma_flip/max_pain - insufficient options data (options list is empty)")
         return {
-            "gamma_flip": round(spot, 2),
-            "max_pain": round(spot, 2),
+            "gamma_flip": None,
+            "max_pain": None,
             "total_gex": 0.0,
             "put_call_ratios": {
                 "oi_based": 1.0,
@@ -1642,9 +1663,9 @@ def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[st
     
     # Calculate aggregate pre-calculated metrics
     precalc_metrics = {
-        "gamma_flip": spot,  # Default
+        "gamma_flip": None,  # Default to None instead of spot
         "total_gex": 0.0,
-        "max_pain": spot
+        "max_pain": None  # Default to None instead of spot
     }
     
     if all_metrics:
@@ -1653,6 +1674,8 @@ def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[st
         weighted_gamma_flip = 0.0
         weighted_total_gex = 0.0
         weighted_max_pain = 0.0
+        gamma_flip_count = 0
+        max_pain_count = 0
         
         for i, metrics in enumerate(all_metrics):
             # Use expiry label to determine weight (0DTE highest weight)
@@ -1666,16 +1689,27 @@ def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[st
             else:
                 weight = 1.0
             
-            weighted_gamma_flip += metrics.get('gamma_flip', spot) * weight
+            # Only include gamma_flip in weighted average if not None
+            gf = metrics.get('gamma_flip')
+            if gf is not None:
+                weighted_gamma_flip += gf * weight
+                gamma_flip_count += weight
+            
             weighted_total_gex += metrics.get('total_gex', 0) * weight
-            weighted_max_pain += metrics.get('max_pain', spot) * weight
+            
+            # Only include max_pain in weighted average if not None
+            mp = metrics.get('max_pain')
+            if mp is not None:
+                weighted_max_pain += mp * weight
+                max_pain_count += weight
+            
             total_weight += weight
         
         if total_weight > 0:
             precalc_metrics = {
-                "gamma_flip": round(weighted_gamma_flip / total_weight, 2),
+                "gamma_flip": round(weighted_gamma_flip / gamma_flip_count, 2) if gamma_flip_count > 0 else None,
                 "total_gex": round(weighted_total_gex / total_weight, 4),
-                "max_pain": round(weighted_max_pain / total_weight, 2)
+                "max_pain": round(weighted_max_pain / max_pain_count, 2) if max_pain_count > 0 else None
             }
     
     return {
@@ -2224,22 +2258,22 @@ def select_important_levels(expiries: List[Dict], spot: float) -> Dict:
     walls = select_walls_by_expiry(expiries, spot, top_n=3)
     
     # Estrai gamma_flip e max_pain dal 0DTE (prima expiry)
-    gamma_flip = spot
-    max_pain = spot
+    gamma_flip = None
+    max_pain = None
     
     if expiries:
         first_expiry = expiries[0]
         quant_metrics = first_expiry.get('quantMetrics', {})
-        gamma_flip = quant_metrics.get('gamma_flip', spot)
-        max_pain = quant_metrics.get('max_pain', spot)
+        gamma_flip = quant_metrics.get('gamma_flip')
+        max_pain = quant_metrics.get('max_pain')
     
     return {
         "resonance": resonance,
         "confluence": confluence,
         "call_walls": walls["call_walls"],
         "put_walls": walls["put_walls"],
-        "gamma_flip": round(gamma_flip, 2),
-        "max_pain": round(max_pain, 2)
+        "gamma_flip": round(gamma_flip, 2) if gamma_flip is not None else None,
+        "max_pain": round(max_pain, 2) if max_pain is not None else None
     }
 
 
