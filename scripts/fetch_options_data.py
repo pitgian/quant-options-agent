@@ -812,7 +812,7 @@ def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirat
         'gex_by_expiry': gex_by_expiry,
         'positive_gex': round(positive_gamma / 1e9, 4),
         'negative_gex': round(negative_gamma / 1e9, 4),
-        'flip_point': round(flip_point, 2),
+        'flip_point': round(flip_point, 2) if flip_point is not None else None,
     }
 
 
