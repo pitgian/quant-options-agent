@@ -3310,7 +3310,7 @@ export function VercelView(): ReactElement {
 
             {/* 0DTE Options Chart */}
             {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (() => {
-              const zeroDteExpiry = activeSymbolData.expiries.find(e => e.expiry_type === '0DTE');
+              const zeroDteExpiry = activeSymbolData.expiries.find(e => e.label === '0DTE');
               const zeroDteGammaFlip = zeroDteExpiry?.gamma_flip;
               const zeroDteMaxPain = zeroDteExpiry?.max_pain;
               
