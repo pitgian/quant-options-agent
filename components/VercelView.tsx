@@ -2352,21 +2352,57 @@ function UnifiedOptionsChart({
   const labelWidth = 80;
   const chartWidth = 200;
   const chartHeight = relevantStrikes.length * (barHeight + barGap);
+  const chartTopOffset = 24; // Top padding for the chart
 
-  // Calculate strike range for marker positioning
-  const minStrike = Math.min(...relevantStrikes.map(s => s.strike));
-  const maxStrike = Math.max(...relevantStrikes.map(s => s.strike));
-  const strikeRange = maxStrike - minStrike || 1;
-
-  // Calculate marker positions as percentages
-  const getMarkerPosition = (value: number): number => {
-    return ((value - minStrike) / strikeRange) * 100;
+  // Calculate Y position for a price level (for horizontal markers)
+  // Returns the Y position in pixels from the top of the chart area
+  const getHorizontalMarkerY = (price: number): number | null => {
+    // Find the position of this price within the sorted strikes
+    // Strikes are sorted descending (highest first)
+    const sortedStrikes = relevantStrikes.map(s => s.strike);
+    const minStrike = Math.min(...sortedStrikes);
+    const maxStrike = Math.max(...sortedStrikes);
+    
+    // Check if price is within range (with small tolerance)
+    if (price < minStrike || price > maxStrike) {
+      // Try to interpolate even if slightly outside
+      const tolerance = (maxStrike - minStrike) * 0.1;
+      if (price < minStrike - tolerance || price > maxStrike + tolerance) {
+        return null;
+      }
+    }
+    
+    // Calculate position: since strikes are sorted descending,
+    // higher prices are at the top (lower Y values)
+    const rowHeight = barHeight + barGap;
+    
+    // Find the closest strike to determine position
+    let closestIndex = 0;
+    let minDiff = Math.abs(sortedStrikes[0] - price);
+    sortedStrikes.forEach((strike, idx) => {
+      const diff = Math.abs(strike - price);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIndex = idx;
+      }
+    });
+    
+    // If the price matches a strike exactly, position at that row
+    if (minDiff < 0.01) {
+      return closestIndex * rowHeight + rowHeight / 2;
+    }
+    
+    // Otherwise interpolate between strikes
+    // For descending order: index 0 = highest strike = top of chart
+    const totalHeight = (relevantStrikes.length - 1) * rowHeight;
+    const priceRatio = (maxStrike - price) / (maxStrike - minStrike);
+    return priceRatio * totalHeight + rowHeight / 2;
   };
 
   // Check if markers are within visible range
-  const spotVisible = spot >= minStrike && spot <= maxStrike;
-  const gammaFlipVisible = gammaFlip !== undefined && gammaFlip >= minStrike && gammaFlip <= maxStrike;
-  const maxPainVisible = maxPain !== undefined && maxPain >= minStrike && maxPain <= maxStrike;
+  const spotY = getHorizontalMarkerY(spot);
+  const gammaFlipY = gammaFlip !== undefined ? getHorizontalMarkerY(gammaFlip) : null;
+  const maxPainY = maxPain !== undefined ? getHorizontalMarkerY(maxPain) : null;
 
   // Handle mouse events for tooltips
   const handleMouseEnter = (
@@ -2434,53 +2470,55 @@ function UnifiedOptionsChart({
             height: `${chartHeight + 30}px` // Extra space for marker labels
           }}
         >
-          {/* Vertical Markers Layer */}
+          {/* Horizontal Markers Layer */}
           <div
-            className="absolute top-6 bottom-0 pointer-events-none z-10"
+            className="absolute pointer-events-none z-10"
             style={{
-              left: `${labelWidth}px`,
-              width: `${chartWidth * 2}px`
+              left: '0',
+              right: '0',
+              top: `${chartTopOffset}px`,
+              height: `${chartHeight}px`
             }}
           >
-            {/* Spot Marker */}
-            {spotVisible && (
+            {/* Spot Marker - Horizontal */}
+            {spotY !== null && (
               <div
-                className="absolute top-0 bottom-0"
-                style={{ left: `${getMarkerPosition(spot)}%` }}
+                className="absolute left-0 right-0"
+                style={{ top: `${spotY - 1}px` }}
               >
-                <div className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                  <span className="text-yellow-400 text-xs font-bold">● SPOT</span>
+                <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
+                  <span className="bg-gray-900/90 px-1.5 py-0.5 rounded text-yellow-400 text-xs font-bold">● SPOT {formatCurrency(spot)}</span>
                 </div>
-                <div className="absolute top-0 bottom-0 w-0.5 bg-yellow-400/80" />
-                <div className="absolute top-0 bottom-0 w-8 -ml-4 bg-yellow-400/5" />
+                <div className="absolute left-0 right-0 h-0.5 bg-yellow-400/80" />
+                <div className="absolute left-0 right-0 h-3 -translate-y-1/2 bg-yellow-400/5" />
               </div>
             )}
 
-            {/* Gamma Flip Marker */}
-            {gammaFlipVisible && gammaFlip !== undefined && (
+            {/* Gamma Flip Marker - Horizontal Dashed */}
+            {gammaFlipY !== null && gammaFlip !== undefined && (
               <div
-                className="absolute top-0 bottom-0"
-                style={{ left: `${getMarkerPosition(gammaFlip)}%` }}
+                className="absolute left-0 right-0"
+                style={{ top: `${gammaFlipY - 1}px` }}
               >
-                <div className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                  <span className="text-purple-400 text-xs font-bold">◆ G.FLIP</span>
+                <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
+                  <span className="bg-gray-900/90 px-1.5 py-0.5 rounded text-purple-400 text-xs font-bold">◆ G.FLIP {formatCurrency(gammaFlip)}</span>
                 </div>
-                <div className="absolute top-0 bottom-0 w-0 border-l-2 border-dashed border-purple-500" />
-                <div className="absolute top-0 bottom-0 w-8 -ml-4 bg-purple-500/5" />
+                <div className="absolute left-0 right-0 h-0 border-t-2 border-dashed border-purple-500" />
+                <div className="absolute left-0 right-0 h-3 -translate-y-1/2 bg-purple-500/5" />
               </div>
             )}
 
-            {/* Max Pain Marker */}
-            {maxPainVisible && maxPain !== undefined && (
+            {/* Max Pain Marker - Horizontal */}
+            {maxPainY !== null && maxPain !== undefined && (
               <div
-                className="absolute top-0 bottom-0"
-                style={{ left: `${getMarkerPosition(maxPain)}%` }}
+                className="absolute left-0 right-0"
+                style={{ top: `${maxPainY - 1}px` }}
               >
-                <div className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                  <span className="text-orange-400 text-xs font-bold">■ MAX PAIN</span>
+                <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
+                  <span className="bg-gray-900/90 px-1.5 py-0.5 rounded text-orange-400 text-xs font-bold">■ MAX PAIN {formatCurrency(maxPain)}</span>
                 </div>
-                <div className="absolute top-0 bottom-0 w-0.5 bg-orange-500" />
-                <div className="absolute top-0 bottom-0 w-8 -ml-4 bg-orange-500/5" />
+                <div className="absolute left-0 right-0 h-0.5 bg-orange-500" />
+                <div className="absolute left-0 right-0 h-3 -translate-y-1/2 bg-orange-500/5" />
               </div>
             )}
           </div>
@@ -3270,14 +3308,43 @@ export function VercelView(): ReactElement {
               </div>
             )}
 
-            {/* Unified Options Chart - Aggregated across all expiries */}
+            {/* 0DTE Options Chart */}
+            {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (() => {
+              const zeroDteExpiry = activeSymbolData.expiries.find(e => e.expiry_type === '0DTE');
+              const zeroDteGammaFlip = zeroDteExpiry?.gamma_flip;
+              const zeroDteMaxPain = zeroDteExpiry?.max_pain;
+              
+              return zeroDteExpiry && zeroDteExpiry.options && zeroDteExpiry.options.length > 0 && (
+                <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-800/70 border-b border-gray-700/50">
+                    <h3 className="text-lg font-bold text-white uppercase tracking-wider">
+                      0DTE Options Chart
+                      <span className="ml-2 text-sm font-normal text-gray-400">
+                        (Today's Expiry Only)
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="p-4">
+                    <UnifiedOptionsChart
+                      expiries={[zeroDteExpiry]}
+                      spot={activeSymbolData.spot}
+                      gammaFlip={zeroDteGammaFlip}
+                      maxPain={zeroDteMaxPain}
+                      topStrikesCount={12}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* All Expiries Options Chart */}
             {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (
               <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
                 <div className="px-4 py-3 bg-gray-800/70 border-b border-gray-700/50">
                   <h3 className="text-lg font-bold text-white uppercase tracking-wider">
-                    Unified Options Chart
+                    All Expiries Options Chart
                     <span className="ml-2 text-sm font-normal text-gray-400">
-                      (All Expiries Aggregated)
+                      (0DTE + Weekly + Monthly)
                     </span>
                   </h3>
                 </div>
