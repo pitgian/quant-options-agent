@@ -2355,54 +2355,45 @@ function UnifiedOptionsChart({
   const chartTopOffset = 24; // Top padding for the chart
 
   // Calculate Y position for a price level (for horizontal markers)
-  // Returns the Y position in pixels from the top of the chart area
-  const getHorizontalMarkerY = (price: number): number | null => {
+  // Returns an object with Y position and edge indicator
+  const getHorizontalMarkerY = (price: number): { y: number; isAtEdge: boolean; edgeType?: 'top' | 'bottom' } | null => {
     // Find the position of this price within the sorted strikes
     // Strikes are sorted descending (highest first)
     const sortedStrikes = relevantStrikes.map(s => s.strike);
     const minStrike = Math.min(...sortedStrikes);
     const maxStrike = Math.max(...sortedStrikes);
-    
-    // Check if price is within range (with small tolerance)
-    if (price < minStrike || price > maxStrike) {
-      // Try to interpolate even if slightly outside
-      const tolerance = (maxStrike - minStrike) * 0.1;
-      if (price < minStrike - tolerance || price > maxStrike + tolerance) {
-        return null;
-      }
-    }
+    const priceRange = maxStrike - minStrike;
     
     // Calculate position: since strikes are sorted descending,
     // higher prices are at the top (lower Y values)
     const rowHeight = barHeight + barGap;
-    
-    // Find the closest strike to determine position
-    let closestIndex = 0;
-    let minDiff = Math.abs(sortedStrikes[0] - price);
-    sortedStrikes.forEach((strike, idx) => {
-      const diff = Math.abs(strike - price);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestIndex = idx;
-      }
-    });
-    
-    // If the price matches a strike exactly, position at that row
-    if (minDiff < 0.01) {
-      return closestIndex * rowHeight + rowHeight / 2;
-    }
-    
-    // Otherwise interpolate between strikes
-    // For descending order: index 0 = highest strike = top of chart
     const totalHeight = (relevantStrikes.length - 1) * rowHeight;
-    const priceRatio = (maxStrike - price) / (maxStrike - minStrike);
-    return priceRatio * totalHeight + rowHeight / 2;
+    
+    // Calculate the price ratio (0 = maxStrike/top, 1 = minStrike/bottom)
+    let priceRatio = priceRange > 0 ? (maxStrike - price) / priceRange : 0.5;
+    
+    // Clamp the ratio to keep markers visible within chart bounds
+    // Allow some extension beyond the chart edges but clamp to reasonable limits
+    const isAtTopEdge = priceRatio < 0;
+    const isAtBottomEdge = priceRatio > 1;
+    
+    // Clamp ratio to -0.2 to 1.2 range for visibility
+    priceRatio = Math.max(-0.15, Math.min(1.15, priceRatio));
+    
+    // Calculate Y position
+    const y = priceRatio * totalHeight + rowHeight / 2;
+    
+    return {
+      y,
+      isAtEdge: isAtTopEdge || isAtBottomEdge,
+      edgeType: isAtTopEdge ? 'top' : isAtBottomEdge ? 'bottom' : undefined
+    };
   };
 
   // Check if markers are within visible range
-  const spotY = getHorizontalMarkerY(spot);
-  const gammaFlipY = gammaFlip !== undefined ? getHorizontalMarkerY(gammaFlip) : null;
-  const maxPainY = maxPain !== undefined ? getHorizontalMarkerY(maxPain) : null;
+  const spotMarker = getHorizontalMarkerY(spot);
+  const gammaFlipMarker = gammaFlip !== undefined ? getHorizontalMarkerY(gammaFlip) : null;
+  const maxPainMarker = maxPain !== undefined ? getHorizontalMarkerY(maxPain) : null;
 
   // Handle mouse events for tooltips
   const handleMouseEnter = (
@@ -2427,6 +2418,13 @@ function UnifiedOptionsChart({
     setHoveredBar(null);
   };
 
+  // Calculate percentage distance from spot
+  const getPercentDistance = (level: number): string => {
+    const distance = ((level - spot) / spot) * 100;
+    const sign = distance >= 0 ? '+' : '';
+    return `${sign}${distance.toFixed(2)}%`;
+  };
+
   return (
     <div className="relative" onMouseLeave={handleMouseLeave}>
       {/* Legend */}
@@ -2449,6 +2447,7 @@ function UnifiedOptionsChart({
             <div className="w-3 h-0 border-t-2 border-dashed border-purple-500"></div>
             <span className="text-purple-400 text-xs">◆</span>
             <span className="text-xs text-gray-400">G.Flip: {formatCurrency(gammaFlip)}</span>
+            <span className={`text-xs ${gammaFlip > spot ? 'text-green-400' : 'text-red-400'}`}>({getPercentDistance(gammaFlip)})</span>
           </div>
         )}
         {maxPain !== undefined && (
@@ -2456,6 +2455,7 @@ function UnifiedOptionsChart({
             <div className="w-3 h-0.5 bg-orange-500"></div>
             <span className="text-orange-400 text-xs">■</span>
             <span className="text-xs text-gray-400">Max Pain: {formatCurrency(maxPain)}</span>
+            <span className={`text-xs ${maxPain > spot ? 'text-green-400' : 'text-red-400'}`}>({getPercentDistance(maxPain)})</span>
           </div>
         )}
       </div>
@@ -2481,13 +2481,16 @@ function UnifiedOptionsChart({
             }}
           >
             {/* Spot Marker - Horizontal */}
-            {spotY !== null && (
+            {spotMarker !== null && (
               <div
                 className="absolute left-0 right-0"
-                style={{ top: `${spotY - 1}px` }}
+                style={{ top: `${spotMarker.y - 1}px` }}
               >
                 <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
-                  <span className="bg-gray-900/90 px-1.5 py-0.5 rounded text-yellow-400 text-xs font-bold">● SPOT {formatCurrency(spot)}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-yellow-400 text-xs font-bold ${spotMarker.isAtEdge ? 'bg-yellow-900/90 border border-yellow-500' : 'bg-gray-900/90'}`}>
+                    ● SPOT {formatCurrency(spot)}
+                    {spotMarker.isAtEdge && <span className="ml-1 text-yellow-300">↦</span>}
+                  </span>
                 </div>
                 <div className="absolute left-0 right-0 h-0.5 bg-yellow-400/80" />
                 <div className="absolute left-0 right-0 h-3 -translate-y-1/2 bg-yellow-400/5" />
@@ -2495,13 +2498,16 @@ function UnifiedOptionsChart({
             )}
 
             {/* Gamma Flip Marker - Horizontal Dashed */}
-            {gammaFlipY !== null && gammaFlip !== undefined && (
+            {gammaFlipMarker !== null && gammaFlip !== undefined && (
               <div
                 className="absolute left-0 right-0"
-                style={{ top: `${gammaFlipY - 1}px` }}
+                style={{ top: `${gammaFlipMarker.y - 1}px` }}
               >
                 <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
-                  <span className="bg-gray-900/90 px-1.5 py-0.5 rounded text-purple-400 text-xs font-bold">◆ G.FLIP {formatCurrency(gammaFlip)}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-purple-400 text-xs font-bold ${gammaFlipMarker.isAtEdge ? 'bg-purple-900/90 border border-purple-500' : 'bg-gray-900/90'}`}>
+                    ◆ G.FLIP {formatCurrency(gammaFlip)}
+                    {gammaFlipMarker.isAtEdge && <span className="ml-1 text-purple-300">↦</span>}
+                  </span>
                 </div>
                 <div className="absolute left-0 right-0 h-0 border-t-2 border-dashed border-purple-500" />
                 <div className="absolute left-0 right-0 h-3 -translate-y-1/2 bg-purple-500/5" />
@@ -2509,13 +2515,16 @@ function UnifiedOptionsChart({
             )}
 
             {/* Max Pain Marker - Horizontal */}
-            {maxPainY !== null && maxPain !== undefined && (
+            {maxPainMarker !== null && maxPain !== undefined && (
               <div
                 className="absolute left-0 right-0"
-                style={{ top: `${maxPainY - 1}px` }}
+                style={{ top: `${maxPainMarker.y - 1}px` }}
               >
                 <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
-                  <span className="bg-gray-900/90 px-1.5 py-0.5 rounded text-orange-400 text-xs font-bold">■ MAX PAIN {formatCurrency(maxPain)}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-orange-400 text-xs font-bold ${maxPainMarker.isAtEdge ? 'bg-orange-900/90 border border-orange-500' : 'bg-gray-900/90'}`}>
+                    ■ MAX PAIN {formatCurrency(maxPain)}
+                    {maxPainMarker.isAtEdge && <span className="ml-1 text-orange-300">↦</span>}
+                  </span>
                 </div>
                 <div className="absolute left-0 right-0 h-0.5 bg-orange-500" />
                 <div className="absolute left-0 right-0 h-3 -translate-y-1/2 bg-orange-500/5" />
@@ -3311,8 +3320,8 @@ export function VercelView(): ReactElement {
             {/* 0DTE Options Chart */}
             {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (() => {
               const zeroDteExpiry = activeSymbolData.expiries.find(e => e.label === '0DTE');
-              const zeroDteGammaFlip = zeroDteExpiry?.gamma_flip;
-              const zeroDteMaxPain = zeroDteExpiry?.max_pain;
+              const zeroDteGammaFlip = zeroDteExpiry?.quantMetrics?.gamma_flip;
+              const zeroDteMaxPain = zeroDteExpiry?.quantMetrics?.max_pain;
               
               return zeroDteExpiry && zeroDteExpiry.options && zeroDteExpiry.options.length > 0 && (
                 <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
