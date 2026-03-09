@@ -903,6 +903,9 @@ def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirat
     }
 
 
+DEFAULT_IV = 0.30  # 30% default IV - reasonable for equity options when yfinance returns 0 or NaN
+
+
 def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Optional[ExpiryData]:
     """
     Scarica e processa una singola option chain.
@@ -915,20 +918,22 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
         
         # Processa CALLs
         for _, row in chain.calls.iterrows():
+            iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > 0 else DEFAULT_IV
             options.append({
                 "strike": round(float(row['strike']), 2),
                 "side": "CALL",
-                "iv": round(float(row['impliedVolatility']), 4),
+                "iv": round(iv, 4),
                 "oi": int(row['openInterest']) if pd.notna(row['openInterest']) else 0,
                 "vol": int(row['volume']) if pd.notna(row['volume']) else 0
             })
         
         # Processa PUTs
         for _, row in chain.puts.iterrows():
+            iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > 0 else DEFAULT_IV
             options.append({
                 "strike": round(float(row['strike']), 2),
                 "side": "PUT",
-                "iv": round(float(row['impliedVolatility']), 4),
+                "iv": round(iv, 4),
                 "oi": int(row['openInterest']) if pd.notna(row['openInterest']) else 0,
                 "vol": int(row['volume']) if pd.notna(row['volume']) else 0
             })
@@ -1247,7 +1252,12 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
             break
     
     if gamma_flip is None:
-        logger.warning("Cannot calculate gamma flip: no valid GEX sign change found (OI may be zero - market closed)")
+        # Check if IV is the issue
+        avg_iv = sum(opt.get('iv', 0) for opt in options) / len(options) if options else 0
+        if avg_iv == 0:
+            logger.warning("Cannot calculate gamma flip: IV is zero for all options (data quality issue - using fallback IV recommended)")
+        else:
+            logger.warning("Cannot calculate gamma flip: no valid GEX sign change found (OI may be zero - market closed)")
         return None
     
     return round(gamma_flip, 2)
@@ -1600,6 +1610,11 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
             },
             "gex_by_strike": []
         }
+    
+    # Check for valid IV data before calculating gamma flip
+    valid_iv_count = sum(1 for opt in options if opt.get('iv', 0) > 0)
+    if valid_iv_count < len(options) * 0.10:  # Less than 10% have valid IV
+        logger.warning(f"Low IV data quality: only {valid_iv_count}/{len(options)} options have valid IV")
     
     T = calculate_time_to_expiry(expiry_date)
     r = 0.05  # Risk-free rate assumption
