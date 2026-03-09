@@ -67,6 +67,22 @@ SPOT_SYMBOL_MAP = {
     'IWM': 'IWM',
 }
 
+# ETF Proxy Configuration for indices
+# Maps index symbols to their ETF proxies with adjustment factors
+# Twelve Data free tier doesn't support indices (SPX, NDX), but supports ETFs (SPY, QQQ)
+ETF_PROXY_CONFIG = {
+    'SPX': {
+        'proxy_symbol': 'SPY',
+        'adjustment_factor': 10.0,  # SPX ≈ SPY × 10
+        'description': 'SPY as proxy for SPX (S&P 500)'
+    },
+    'NDX': {
+        'proxy_symbol': 'QQQ',
+        'adjustment_factor': 40.5,  # NDX ≈ QQQ × 40.5
+        'description': 'QQQ as proxy for NDX (Nasdaq 100)'
+    }
+}
+
 # System prompt - same as harmonicSystemInstruction in glmService.ts
 HARMONIC_SYSTEM_INSTRUCTION = """You are a Quantitative Analysis Engine specialized in Market Maker Hedging and Options Harmonic Resonance.
 
@@ -475,22 +491,31 @@ def is_weekly_friday(date_str: str) -> bool:
 
 def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[Optional[float], str]:
     """
-    Get real-time spot price with multi-source fallback.
+    Get real-time spot price with multi-source fallback and ETF proxy support.
+    
+    For indices not supported by Twelve Data free tier (SPX, NDX), uses ETF proxies:
+    - SPX → SPY (adjustment factor: 10x)
+    - NDX → QQQ (adjustment factor: 40.5x)
     
     Priority:
-    1. Twelve Data (real-time, supports indices like SPX, NDX)
+    1. Twelve Data (real-time, with ETF proxy for indices)
     2. Yahoo Finance fallback (passed as parameter)
     
     Returns:
-        Tuple of (price, source) where source is 'twelvedata', 'yahoo', or 'none'
+        Tuple of (price, source) where source is:
+        - 'twelvedata_proxy:SYMBOL' if using ETF proxy (e.g., 'twelvedata_proxy:SPY')
+        - 'twelvedata' for direct Twelve Data price
+        - 'yahoo' for Yahoo Finance fallback
+        - 'none' if no price available
     """
     if not HAS_REQUESTS:
         return (yahoo_fallback, 'yahoo' if yahoo_fallback else 'none')
     
-    # Get mapped symbol for Twelve Data API
-    twelvedata_symbol = SPOT_SYMBOL_MAP.get(symbol, symbol)
+    # Check if symbol needs ETF proxy (for indices not supported by Twelve Data free tier)
+    proxy_config = ETF_PROXY_CONFIG.get(symbol)
+    twelvedata_symbol = proxy_config['proxy_symbol'] if proxy_config else SPOT_SYMBOL_MAP.get(symbol, symbol)
     
-    # Try Twelve Data first (real-time, supports indices)
+    # Try Twelve Data first (real-time, supports ETFs)
     if TWELVEDATA_API_KEY:
         try:
             url = f"https://api.twelvedata.com/price?symbol={twelvedata_symbol}&apikey={TWELVEDATA_API_KEY}"
@@ -501,14 +526,21 @@ def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[
                 if price_str:
                     price = float(price_str)
                     if price > 0:
-                        logger.info(f"💰 Spot price from Twelve Data: {symbol} = {price}")
-                        return (price, 'twelvedata')
+                        # Apply adjustment factor if using ETF proxy
+                        if proxy_config:
+                            original_price = price
+                            price = price * proxy_config['adjustment_factor']
+                            logger.info(f"💰 Spot price from Twelve Data (proxy): {symbol} = {price:.2f} (via {twelvedata_symbol}={original_price:.2f} × {proxy_config['adjustment_factor']})")
+                            return (price, f'twelvedata_proxy:{proxy_config["proxy_symbol"]}')
+                        else:
+                            logger.info(f"💰 Spot price from Twelve Data: {symbol} = {price}")
+                            return (price, 'twelvedata')
                 else:
-                    logger.info(f"ℹ️ Twelve Data returned no price for {symbol}")
+                    logger.info(f"ℹ️ Twelve Data returned no price for {twelvedata_symbol}")
             else:
-                logger.warning(f"⚠️ Twelve Data HTTP {response.status_code} for {symbol}")
+                logger.warning(f"⚠️ Twelve Data HTTP {response.status_code} for {twelvedata_symbol}")
         except Exception as e:
-            logger.warning(f"⚠️ Twelve Data error for {symbol}: {e}")
+            logger.warning(f"⚠️ Twelve Data error for {twelvedata_symbol}: {e}")
     else:
         logger.info(f"ℹ️ TWELVEDATA_API_KEY not set, skipping Twelve Data")
     
