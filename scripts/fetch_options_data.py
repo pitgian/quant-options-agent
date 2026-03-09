@@ -491,31 +491,43 @@ def is_weekly_friday(date_str: str) -> bool:
 
 def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[Optional[float], str]:
     """
-    Get real-time spot price with multi-source fallback and ETF proxy support.
+    Get spot price with priority: Yahoo Finance (15min delay, updated) > Twelve Data (fallback)
+    
+    Yahoo Finance is preferred because:
+    - 15 min delay but always updated
+    - Twelve Data free tier shows previous day's price until pre-market opens
     
     For indices not supported by Twelve Data free tier (SPX, NDX), uses ETF proxies:
     - SPX → SPY (adjustment factor: 10x)
     - NDX → QQQ (adjustment factor: 40.5x)
     
     Priority:
-    1. Twelve Data (real-time, with ETF proxy for indices)
-    2. Yahoo Finance fallback (passed as parameter)
+    1. Yahoo Finance (15min delayed but current)
+    2. Twelve Data fallback (with ETF proxy for indices)
     
     Returns:
         Tuple of (price, source) where source is:
+        - 'yahoo' for Yahoo Finance (preferred)
         - 'twelvedata_proxy:SYMBOL' if using ETF proxy (e.g., 'twelvedata_proxy:SPY')
         - 'twelvedata' for direct Twelve Data price
-        - 'yahoo' for Yahoo Finance fallback
         - 'none' if no price available
     """
+    # Priority 1: Yahoo Finance (if provided as fallback parameter)
+    # Yahoo has 15min delay but is always updated, unlike Twelve Data free tier
+    # which shows previous day's price until pre-market opens
+    if yahoo_fallback:
+        logger.info(f"💰 Spot price from Yahoo Finance: {symbol} = ${yahoo_fallback:.2f}")
+        return (yahoo_fallback, 'yahoo')
+    
+    # Priority 2: Twelve Data (fallback only)
     if not HAS_REQUESTS:
-        return (yahoo_fallback, 'yahoo' if yahoo_fallback else 'none')
+        return (None, 'none')
     
     # Check if symbol needs ETF proxy (for indices not supported by Twelve Data free tier)
     proxy_config = ETF_PROXY_CONFIG.get(symbol)
     twelvedata_symbol = proxy_config['proxy_symbol'] if proxy_config else SPOT_SYMBOL_MAP.get(symbol, symbol)
     
-    # Try Twelve Data first (real-time, supports ETFs)
+    # Try Twelve Data as fallback (supports ETFs)
     if TWELVEDATA_API_KEY:
         try:
             url = f"https://api.twelvedata.com/price?symbol={twelvedata_symbol}&apikey={TWELVEDATA_API_KEY}"
@@ -530,10 +542,10 @@ def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[
                         if proxy_config:
                             original_price = price
                             price = price * proxy_config['adjustment_factor']
-                            logger.info(f"💰 Spot price from Twelve Data (proxy): {symbol} = {price:.2f} (via {twelvedata_symbol}={original_price:.2f} × {proxy_config['adjustment_factor']})")
+                            logger.info(f"💰 Spot price from Twelve Data (proxy, fallback): {symbol} = {price:.2f} (via {twelvedata_symbol}={original_price:.2f} × {proxy_config['adjustment_factor']})")
                             return (price, f'twelvedata_proxy:{proxy_config["proxy_symbol"]}')
                         else:
-                            logger.info(f"💰 Spot price from Twelve Data: {symbol} = {price}")
+                            logger.info(f"💰 Spot price from Twelve Data (fallback): {symbol} = {price}")
                             return (price, 'twelvedata')
                 else:
                     logger.info(f"ℹ️ Twelve Data returned no price for {twelvedata_symbol}")
@@ -543,11 +555,6 @@ def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[
             logger.warning(f"⚠️ Twelve Data error for {twelvedata_symbol}: {e}")
     else:
         logger.info(f"ℹ️ TWELVEDATA_API_KEY not set, skipping Twelve Data")
-    
-    # Fallback to Yahoo
-    if yahoo_fallback:
-        logger.info(f"💰 Spot price from Yahoo (delayed): {symbol} = {yahoo_fallback}")
-        return (yahoo_fallback, 'yahoo')
     
     return (None, 'none')
 
