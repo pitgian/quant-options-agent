@@ -83,6 +83,21 @@ ETF_PROXY_CONFIG = {
     }
 }
 
+# Futures Proxy Configuration for pre-market/after-hours data
+# Futures trade almost 24/5, providing updated prices when ETFs are stale
+FUTURES_PROXY_CONFIG = {
+    'SPX': {
+        'futures_symbol': 'ES=F',  # E-mini S&P500 futures
+        'adjustment_factor': 1.0,  # SPX ≈ ES × 1
+        'description': 'ES futures as proxy for SPX'
+    },
+    'NDX': {
+        'futures_symbol': 'NQ=F',  # E-mini Nasdaq100 futures
+        'adjustment_factor': 1.0,  # NDX ≈ NQ × 1
+        'description': 'NQ futures as proxy for NDX (Nasdaq 100)'
+    }
+}
+
 # System prompt - same as harmonicSystemInstruction in glmService.ts
 HARMONIC_SYSTEM_INSTRUCTION = """You are a Quantitative Analysis Engine specialized in Market Maker Hedging and Options Harmonic Resonance.
 
@@ -491,27 +506,60 @@ def is_weekly_friday(date_str: str) -> bool:
 
 def get_realtime_spot_price(symbol: str, yahoo_fallback: float = None) -> Tuple[Optional[float], str]:
     """
-    Get spot price with priority: Yahoo Finance (15min delay, updated) > Twelve Data (fallback)
+    Get spot price with priority: Futures > Yahoo Finance > Twelve Data (fallback)
     
-    Yahoo Finance is preferred because:
-    - 15 min delay but always updated
-    - Twelve Data free tier shows previous day's price until pre-market opens
+    Futures are preferred for SPX/NDX because:
+    - Trade almost 24/5, providing current prices even during pre-market/after-hours
+    - ETFs (SPY, QQQ) are stale until regular trading hours
     
     For indices not supported by Twelve Data free tier (SPX, NDX), uses ETF proxies:
     - SPX → SPY (adjustment factor: 10x)
     - NDX → QQQ (adjustment factor: 40.5x)
     
     Priority:
+    0. Futures (ES=F for SPX, NQ=F for NDX) - pre-market/after-hours
     1. Yahoo Finance (15min delayed but current)
     2. Twelve Data fallback (with ETF proxy for indices)
     
     Returns:
         Tuple of (price, source) where source is:
+        - 'futures:SYMBOL' for futures proxy (e.g., 'futures:ES=F')
         - 'yahoo' for Yahoo Finance (preferred)
         - 'twelvedata_proxy:SYMBOL' if using ETF proxy (e.g., 'twelvedata_proxy:SPY')
         - 'twelvedata' for direct Twelve Data price
         - 'none' if no price available
     """
+    # Priority 0: Futures (for SPX/NDX during pre-market/after-hours)
+    # Futures trade almost 24/5, providing updated prices when ETFs are stale
+    futures_config = FUTURES_PROXY_CONFIG.get(symbol)
+    if futures_config:
+        try:
+            futures_ticker = yf.Ticker(futures_config['futures_symbol'])
+            futures_price = None
+            
+            # Try fast_info first
+            try:
+                futures_price = float(futures_ticker.fast_info['last_price'])
+            except (KeyError, TypeError):
+                pass
+            
+            # Fallback to history
+            if futures_price is None:
+                try:
+                    hist = futures_ticker.history(period="1d")
+                    if not hist.empty:
+                        futures_price = float(hist['Close'].iloc[-1])
+                except Exception:
+                    pass
+            
+            if futures_price and futures_price > 0:
+                # Apply adjustment factor
+                adjusted_price = futures_price * futures_config['adjustment_factor']
+                logger.info(f"💰 Spot price from Futures (pre-market): {symbol} = {adjusted_price:.2f} (via {futures_config['futures_symbol']}={futures_price:.2f} × {futures_config['adjustment_factor']})")
+                return (adjusted_price, f"futures:{futures_config['futures_symbol']}")
+        except Exception as e:
+            logger.warning(f"⚠️ Futures fetch error for {symbol}: {e}")
+    
     # Priority 1: Yahoo Finance (if provided as fallback parameter)
     # Yahoo has 15min delay but is always updated, unlike Twelve Data free tier
     # which shows previous day's price until pre-market opens
