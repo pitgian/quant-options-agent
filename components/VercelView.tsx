@@ -37,16 +37,12 @@ type Symbol = typeof SYMBOLS[number];
 
 /**
  * Expiry type labels for display
- * Updated to support 5 expiries: 0DTE, WEEKLY_1, WEEKLY_2, MONTHLY_1, MONTHLY_2
+ * Supports 3 expiries: 0DTE, WEEKLY, MONTHLY
  */
 const EXPIRY_LABELS: Record<string, string> = {
   '0DTE': '0DTE (Today)',
   'WEEKLY': 'Weekly',
-  'WEEKLY_1': 'Weekly 1',
-  'WEEKLY_2': 'Weekly 2',
   'MONTHLY': 'Monthly',
-  'MONTHLY_1': 'Monthly 1',
-  'MONTHLY_2': 'Monthly 2',
 };
 
 // Tooltips for metrics

@@ -153,7 +153,7 @@ export interface AIAnalysis {
 export interface SymbolData {
   spot: number;
   generated: string;
-  /** Up to 5 expiries: 0DTE, WEEKLY_1, WEEKLY_2, MONTHLY_1, MONTHLY_2 */
+  /** Up to 3 expiries: 0DTE, WEEKLY, MONTHLY */
   expiries: ExpiryData[];
   legacy?: Record<string, LegacyExpiryContent>;
   selected_levels?: SelectedLevels;
