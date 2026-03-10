@@ -2345,7 +2345,7 @@ function UnifiedOptionsChart({
   // Chart dimensions
   const barHeight = 24;
   const barGap = 4;
-  const labelWidth = 80;
+  const labelWidth = 90; // Increased from 80 to prevent label cut-off
   const chartWidth = 200;
   const chartHeight = relevantStrikes.length * (barHeight + barGap);
   const chartTopOffset = 24; // Top padding for the chart
@@ -2353,31 +2353,55 @@ function UnifiedOptionsChart({
   // Calculate Y position for a price level (for horizontal markers)
   // Returns an object with Y position and edge indicator
   const getHorizontalMarkerY = (price: number): { y: number; isAtEdge: boolean; edgeType?: 'top' | 'bottom' } | null => {
-    // Find the position of this price within the sorted strikes
-    // Strikes are sorted descending (highest first)
+    // Strikes are sorted descending (highest first at index 0)
     const sortedStrikes = relevantStrikes.map(s => s.strike);
-    const minStrike = Math.min(...sortedStrikes);
-    const maxStrike = Math.max(...sortedStrikes);
-    const priceRange = maxStrike - minStrike;
-    
-    // Calculate position: since strikes are sorted descending,
-    // higher prices are at the top (lower Y values)
     const rowHeight = barHeight + barGap;
-    const totalHeight = (relevantStrikes.length - 1) * rowHeight;
     
-    // Calculate the price ratio (0 = maxStrike/top, 1 = minStrike/bottom)
-    let priceRatio = priceRange > 0 ? (maxStrike - price) / priceRange : 0.5;
     
-    // Clamp the ratio to keep markers visible within chart bounds
-    // Allow some extension beyond the chart edges but clamp to reasonable limits
-    const isAtTopEdge = priceRatio < 0;
-    const isAtBottomEdge = priceRatio > 1;
+    // Find the position by locating where this price falls between strikes
+    // Since strikes are sorted descending, we iterate from highest to lowest
+    let rowIndex = -1;
+    let interpolation = 0;
     
-    // Clamp ratio to -0.2 to 1.2 range for visibility
-    priceRatio = Math.max(-0.15, Math.min(1.15, priceRatio));
+    for (let i = 0; i < sortedStrikes.length; i++) {
+      if (price >= sortedStrikes[i]) {
+        // Price is at or above this strike
+        rowIndex = i;
+        // Check if we need to interpolate with the previous (higher) strike
+        if (i > 0 && price < sortedStrikes[i - 1]) {
+          // Interpolate between strike i-1 (higher) and strike i (lower)
+          const higherStrike = sortedStrikes[i - 1];
+          const lowerStrike = sortedStrikes[i];
+          const range = higherStrike - lowerStrike;
+          if (range > 0) {
+            // interpolation = 0 means at higher strike, 1 means at lower strike
+            interpolation = (higherStrike - price) / range;
+            rowIndex = i - 1; // Start from the higher strike row
+          }
+        }
+        break;
+      }
+    }
     
-    // Calculate Y position
-    const y = priceRatio * totalHeight + rowHeight / 2;
+    // If price is below all strikes, place at bottom
+    if (rowIndex === -1) {
+      rowIndex = sortedStrikes.length - 1;
+      interpolation = 1; // Below the last strike
+    }
+    
+    // Calculate Y position based on row index and interpolation
+    // Row 0 is at top, each row is rowHeight pixels tall
+    // The center of row i is at: i * rowHeight + rowHeight / 2
+    let y = rowIndex * rowHeight + rowHeight / 2 + interpolation * rowHeight;
+    
+    // Determine if marker is at edge
+    const isAtTopEdge = rowIndex === 0 && interpolation <= 0;
+    const isAtBottomEdge = rowIndex >= sortedStrikes.length - 1 && interpolation >= 0;
+    
+    // Clamp Y position to stay within visible bounds (with small margin)
+    const minY = -rowHeight / 2;
+    const maxY = chartHeight + rowHeight / 2;
+    y = Math.max(minY, Math.min(maxY, y));
     
     return {
       y,
@@ -2461,16 +2485,17 @@ function UnifiedOptionsChart({
         <div
           className="relative mx-auto"
           style={{
-            width: `${labelWidth + chartWidth * 2 + 40}px`,
+            width: `${labelWidth + chartWidth * 2 + 100}px`, // Increased from 40 to 100 for marker label space
             minWidth: '100%',
-            height: `${chartHeight + 30}px` // Extra space for marker labels
+            height: `${chartHeight + 30}px`, // Extra space for marker labels
+            paddingLeft: '60px' // Add left padding to prevent marker labels from being cut off
           }}
         >
           {/* Horizontal Markers Layer */}
           <div
             className="absolute pointer-events-none z-10"
             style={{
-              left: '0',
+              left: '60px', // Match the padding
               right: '0',
               top: `${chartTopOffset}px`,
               height: `${chartHeight}px`
@@ -2482,7 +2507,7 @@ function UnifiedOptionsChart({
                 className="absolute left-0 right-0"
                 style={{ top: `${spotMarker.y - 1}px` }}
               >
-                <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
+                <div className="absolute left-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(-100%)' }}>
                   <span className={`px-1.5 py-0.5 rounded text-yellow-400 text-xs font-bold ${spotMarker.isAtEdge ? 'bg-yellow-900/90 border border-yellow-500' : 'bg-gray-900/90'}`}>
                     ● SPOT {formatCurrency(spot)}
                     {spotMarker.isAtEdge && <span className="ml-1 text-yellow-300">↦</span>}
@@ -2499,7 +2524,7 @@ function UnifiedOptionsChart({
                 className="absolute left-0 right-0"
                 style={{ top: `${gammaFlipMarker.y - 1}px` }}
               >
-                <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
+                <div className="absolute left-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(-100%)' }}>
                   <span className={`px-1.5 py-0.5 rounded text-purple-400 text-xs font-bold ${gammaFlipMarker.isAtEdge ? 'bg-purple-900/90 border border-purple-500' : 'bg-gray-900/90'}`}>
                     ◆ G.FLIP {formatCurrency(gammaFlip)}
                     {gammaFlipMarker.isAtEdge && <span className="ml-1 text-purple-300">↦</span>}
@@ -2516,7 +2541,7 @@ function UnifiedOptionsChart({
                 className="absolute left-0 right-0"
                 style={{ top: `${maxPainMarker.y - 1}px` }}
               >
-                <div className="absolute left-0 -translate-x-1 -translate-y-1/2 whitespace-nowrap z-20">
+                <div className="absolute left-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(-100%)' }}>
                   <span className={`px-1.5 py-0.5 rounded text-orange-400 text-xs font-bold ${maxPainMarker.isAtEdge ? 'bg-orange-900/90 border border-orange-500' : 'bg-gray-900/90'}`}>
                     ■ MAX PAIN {formatCurrency(maxPain)}
                     {maxPainMarker.isAtEdge && <span className="ml-1 text-orange-300">↦</span>}
@@ -2530,8 +2555,9 @@ function UnifiedOptionsChart({
 
           {/* Center strike labels */}
           <div
-            className="absolute left-0 top-6 flex flex-col justify-center"
+            className="absolute top-6 flex flex-col justify-center"
             style={{
+              left: '60px', // Match the padding
               width: `${labelWidth}px`,
               height: `${chartHeight}px`
             }}
@@ -2567,7 +2593,7 @@ function UnifiedOptionsChart({
           <div
             className="absolute flex flex-col justify-center"
             style={{
-              left: `${labelWidth}px`,
+              left: `${60 + labelWidth}px`, // Account for left padding
               width: `${chartWidth}px`,
               height: `${chartHeight}px`,
               top: '24px'
@@ -2612,7 +2638,7 @@ function UnifiedOptionsChart({
           <div
             className="absolute bg-gray-600"
             style={{
-              left: `${labelWidth + chartWidth}px`,
+              left: `${60 + labelWidth + chartWidth}px`, // Account for left padding
               width: '1px',
               height: `${chartHeight}px`,
               top: '24px'
@@ -2623,7 +2649,7 @@ function UnifiedOptionsChart({
           <div
             className="absolute flex flex-col justify-center"
             style={{
-              left: `${labelWidth + chartWidth + 1}px`,
+              left: `${60 + labelWidth + chartWidth + 1}px`, // Account for left padding
               width: `${chartWidth}px`,
               height: `${chartHeight}px`,
               top: '24px'
