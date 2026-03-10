@@ -117,14 +117,14 @@ Examples:
 ⚠️ ATTENTION: Multi-expiry classification is RARE and must be applied with EXTREME precision.
 
 1. **RESONANCE** (VERY RARE - max 1-2 total levels):
-   - Condition: The SAME exact strike (±0.5%) must be a significant level in 3+ expirations
-   - Valid combinations: 0DTE + WEEKLY_1 + MONTHLY_1, or WEEKLY_1 + WEEKLY_2 + MONTHLY_1 + MONTHLY_2
+   - Condition: The SAME exact strike (±0.5%) must be a significant level in ALL 3 expirations
+   - Valid combination: 0DTE + WEEKLY_1 + MONTHLY_1
    - INVALID EXAMPLES: Strike 24700 in 0DTE, strike 24750 in WEEKLY_1, strike 24800 in MONTHLY_1 → NOT RESONANCE
    - Importance: 95-100
 
 2. **CONFLUENCE** (RARE - max 3-5 total levels):
    - Condition: The SAME strike (±1%) is significant in EXACTLY TWO expirations
-   - Valid combinations: 0DTE+WEEKLY_1, WEEKLY_1+WEEKLY_2, MONTHLY_1+MONTHLY_2, etc.
+   - Valid combinations: 0DTE+WEEKLY_1, WEEKLY_1+MONTHLY_1, 0DTE+MONTHLY_1
    - Importance: 85-94
 
 3. **SINGLE EXPIRY** (THE MAJORITY of levels):
@@ -134,8 +134,8 @@ Examples:
    - This should cover ~80% of levels
 
 **EXPIRY LABELS IN OUTPUT:**
-- Use exact labels: '0DTE', 'WEEKLY_1', 'WEEKLY_2', 'MONTHLY_1', 'MONTHLY_2'
-- For multi-expiry: combine with '+', e.g., '0DTE+WEEKLY_1', 'WEEKLY_1+MONTHLY_1+MONTHLY_2'
+- Use exact labels: '0DTE', 'WEEKLY_1', 'MONTHLY_1'
+- For multi-expiry: combine with '+', e.g., '0DTE+WEEKLY_1', 'WEEKLY_1+MONTHLY_1', '0DTE+WEEKLY_1+MONTHLY_1'
 
 **TOTAL GEX INTERPRETATION:**
 - Use totalGexData.total_gex for overall market gamma exposure
@@ -645,12 +645,10 @@ def get_spot_price(ticker: yf.Ticker, symbol: str = None) -> Tuple[Optional[floa
 
 def select_expirations_enhanced(expirations: List[str]) -> List[tuple]:
     """
-    Select 5 distinct expirations for comprehensive analysis:
+    Select 3 distinct expirations for precise analysis:
     1. 0DTE - First available (intraday gamma)
-    2. WEEKLY_1 - First weekly (short-term)
-    3. WEEKLY_2 - Second weekly (roll detection)
-    4. MONTHLY_1 - First monthly (standard expiry)
-    5. MONTHLY_2 - Second monthly (medium-term target)
+    2. WEEKLY_1 - First weekly Friday (not monthly)
+    3. MONTHLY_1 - First monthly (third Friday)
     
     Returns list of (label, date) tuples.
     """
@@ -664,46 +662,33 @@ def select_expirations_enhanced(expirations: List[str]) -> List[tuple]:
     selected.append(("0DTE", expirations[0]))
     used_dates.add(expirations[0])
     
-    # 2-3. WEEKLY - First two weekly Fridays (not monthly)
-    weekly_count = 0
+    # 2. WEEKLY_1 - First weekly Friday (not monthly)
     for exp in expirations:
         if exp not in used_dates and is_weekly_friday(exp):
-            weekly_count += 1
-            selected.append((f"WEEKLY_{weekly_count}", exp))
+            selected.append(("WEEKLY_1", exp))
             used_dates.add(exp)
-            if weekly_count >= 2:
-                break
+            break
     
-    # 4-5. MONTHLY - First two third Fridays not yet used
-    monthly_count = 0
+    # 3. MONTHLY_1 - First third Friday not yet used
     for exp in expirations:
         if exp not in used_dates and is_monthly(exp):
-            monthly_count += 1
-            selected.append((f"MONTHLY_{monthly_count}", exp))
+            selected.append(("MONTHLY_1", exp))
             used_dates.add(exp)
-            if monthly_count >= 2:
-                break
+            break
     
-    # Fallback: If no weekly Friday found, use next Fridays after 0DTE
+    # Fallback: If no weekly Friday found, use next Friday after 0DTE
     if len(selected) < 3:
         for exp in expirations:
             if exp not in used_dates and is_friday(exp):
-                selected.insert(len(selected) - monthly_count, ("WEEKLY_1", exp))
+                selected.insert(1, ("WEEKLY_1", exp))
                 used_dates.add(exp)
                 break
     
     # Fallback: If still missing monthly, use any remaining
-    while len(selected) < 5 and len(used_dates) < len(expirations):
+    if len(selected) < 3 and len(used_dates) < len(expirations):
         for exp in expirations:
             if exp not in used_dates:
-                # Determine if it's more like weekly or monthly based on distance
-                days_to_expiry = (datetime.strptime(exp, '%Y-%m-%d') - datetime.now()).days
-                if days_to_expiry > 30:
-                    monthly_count += 1
-                    selected.append((f"MONTHLY_{monthly_count}", exp))
-                else:
-                    weekly_count += 1
-                    selected.append((f"WEEKLY_{weekly_count}", exp))
+                selected.append(("MONTHLY_1", exp))
                 used_dates.add(exp)
                 break
     
@@ -715,7 +700,7 @@ def select_expirations(expirations: List[str]) -> List[tuple]:
     Legacy function - now calls select_expirations_enhanced.
     Kept for backward compatibility.
     
-    Select 5 distinct expirations for comprehensive analysis.
+    Select 3 distinct expirations for precise analysis.
     Returns list of (label, date) tuples.
     """
     return select_expirations_enhanced(expirations)
