@@ -2485,18 +2485,19 @@ function UnifiedOptionsChart({
         <div
           className="relative mx-auto"
           style={{
-            width: `${labelWidth + chartWidth * 2 + 100}px`, // Increased from 40 to 100 for marker label space
+            width: `${labelWidth + chartWidth * 2 + 160}px`, // Increased for right-side marker label space
             minWidth: '100%',
             height: `${chartHeight + 30}px`, // Extra space for marker labels
-            paddingLeft: '60px' // Add left padding to prevent marker labels from being cut off
+            paddingLeft: '20px', // Reduced left padding since labels are now on right
+            paddingRight: '140px' // Add right padding for marker labels
           }}
         >
           {/* Horizontal Markers Layer */}
           <div
             className="absolute pointer-events-none z-10"
             style={{
-              left: '60px', // Match the padding
-              right: '0',
+              left: `${20 + labelWidth}px`, // Start after left padding and strike labels
+              right: '140px', // Leave space for right-side marker labels
               top: `${chartTopOffset}px`,
               height: `${chartHeight}px`
             }}
@@ -2507,7 +2508,7 @@ function UnifiedOptionsChart({
                 className="absolute left-0 right-0"
                 style={{ top: `${spotMarker.y - 1}px` }}
               >
-                <div className="absolute left-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(-100%)' }}>
+                <div className="absolute right-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(100%)' }}>
                   <span className={`px-1.5 py-0.5 rounded text-yellow-400 text-xs font-bold ${spotMarker.isAtEdge ? 'bg-yellow-900/90 border border-yellow-500' : 'bg-gray-900/90'}`}>
                     ● SPOT {formatCurrency(spot)}
                     {spotMarker.isAtEdge && <span className="ml-1 text-yellow-300">↦</span>}
@@ -2524,7 +2525,7 @@ function UnifiedOptionsChart({
                 className="absolute left-0 right-0"
                 style={{ top: `${gammaFlipMarker.y - 1}px` }}
               >
-                <div className="absolute left-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(-100%)' }}>
+                <div className="absolute right-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(100%)' }}>
                   <span className={`px-1.5 py-0.5 rounded text-purple-400 text-xs font-bold ${gammaFlipMarker.isAtEdge ? 'bg-purple-900/90 border border-purple-500' : 'bg-gray-900/90'}`}>
                     ◆ G.FLIP {formatCurrency(gammaFlip)}
                     {gammaFlipMarker.isAtEdge && <span className="ml-1 text-purple-300">↦</span>}
@@ -2541,7 +2542,7 @@ function UnifiedOptionsChart({
                 className="absolute left-0 right-0"
                 style={{ top: `${maxPainMarker.y - 1}px` }}
               >
-                <div className="absolute left-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(-100%)' }}>
+                <div className="absolute right-0 -translate-y-1/2 whitespace-nowrap z-20" style={{ transform: 'translateX(100%)' }}>
                   <span className={`px-1.5 py-0.5 rounded text-orange-400 text-xs font-bold ${maxPainMarker.isAtEdge ? 'bg-orange-900/90 border border-orange-500' : 'bg-gray-900/90'}`}>
                     ■ MAX PAIN {formatCurrency(maxPain)}
                     {maxPainMarker.isAtEdge && <span className="ml-1 text-orange-300">↦</span>}
@@ -2557,7 +2558,7 @@ function UnifiedOptionsChart({
           <div
             className="absolute top-6 flex flex-col justify-center"
             style={{
-              left: '60px', // Match the padding
+              left: '20px', // Match the new left padding
               width: `${labelWidth}px`,
               height: `${chartHeight}px`
             }}
@@ -2593,7 +2594,7 @@ function UnifiedOptionsChart({
           <div
             className="absolute flex flex-col justify-center"
             style={{
-              left: `${60 + labelWidth}px`, // Account for left padding
+              left: `${20 + labelWidth}px`, // Account for new left padding
               width: `${chartWidth}px`,
               height: `${chartHeight}px`,
               top: '24px'
@@ -2649,7 +2650,7 @@ function UnifiedOptionsChart({
           <div
             className="absolute flex flex-col justify-center"
             style={{
-              left: `${60 + labelWidth + chartWidth + 1}px`, // Account for left padding
+              left: `${20 + labelWidth + chartWidth + 1}px`, // Account for new left padding
               width: `${chartWidth}px`,
               height: `${chartHeight}px`,
               top: '24px'
