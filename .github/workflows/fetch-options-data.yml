@@ -11,6 +11,11 @@ on:
     - cron: '0 22-23 * * 1-5'            # 22:00-23:00 UTC (after US session)
   workflow_dispatch: # Manual trigger
 
+# Previene esecuzioni simultanee - accoda le nuove esecuzioni
+concurrency:
+  group: fetch-options-data
+  cancel-in-progress: false
+
 jobs:
   fetch-data:
     runs-on: ubuntu-latest
@@ -44,13 +49,32 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           
-      - name: Commit changes
+      - name: Commit and push changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          
+          # Aggiungi il file
           git add data/options_data.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update options data [skip ci]"
-          git stash
-          git pull --rebase origin master
-          git stash pop || true
-          git push
+          
+          # Verifica se ci sono cambiamenti
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "Nessun cambiamento da committare"
+            exit 0
+          fi
+          
+          # Commit
+          git commit -m "chore: update options data [skip ci]"
+          
+          # Pull con rebase e gestione conflitti
+          # Se c'è conflitto, usa la nostra versione (theirs) perché è più recente
+          git pull --rebase --strategy-option=theirs origin master || {
+            echo "Conflitto rilevato, risoluzione automatica..."
+            # Se rebase fallisce, abort e forza push con lease
+            git rebase --abort 2>/dev/null || true
+            git push --force-with-lease origin master
+            exit 0
+          }
+          
+          # Push normale
+          git push origin master
