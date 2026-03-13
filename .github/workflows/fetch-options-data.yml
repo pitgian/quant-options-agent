@@ -41,6 +41,7 @@ jobs:
           pip install -r scripts/requirements.txt
           
       - name: Fetch options data
+        timeout-minutes: 15
         run: |
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
         env:

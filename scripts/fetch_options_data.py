@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # HTTP client for AI API calls
 try:
@@ -443,6 +444,29 @@ Integrate skew sentiment and PCR to validate level importance.
         logger.warning(f"⚠️ Failed to parse AI response as JSON: {e}")
         logger.debug(f"Response text: {response_text[:500]}...")
         return None
+
+
+def process_ai_analysis_for_symbol(symbol: str, expiries: List[Dict], spot: float) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """
+    Process AI analysis for a single symbol.
+    Designed to be run in parallel using ThreadPoolExecutor.
+    
+    Args:
+        symbol: The symbol being analyzed
+        expiries: List of expiry data
+        spot: Current spot price
+    
+    Returns:
+        Tuple of (symbol, ai_analysis_result)
+    """
+    try:
+        logger.info(f"🤖 Starting AI analysis for {symbol}...")
+        ai_analysis = get_ai_analysis(expiries, spot)
+        logger.info(f"✅ AI analysis completed for {symbol}")
+        return symbol, ai_analysis
+    except Exception as e:
+        logger.error(f"❌ AI analysis failed for {symbol}: {e}")
+        return symbol, None
 
 
 # ============================================================================
@@ -2493,6 +2517,13 @@ def main():
     }
     
     successful = 0
+    
+    # =========================================================================
+    # PHASE 1: Collect data for all symbols (sequential to avoid rate limiting)
+    # =========================================================================
+    logger.info("\n📥 PHASE 1: Collecting data for all symbols...")
+    
+    symbols_data_raw = {}  # Store raw data before AI analysis
     for i, symbol in enumerate(symbols):
         # Rate limiting: pausa tra richieste (tranne la prima)
         if i > 0:
@@ -2507,16 +2538,12 @@ def main():
             # Seleziona i livelli più importanti (algoritmici)
             selected_levels = select_important_levels(data.expiries, data.spot)
             
-            # Chiama AI per analisi avanzata (se API key configurata)
-            ai_analysis = get_ai_analysis(data.expiries, data.spot)
-            
-            all_data["symbols"][symbol] = {
+            symbols_data_raw[symbol] = {
                 "spot": data.spot,
                 "generated": data.generated,
                 "expiries": data.expiries,
                 "selected_levels": selected_levels,
-                "ai_analysis": ai_analysis,  # Aggiungi analisi AI
-                "totalGexData": data.total_gex_data,  # GEX totale su tutte le scadenze
+                "totalGexData": data.total_gex_data,
                 "legacy": legacy
             }
             successful += 1
@@ -2529,36 +2556,88 @@ def main():
             logger.info(f"     Put Walls: {len(selected_levels['put_walls'])} livelli")
             logger.info(f"     Gamma Flip: {selected_levels['gamma_flip']}")
             logger.info(f"     Max Pain: {selected_levels['max_pain']}")
+    
+    # =========================================================================
+    # PHASE 2: Execute AI calls in parallel
+    # =========================================================================
+    logger.info(f"\n🤖 PHASE 2: Executing AI analysis in parallel for {len(symbols_data_raw)} symbols...")
+    
+    ai_results = {}
+    if AI_API_KEY and symbols_data_raw:
+        # Prepare data for parallel execution
+        ai_tasks = []
+        for symbol, data in symbols_data_raw.items():
+            ai_tasks.append((symbol, data['expiries'], data['spot']))
+        
+        # Execute AI calls in parallel using ThreadPoolExecutor
+        start_time = time.time()
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit all AI analysis tasks
+            future_to_symbol = {
+                executor.submit(process_ai_analysis_for_symbol, symbol, expiries, spot): symbol
+                for symbol, expiries, spot in ai_tasks
+            }
             
-            # Log AI analysis
-            if ai_analysis:
-                outlook = ai_analysis.get('outlook', {})
-                levels = ai_analysis.get('levels', [])
-                logger.info(f"  🤖 AI Analysis per {symbol}:")
-                logger.info(f"     Sentiment: {outlook.get('sentiment', 'N/A')}")
-                logger.info(f"     Volatility: {outlook.get('volatilityExpectation', 'N/A')}")
-                logger.info(f"     AI Levels: {len(levels)} livelli identificati")
+            # Collect results as they complete
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    result_symbol, ai_analysis = future.result()
+                    ai_results[result_symbol] = ai_analysis
+                    
+                    # Log AI analysis result
+                    if ai_analysis:
+                        outlook = ai_analysis.get('outlook', {})
+                        levels = ai_analysis.get('levels', [])
+                        logger.info(f"  🤖 AI Analysis per {result_symbol}:")
+                        logger.info(f"     Sentiment: {outlook.get('sentiment', 'N/A')}")
+                        logger.info(f"     Volatility: {outlook.get('volatilityExpectation', 'N/A')}")
+                        logger.info(f"     AI Levels: {len(levels)} livelli identificati")
+                    else:
+                        logger.info(f"  🤖 AI Analysis per {result_symbol}: Nessun risultato")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error collecting AI result for {symbol}: {e}")
+                    ai_results[symbol] = None
         
-        # Create AI-ready data for each symbol (optimized for AI token efficiency)
-        logger.info("\n📊 Creating AI-ready data for each symbol...")
-        ai_ready_data = {}
-        for symbol, symbol_data in all_data["symbols"].items():
-            spot = symbol_data.get('spot', 0)
-            expiries = symbol_data.get('expiries', [])
-            ai_ready_data[symbol] = create_ai_ready_data(expiries, spot)
-            logger.info(f"  -> {symbol}: {len(ai_ready_data[symbol].get('expiries', {}))} expiries prepared")
+        elapsed_time = time.time() - start_time
+        logger.info(f"✅ Parallel AI analysis completed in {elapsed_time:.1f}s")
+    else:
+        if not AI_API_KEY:
+            logger.info("ℹ️ AI_API_KEY not configured, skipping AI analysis")
+    
+    # =========================================================================
+    # PHASE 3: Combine data and save output
+    # =========================================================================
+    logger.info("\n📁 PHASE 3: Combining data and saving output...")
+    
+    # Merge AI results into symbol data
+    for symbol, data in symbols_data_raw.items():
+        all_data["symbols"][symbol] = {
+            **data,
+            "ai_analysis": ai_results.get(symbol, None)
+        }
+    
+    # Create AI-ready data for each symbol (optimized for AI token efficiency)
+    logger.info("\n📊 Creating AI-ready data for each symbol...")
+    ai_ready_data = {}
+    for symbol, symbol_data in all_data["symbols"].items():
+        spot = symbol_data.get('spot', 0)
+        expiries = symbol_data.get('expiries', [])
+        ai_ready_data[symbol] = create_ai_ready_data(expiries, spot)
+        logger.info(f"  -> {symbol}: {len(ai_ready_data[symbol].get('expiries', {}))} expiries prepared")
+    
+    # Add ai_ready_data to output
+    all_data["ai_ready_data"] = ai_ready_data
+    
+    # Salva output principale
+    if not args.tv_only:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Add ai_ready_data to output
-        all_data["ai_ready_data"] = ai_ready_data
-        
-        # Salva output principale
-        if not args.tv_only:
-            output_path = Path(args.output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(all_data, f, indent=2, ensure_ascii=False)
-            logger.info(f"📁 File salvato: {output_path.absolute()}")
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(all_data, f, indent=2, ensure_ascii=False)
+        logger.info(f"📁 File salvato: {output_path.absolute()}")
     
     # Genera e salva output TradingView
     tv_data = generate_tradingview_levels(all_data)
