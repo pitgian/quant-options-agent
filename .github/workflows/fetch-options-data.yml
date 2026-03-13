@@ -66,15 +66,37 @@ jobs:
           # Commit
           git commit -m "chore: update options data [skip ci]"
           
-          # Pull con rebase e gestione conflitti
-          # Se c'è conflitto, usa la nostra versione (theirs) perché è più recente
-          git pull --rebase --strategy-option=theirs origin master || {
+          # Fetch latest from remote first
+          git fetch origin master
+          
+          # Rebase onto remote master to avoid conflicts
+          # Usa --autostash per gestire eventuali modifiche non committed
+          git rebase --autostash origin/master || {
             echo "Conflitto rilevato, risoluzione automatica..."
-            # Se rebase fallisce, abort e forza push con lease
+            # Se rebase fallisce, abort
             git rebase --abort 2>/dev/null || true
-            git push --force-with-lease origin master
-            exit 0
+            # Reset hard to remote e ri-applica le modifiche
+            git reset --hard origin/master
+            # Ri-aggiungi il file generato
+            git add data/options_data.json
+            git commit -m "chore: update options data [skip ci]" || true
           }
           
-          # Push normale
-          git push origin master
+          # Push con retry e force-with-lease per sicurezza
+          for i in 1 2 3; do
+            if git push origin master; then
+              echo "Push successful"
+              exit 0
+            fi
+            echo "Push failed, attempt $i. Fetching and rebasing..."
+            git fetch origin master
+            git rebase --autostash origin/master || {
+              git rebase --abort 2>/dev/null || true
+              git reset --hard origin/master
+              git add data/options_data.json
+              git commit -m "chore: update options data [skip ci]" || true
+            }
+          done
+          
+          echo "Push failed after 3 attempts"
+          exit 1
