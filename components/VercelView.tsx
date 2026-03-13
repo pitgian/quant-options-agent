@@ -265,14 +265,24 @@ function calculateTotalGEX(options: OptionData[], spot: number, T: number, r: nu
 
 /**
  * Calculate Gamma Flip level
+ * Filters out far-OTM options (> 20% from spot) to prevent skewing the calculation
  */
 function calculateGammaFlip(options: OptionData[], spot: number, T: number, r: number = 0.05): number {
+  // Filter out options too far from spot (> 20%)
+  // Far-OTM options have minimal gamma impact on current spot but can skew the flip calculation
+  const MAX_DISTANCE_PCT = 0.20;
+  const minStrike = spot * (1 - MAX_DISTANCE_PCT);
+  const maxStrike = spot * (1 + MAX_DISTANCE_PCT);
+  
   // Group options by strike
   const strikesData: Map<number, { callOi: number; putOi: number; callIv: number; putIv: number }> = new Map();
 
   for (const opt of options) {
     const strike = opt.strike;
     if (strike <= 0) continue;
+    
+    // Skip options too far from spot
+    if (strike < minStrike || strike > maxStrike) continue;
 
     if (!strikesData.has(strike)) {
       strikesData.set(strike, { callOi: 0, putOi: 0, callIv: 0.3, putIv: 0.3 });
