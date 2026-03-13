@@ -1246,29 +1246,82 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
         cumulative_gex += gex
         gex_by_strike.append((strike, cumulative_gex))
     
-    # Trova il flip point
-    gamma_flip = None  # Default to None instead of spot
+    # Trova il flip point - Metodo 1: Cambio di segno (standard industriale)
+    gamma_flip = None
+    flip_method = None
+    
     for i in range(1, len(gex_by_strike)):
         prev_gex = gex_by_strike[i-1][1]
         curr_gex = gex_by_strike[i][1]
         
         # Se il segno cambia, abbiamo un flip
         if prev_gex * curr_gex < 0:
-            # Interpolazione lineare
+            # Interpolazione lineare per trovare il punto esatto
             prev_strike = gex_by_strike[i-1][0]
             curr_strike = gex_by_strike[i][0]
-            gamma_flip = (prev_strike + curr_strike) / 2
+            # Interpolazione più precisa basata sulla distanza dallo zero
+            if abs(curr_gex - prev_gex) > 0:
+                gamma_flip = prev_strike + (curr_strike - prev_strike) * abs(prev_gex) / abs(curr_gex - prev_gex)
+            else:
+                gamma_flip = (prev_strike + curr_strike) / 2
+            flip_method = "crossing"
+            logger.info(f"Gamma flip found via sign change at {gamma_flip:.2f}")
             break
+    
+    # Metodo 2: Estrapolazione se non c'è cambio di segno
+    if gamma_flip is None and len(gex_by_strike) >= 2:
+        try:
+            # Usa regressione lineare per estrapolare dove il GEX attraverserebbe lo zero
+            strikes = [x[0] for x in gex_by_strike]
+            cum_gex = [x[1] for x in gex_by_strike]
+            
+            # Regressione lineare semplice: y = slope * x + intercept
+            n = len(strikes)
+            sum_x = sum(strikes)
+            sum_y = sum(cum_gex)
+            sum_xy = sum(x * y for x, y in zip(strikes, cum_gex))
+            sum_xx = sum(x * x for x in strikes)
+            
+            denominator = n * sum_xx - sum_x * sum_x
+            if denominator != 0:
+                slope = (n * sum_xy - sum_x * sum_y) / denominator
+                intercept = (sum_y * sum_xx - sum_x * sum_xy) / denominator
+                
+                # Trova dove la linea attraversa lo zero: 0 = slope * x + intercept => x = -intercept / slope
+                if abs(slope) > 1e-10:  # Evita divisione per zero
+                    extrapolated_flip = -intercept / slope
+                    
+                    # Verifica che il punto estrapolato sia ragionevole (entro 50% del range strike)
+                    min_strike = min(strikes)
+                    max_strike = max(strikes)
+                    range_strike = max_strike - min_strike
+                    reasonable_min = min_strike - 0.5 * range_strike
+                    reasonable_max = max_strike + 0.5 * range_strike
+                    
+                    if reasonable_min <= extrapolated_flip <= reasonable_max:
+                        gamma_flip = extrapolated_flip
+                        flip_method = "extrapolated"
+                        logger.info(f"Gamma flip extrapolated at {gamma_flip:.2f} (no sign change in range)")
+        except Exception as e:
+            logger.debug(f"Extrapolation failed: {e}")
+    
+    # Metodo 3: Fallback - trova strike con GEX cumulativo più vicino a zero
+    if gamma_flip is None and gex_by_strike:
+        closest_strike, closest_gex = min(gex_by_strike, key=lambda x: abs(x[1]))
+        gamma_flip = closest_strike
+        flip_method = "boundary"
+        logger.info(f"Gamma flip (boundary) at {gamma_flip:.2f} (cumulative GEX: {closest_gex:.4f}B)")
     
     if gamma_flip is None:
         # Check if IV is the issue
         avg_iv = sum(opt.get('iv', 0) for opt in options) / len(options) if options else 0
         if avg_iv == 0:
-            logger.warning("Cannot calculate gamma flip: IV is zero for all options (data quality issue - using fallback IV recommended)")
+            logger.warning("Cannot calculate gamma flip: IV is zero for all options (data quality issue)")
         else:
-            logger.warning("Cannot calculate gamma flip: no valid GEX sign change found (OI may be zero - market closed)")
+            logger.warning("Cannot calculate gamma flip: insufficient data")
         return None
     
+    logger.info(f"Gamma flip calculated: {gamma_flip:.2f} (method: {flip_method})")
     return round(gamma_flip, 2)
 
 
