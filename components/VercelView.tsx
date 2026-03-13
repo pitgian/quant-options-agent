@@ -3369,28 +3369,63 @@ export function VercelView(): ReactElement {
               );
             })()}
 
-            {/* All Expiries Options Chart */}
-            {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (
-              <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
-                <div className="px-4 py-3 bg-gray-800/70 border-b border-gray-700/50">
-                  <h3 className="text-lg font-bold text-white uppercase tracking-wider">
-                    All Expiries Options Chart
-                    <span className="ml-2 text-sm font-normal text-gray-400">
-                      (0DTE + Weekly + Monthly)
-                    </span>
-                  </h3>
+            {/* Weekly Options Chart */}
+            {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (() => {
+              const weeklyExpiry = activeSymbolData.expiries.find(e => e.label === 'WEEKLY');
+              const weeklyGammaFlip = weeklyExpiry?.quantMetrics?.gamma_flip;
+              const weeklyMaxPain = weeklyExpiry?.quantMetrics?.max_pain;
+              
+              return weeklyExpiry && weeklyExpiry.options && weeklyExpiry.options.length > 0 && (
+                <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-800/70 border-b border-gray-700/50">
+                    <h3 className="text-lg font-bold text-white uppercase tracking-wider">
+                      Weekly Options Chart
+                      <span className="ml-2 text-sm font-normal text-gray-400">
+                        (Weekly Expiry Only)
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="p-4">
+                    <UnifiedOptionsChart
+                      expiries={[weeklyExpiry]}
+                      spot={activeSymbolData.spot}
+                      gammaFlip={weeklyGammaFlip}
+                      maxPain={weeklyMaxPain}
+                      topStrikesCount={12}
+                    />
+                  </div>
                 </div>
-                <div className="p-4">
-                  <UnifiedOptionsChart
-                    expiries={activeSymbolData.expiries}
-                    spot={activeSymbolData.spot}
-                    gammaFlip={activeSymbolData.selected_levels?.gamma_flip || activeSymbolData.totalGexData?.flip_point}
-                    maxPain={activeSymbolData.selected_levels?.max_pain}
-                    topStrikesCount={12}
-                  />
+              );
+            })()}
+
+            {/* Monthly Options Chart */}
+            {activeSymbolData.expiries && activeSymbolData.expiries.length > 0 && (() => {
+              const monthlyExpiry = activeSymbolData.expiries.find(e => e.label === 'MONTHLY');
+              const monthlyGammaFlip = monthlyExpiry?.quantMetrics?.gamma_flip;
+              const monthlyMaxPain = monthlyExpiry?.quantMetrics?.max_pain;
+              
+              return monthlyExpiry && monthlyExpiry.options && monthlyExpiry.options.length > 0 && (
+                <div className="bg-gray-800/50 rounded-xl border border-gray-700/50 overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-800/70 border-b border-gray-700/50">
+                    <h3 className="text-lg font-bold text-white uppercase tracking-wider">
+                      Monthly Options Chart
+                      <span className="ml-2 text-sm font-normal text-gray-400">
+                        (Monthly Expiry Only)
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="p-4">
+                    <UnifiedOptionsChart
+                      expiries={[monthlyExpiry]}
+                      spot={activeSymbolData.spot}
+                      gammaFlip={monthlyGammaFlip}
+                      maxPain={monthlyMaxPain}
+                      topStrikesCount={12}
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         ) : (
           <EmptySymbolState symbol={activeTab} />
