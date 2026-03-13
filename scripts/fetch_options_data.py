@@ -1625,6 +1625,37 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
 # FUNZIONE PER AGGREGAZIONE DATI AI
 # ============================================================================
 
+def calculate_significance_score(strike_data: Dict, spot: float,
+                                  max_oi: int, max_vol: int, avg_iv: float) -> float:
+    """
+    Calculate significance score for a strike.
+    Score = 35% OI + 20% Vol + 20% Vol/OI Ratio + 15% Proximity + 10% IV
+    """
+    total_oi = strike_data['call_oi'] + strike_data['put_oi']
+    total_vol = strike_data['call_vol'] + strike_data['put_vol']
+    avg_strike_iv = (strike_data['call_iv'] + strike_data['put_iv']) / 2
+    
+    # 1. OI Score (0-35): Normalized by max OI
+    oi_score = (total_oi / max_oi) * 35 if max_oi > 0 else 0
+    
+    # 2. Volume Score (0-20): Normalized by max volume
+    vol_score = (total_vol / max_vol) * 20 if max_vol > 0 else 0
+    
+    # 3. Vol/OI Ratio Score (0-20): Unusual activity detection
+    vol_oi_ratio = total_vol / total_oi if total_oi > 0 else 0
+    vol_oi_score = min(vol_oi_ratio, 2) * 10  # Cap at 2x ratio
+    
+    # 4. Proximity Score (0-15): Gaussian decay from spot
+    distance_pct = abs(strike_data['strike'] - spot) / spot if spot > 0 else 0
+    proximity_score = math.exp(-((distance_pct / 0.03) ** 2)) * 15
+    
+    # 5. IV Extremity Score (0-10): Deviation from average IV
+    iv_deviation = abs(avg_strike_iv - avg_iv) / avg_iv if avg_iv > 0 else 0
+    iv_score = min(iv_deviation, 0.5) * 20
+    
+    return oi_score + vol_score + vol_oi_score + proximity_score + iv_score
+
+
 def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[str, Any]:
     """
     Crea un dataset aggregato e ottimizzato per l'analisi AI.
@@ -1704,21 +1735,14 @@ def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[st
                     strikes_data[strike]['put_iv'] += opt.get('iv', 0)
                     strikes_data[strike]['put_iv_count'] += 1
         
-        # Build strikes list with averaged IVs
-        strikes_list = []
-        total_call_oi = 0
-        total_put_oi = 0
-        total_call_vol = 0
-        total_put_vol = 0
-        
-        for strike in sorted(strikes_data.keys()):
-            data = strikes_data[strike]
-            
+        # Build strikes list with averaged IVs first
+        all_strikes = []
+        for strike, data in strikes_data.items():
             # Average IV if multiple options per strike
             call_iv = data['call_iv'] / data['call_iv_count'] if data['call_iv_count'] > 0 else 0
             put_iv = data['put_iv'] / data['put_iv_count'] if data['put_iv_count'] > 0 else 0
             
-            strikes_list.append({
+            all_strikes.append({
                 "strike": strike,
                 "call_oi": data['call_oi'],
                 "put_oi": data['put_oi'],
@@ -1727,11 +1751,43 @@ def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[st
                 "call_iv": round(call_iv, 4),
                 "put_iv": round(put_iv, 4)
             })
-            
-            total_call_oi += data['call_oi']
-            total_put_oi += data['put_oi']
-            total_call_vol += data['call_vol']
-            total_put_vol += data['put_vol']
+        
+        # Calculate normalization metrics for significance score
+        max_oi = max((s['call_oi'] + s['put_oi']) for s in all_strikes) if all_strikes else 1
+        max_vol = max((s['call_vol'] + s['put_vol']) for s in all_strikes) if all_strikes else 1
+        avg_iv = sum((s['call_iv'] + s['put_iv']) / 2 for s in all_strikes) / len(all_strikes) if all_strikes else 0
+        
+        # Calculate scores and sort by significance
+        scored_strikes = [
+            (strike_data, calculate_significance_score(strike_data, spot, max_oi, max_vol, avg_iv))
+            for strike_data in all_strikes
+        ]
+        scored_strikes.sort(key=lambda x: x[1], reverse=True)
+        
+        # Always include ATM strikes (within 1% of spot)
+        atm_strike_set = set()
+        for strike_data in all_strikes:
+            if spot > 0 and abs(strike_data['strike'] - spot) / spot <= 0.01:
+                atm_strike_set.add(strike_data['strike'])
+        
+        # Build final list: ATM + top scored
+        selected_strikes = set(atm_strike_set)
+        strikes_list = []
+        for strike_data, score in scored_strikes:
+            if len(strikes_list) >= 30:  # Max 30 strikes per expiry
+                break
+            if strike_data['strike'] not in selected_strikes:
+                strikes_list.append(strike_data)
+                selected_strikes.add(strike_data['strike'])
+        
+        # Sort final list by strike price for readability
+        strikes_list.sort(key=lambda x: x['strike'])
+        
+        # Calculate totals
+        total_call_oi = sum(s['call_oi'] for s in strikes_list)
+        total_put_oi = sum(s['put_oi'] for s in strikes_list)
+        total_call_vol = sum(s['call_vol'] for s in strikes_list)
+        total_put_vol = sum(s['put_vol'] for s in strikes_list)
         
         aggregated_expiries[label] = {
             "date": date,

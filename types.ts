@@ -342,6 +342,7 @@ export interface AIReadyStrike {
   put_vol: number;
   call_iv: number;
   put_iv: number;
+  significance_score?: number;  // Computed score for strike importance
 }
 
 /**

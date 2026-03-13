@@ -288,7 +288,7 @@ EXPIRY: ${label} (${expiry.date})
 Total Call OI: ${expiry.totals.call_oi.toLocaleString()}
 Total Put OI: ${expiry.totals.put_oi.toLocaleString()}
 
-Strikes (sorted by total OI):
+Strikes (sorted by significance score - OI, Volume, proximity, IV):
 ${expiry.strikes.slice(0, 25).map(s =>
   `  ${s.strike}: Call OI ${s.call_oi.toLocaleString()}, Put OI ${s.put_oi.toLocaleString()}, Call IV ${(s.call_iv * 100).toFixed(1)}%, Put IV ${(s.put_iv * 100).toFixed(1)}%`
 ).join('\n')}
