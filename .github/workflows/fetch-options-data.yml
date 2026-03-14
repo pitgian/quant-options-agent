@@ -11,6 +11,10 @@ on:
     - cron: '0 22-23 * * 1-5'            # 22:00-23:00 UTC (after US session)
   workflow_dispatch: # Manual trigger
 
+# Opt into Node.js 24 for JavaScript actions to resolve deprecation warning
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Previene esecuzioni simultanee - accoda le nuove esecuzioni
 concurrency:
   group: fetch-options-data
