@@ -2618,28 +2618,33 @@ function aggregateOptionsByStrike(expiries: ExpiryData[]): AggregatedStrike[] {
 function filterRelevantStrikes(
   aggregatedStrikes: AggregatedStrike[],
   spot: number,
-  topN: number = 12
+  topN: number = 8
 ): AggregatedStrike[] {
-  // Sort by total OI (call + put)
-  const sortedByOI = [...aggregatedStrikes].sort(
+  // First filter to strikes within ±5% of spot
+  const MAX_DISTANCE_PCT = 0.05;
+  const nearbyStrikes = aggregatedStrikes.filter(
+    s => Math.abs(s.strike - spot) / spot <= MAX_DISTANCE_PCT
+  );
+  
+  // Sort nearby strikes by total OI
+  const sortedByOI = [...nearbyStrikes].sort(
     (a, b) => (b.total_call_oi + b.total_put_oi) - (a.total_call_oi + a.total_put_oi)
   );
   
-  // Take top N strikes
+  // Take top N from nearby strikes only
   const topStrikes = sortedByOI.slice(0, topN);
   
-  // Ensure strikes around spot are included (within 1%)
-  const spotRange = spot * 0.01;
-  const nearSpot = aggregatedStrikes.filter(
+  // Ensure ATM strikes are included (within 0.5%)
+  const spotRange = spot * 0.005;
+  const nearSpot = nearbyStrikes.filter(
     s => Math.abs(s.strike - spot) <= spotRange
   );
   
-  // Merge and deduplicate by strike
+  // Merge and deduplicate
   const allRelevant = [...new Map(
     [...topStrikes, ...nearSpot].map(s => [s.strike, s])
   ).values()];
   
-  // Sort by strike descending for display (top to bottom)
   return allRelevant.sort((a, b) => b.strike - a.strike);
 }
 
@@ -2651,7 +2656,7 @@ function UnifiedOptionsChart({
   spot,
   gammaFlip,
   maxPain,
-  topStrikesCount = 12
+  topStrikesCount = 8
 }: {
   expiries: ExpiryData[];
   spot: number;
@@ -3857,7 +3862,7 @@ export function VercelView(): ReactElement {
         {/* Footer */}
         <div className="mt-8 pt-6 border-t border-gray-800">
           <p className="text-xs text-gray-500 text-center">
-            Data is fetched from GitHub Actions and cached for 30 minutes.
+            Data is fetched from GitHub Actions and cached for 15 minutes.
             <br />
             For educational purposes only. Not financial advice.
           </p>

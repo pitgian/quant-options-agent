@@ -89,7 +89,7 @@ let cachedData: CachedData | null = null;
 /**
  * Fetches options data from GitHub Raw URL with caching.
  * 
- * - Returns cached data if still fresh (< 30 minutes old)
+ * - Returns cached data if still fresh (< 15 minutes old)
  * - Fetches from GitHub if cache is stale or empty
  * - Falls back to cached data on fetch errors
  * 
@@ -199,7 +199,7 @@ export function getSymbolData(data: VercelOptionsData, symbol: string): SymbolDa
 }
 
 /**
- * Checks if the data is fresh (generated less than 30 minutes ago).
+ * Checks if the data is fresh (generated less than 15 minutes ago).
  * 
  * @param data - The options data to check
  * @returns true if data is fresh, false otherwise

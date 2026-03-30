@@ -791,6 +791,12 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
         oi = opt['oi']
         side = opt['side']
         
+        # Filter strikes beyond 15% from spot
+        if spot > 0:
+            max_dist = spot * 0.15
+            if abs(strike - spot) > max_dist:
+                continue
+        
         gamma = calculate_black_scholes_gamma(spot, strike, T, r, iv)
         gex = gamma * oi * 100 * spot * spot * 0.01
         
@@ -1401,6 +1407,12 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
         if strike <= 0:
             continue
         
+        # Filter strikes beyond 15% from spot
+        if spot > 0:
+            max_dist = spot * 0.15
+            if abs(strike - spot) > max_dist:
+                continue
+        
         if strike not in strikes_data:
             strikes_data[strike] = {'call_oi': 0, 'put_oi': 0, 'call_iv': 0.3, 'put_iv': 0.3}
         
@@ -1481,8 +1493,8 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
                     min_strike = min(strikes)
                     max_strike = max(strikes)
                     range_strike = max_strike - min_strike
-                    reasonable_min = min_strike - 0.5 * range_strike
-                    reasonable_max = max_strike + 0.5 * range_strike
+                    reasonable_min = min_strike - 0.1 * range_strike
+                    reasonable_max = max_strike + 0.1 * range_strike
                     
                     if reasonable_min <= extrapolated_flip <= reasonable_max:
                         gamma_flip = extrapolated_flip
@@ -1874,8 +1886,8 @@ def calculate_volatility_skew(options: List[Dict[str, Any]], spot: float) -> Dic
             return 0.0
         return sum(v * w for v, w in zip(values, weights)) / sum(weights)
     
-    put_iv_avg = weighted_avg(put_ivs, put_oi_weights) * 100 if put_ivs else 0.0  # Convert to percentage
-    call_iv_avg = weighted_avg(call_ivs, call_oi_weights) * 100 if call_ivs else 0.0
+    put_iv_avg = weighted_avg(put_ivs, put_oi_weights) if put_ivs else 0.0
+    call_iv_avg = weighted_avg(call_ivs, call_oi_weights) if call_ivs else 0.0
     
     # Calculate skew ratio
     if call_iv_avg > 0:
