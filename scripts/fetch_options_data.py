@@ -1168,6 +1168,192 @@ def calculate_black_scholes_gamma(spot: float, strike: float, T: float, r: float
         return 0.0
 
 
+def norm_cdf(x):
+    """Standard normal cumulative distribution function (approximation using math.erf)."""
+    return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
+
+
+def simulate_dealer_flows(options_data, spot, price_range_pct=0.03, steps=61):
+    """
+    Simulate dealer delta-hedging flows across a price range.
+    
+    For each price point in the range, calculate:
+    - Total dealer delta exposure
+    - Estimated hedging flow (buy/sell pressure)
+    - Delta change rate (acceleration)
+    
+    Args:
+        options_data: list of option dicts with 'strike', 'side', 'oi', 'iv', 'T'
+        spot: current spot price
+        price_range_pct: range to simulate (default ±3%)
+        steps: number of price points (default 61 = every 0.1%)
+    
+    Returns: dict with price_flows, acceleration_zones, pinning_zones, or None on error
+    """
+    if not options_data or spot <= 0:
+        return None
+    
+    # Price range
+    price_low = spot * (1 - price_range_pct)
+    price_high = spot * (1 + price_range_pct)
+    prices = [price_low + (price_high - price_low) * i / (steps - 1) for i in range(steps)]
+    
+    # Calculate delta at each price point
+    # Dealer positioning assumption:
+    # - Short calls (sold to buyers) → negative delta contribution
+    # - Long puts (bought from sellers) → negative delta contribution
+    # - For simplicity: assume dealers are short calls and long puts
+    
+    price_flows = []
+    r = 0.05  # risk-free rate
+    
+    for price in prices:
+        total_delta = 0.0
+        total_gamma = 0.0
+        
+        for opt in options_data:
+            strike = opt.get('strike', 0)
+            oi = opt.get('oi', opt.get('open_interest', 0))
+            iv = opt.get('iv', opt.get('implied_volatility', 0.3))
+            opt_side = opt.get('side', opt.get('type', '')).upper()
+            
+            if oi <= 0 or iv <= 0 or strike <= 0:
+                continue
+            
+            # Time to expiry (use pre-computed T or estimate)
+            T = opt.get('T', opt.get('time_to_expiry', 30/365))
+            if T <= 0:
+                T = 1/365  # minimum 1 day
+            
+            # Black-Scholes d1
+            d1 = (math.log(price / strike) + (r + iv**2 / 2) * T) / (iv * math.sqrt(T))
+            
+            if opt_side == 'CALL':
+                # Dealer short call → delta contribution is negative
+                delta = -oi * math.exp(-r * T) * norm_cdf(d1)
+            elif opt_side == 'PUT':
+                # Dealer long put → delta contribution is negative
+                delta = -oi * math.exp(-r * T) * (norm_cdf(d1) - 1)
+            else:
+                continue
+            
+            total_delta += delta
+            
+            # Gamma for reference
+            gamma = oi * math.exp(-d1**2 / 2) / (price * iv * math.sqrt(2 * math.pi * T))
+            total_gamma += gamma
+        
+        # Hedging flow: positive delta → dealers need to SELL to hedge (negative flow)
+        #                negative delta → dealers need to BUY to hedge (positive flow)
+        hedging_flow = -total_delta * 100  # Scale for readability
+        
+        price_flows.append({
+            'price': round(price, 2),
+            'delta': round(total_delta, 2),
+            'hedging_flow': round(hedging_flow, 2),
+            'gamma': round(total_gamma, 4)
+        })
+    
+    if len(price_flows) < 3:
+        return None
+    
+    # Calculate flow changes (acceleration)
+    for i in range(1, len(price_flows)):
+        flow_change = price_flows[i]['hedging_flow'] - price_flows[i-1]['hedging_flow']
+        price_flows[i]['flow_change'] = round(flow_change, 2)
+    price_flows[0]['flow_change'] = 0.0
+    
+    # Find acceleration zones (where |flow_change| > 2x average)
+    avg_flow_change = sum(abs(pf.get('flow_change', 0)) for pf in price_flows) / len(price_flows)
+    threshold = max(avg_flow_change * 2, 1.0)  # At least 1.0 to avoid noise
+    
+    acceleration_zones = []
+    for pf in price_flows:
+        if abs(pf.get('flow_change', 0)) > threshold:
+            direction = 'buying_pressure' if pf['flow_change'] > 0 else 'selling_pressure'
+            acceleration_zones.append({
+                'price': pf['price'],
+                'flow_change': pf['flow_change'],
+                'direction': direction,
+                'strength': round(abs(pf['flow_change']) / avg_flow_change, 1) if avg_flow_change > 0 else 0
+            })
+    
+    # Sort by strength, keep top 5
+    acceleration_zones.sort(key=lambda x: x['strength'], reverse=True)
+    acceleration_zones = acceleration_zones[:5]
+    
+    # Find pinning zones (where hedging flow is near zero → minimal dealer activity)
+    min_abs_flow = min(abs(pf['hedging_flow']) for pf in price_flows)
+    pinning_threshold = max(min_abs_flow * 3, 10)  # Within 3x of minimum
+    
+    pinning_zones = []
+    for pf in price_flows:
+        if abs(pf['hedging_flow']) <= pinning_threshold:
+            pinning_zones.append({
+                'price': pf['price'],
+                'flow': pf['hedging_flow'],
+                'strength': round(1 - abs(pf['hedging_flow']) / pinning_threshold, 2) if pinning_threshold > 0 else 0
+            })
+    
+    # Sort by strength, keep top 3
+    pinning_zones.sort(key=lambda x: x['strength'], reverse=True)
+    pinning_zones = pinning_zones[:3]
+    
+    # Find max acceleration
+    max_accel = max(price_flows, key=lambda x: abs(x.get('flow_change', 0)))
+    
+    return {
+        'price_flows': price_flows,
+        'acceleration_zones': acceleration_zones,
+        'pinning_zones': pinning_zones,
+        'max_acceleration': {
+            'price': max_accel['price'],
+            'flow_change': max_accel.get('flow_change', 0),
+            'direction': 'buying_pressure' if max_accel.get('flow_change', 0) > 0 else 'selling_pressure'
+        },
+        'spot_index': next((i for i, pf in enumerate(price_flows) if pf['price'] >= spot), len(price_flows) // 2),
+        'price_range': {
+            'low': round(price_low, 2),
+            'high': round(price_high, 2),
+            'step_pct': round(price_range_pct * 100 / (steps - 1), 3)
+        }
+    }
+
+
+def flatten_options_for_simulation(expiries):
+    """
+    Flatten all options across expiries for dealer flow simulation.
+    Adds time-to-expiry (T) to each option based on the expiry date.
+    
+    Args:
+        expiries: list of expiry dicts, each with 'date' and 'options' keys
+    
+    Returns:
+        Flat list of option dicts with added 'T' and 'expiry_key' fields
+    """
+    all_options = []
+    
+    for expiry in expiries:
+        if not isinstance(expiry, dict):
+            continue
+        
+        expiry_date = expiry.get('date', '')
+        expiry_label = expiry.get('label', '')
+        expiry_key = f"{expiry_label} ({expiry_date})" if expiry_date else expiry_label
+        
+        # Compute time to expiry for this expiry
+        T = calculate_time_to_expiry(expiry_date) if expiry_date else 30/365
+        
+        options = expiry.get('options', [])
+        for opt in options:
+            opt_with_expiry = dict(opt)
+            opt_with_expiry['expiry_key'] = expiry_key
+            opt_with_expiry['T'] = T
+            all_options.append(opt_with_expiry)
+    
+    return all_options
+
+
 def calculate_total_gex(options: List[Dict[str, Any]], spot: float, T: float, r: float = 0.05) -> float:
     """
     Calcola il Gamma Exposure totale.
@@ -1323,6 +1509,163 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
     
     logger.info(f"Gamma flip calculated: {gamma_flip:.2f} (method: {flip_method})")
     return round(gamma_flip, 2)
+
+
+def calculate_gamma_flip_zone(options: List[Dict[str, Any]], spot: float, T: float, r: float = 0.05) -> Dict[str, Any]:
+    """
+    Calculate gamma flip as a zone with confidence interval using multiple methods.
+    
+    Instead of a single flip point, this returns a zone [lower, upper] with a
+    confidence score based on how well multiple estimation methods agree.
+    
+    Methods:
+    1. Crossing detection: Find where total GEX crosses zero (interpolation)
+    2. Nearest-to-zero: Strike where cumulative GEX is closest to zero
+    3. Weighted average: Inverse-GEX-weighted average of near-zero strikes
+    
+    Args:
+        options: List of option dicts with 'strike', 'side', 'oi', 'iv'
+        spot: Current spot price
+        T: Time to expiry in years
+        r: Risk-free rate
+    
+    Returns:
+        dict with flip_point, flip_zone (lower/upper), confidence, methods used,
+        or None if insufficient data
+    """
+    if not options or spot <= 0:
+        return None
+    
+    # Group options by strike (same approach as calculate_gamma_flip)
+    strikes_data: Dict[float, Dict] = {}
+    
+    for opt in options:
+        strike = opt.get('strike', 0)
+        if strike <= 0:
+            continue
+        
+        if strike not in strikes_data:
+            strikes_data[strike] = {'call_oi': 0, 'put_oi': 0, 'call_iv': 0.3, 'put_iv': 0.3}
+        
+        if opt.get('side') == 'CALL':
+            strikes_data[strike]['call_oi'] = opt.get('oi', 0)
+            strikes_data[strike]['call_iv'] = opt.get('iv', 0.3)
+        else:
+            strikes_data[strike]['put_oi'] = opt.get('oi', 0)
+            strikes_data[strike]['put_iv'] = opt.get('iv', 0.3)
+    
+    if len(strikes_data) < 3:
+        return None
+    
+    # Calculate cumulative GEX per strike (same convention as calculate_gamma_flip)
+    cumulative_gex = 0.0
+    gex_by_strike = []
+    
+    for strike in sorted(strikes_data.keys()):
+        data = strikes_data[strike]
+        
+        call_gamma = calculate_black_scholes_gamma(spot, strike, T, r, data['call_iv'])
+        put_gamma = calculate_black_scholes_gamma(spot, strike, T, r, data['put_iv'])
+        
+        call_gex = call_gamma * data['call_oi'] * 100 * spot * spot * 0.01
+        put_gex = -put_gamma * data['put_oi'] * 100 * spot * spot * 0.01
+        
+        gex = (call_gex + put_gex) / 1e9
+        cumulative_gex += gex
+        gex_by_strike.append((strike, cumulative_gex))
+    
+    if len(gex_by_strike) < 3:
+        return None
+    
+    strikes = [x[0] for x in gex_by_strike]
+    cum_gex = [x[1] for x in gex_by_strike]
+    
+    flip_estimates = []
+    methods_used = []
+    
+    # Method 1: Crossing detection (where cumulative GEX crosses zero)
+    for i in range(1, len(gex_by_strike)):
+        prev_gex = gex_by_strike[i - 1][1]
+        curr_gex = gex_by_strike[i][1]
+        
+        if prev_gex * curr_gex < 0:  # Sign change
+            prev_strike = gex_by_strike[i - 1][0]
+            curr_strike = gex_by_strike[i][0]
+            denom = abs(curr_gex - prev_gex)
+            if denom > 0:
+                ratio = abs(prev_gex) / denom
+                flip_price = prev_strike + ratio * (curr_strike - prev_strike)
+            else:
+                flip_price = (prev_strike + curr_strike) / 2
+            flip_estimates.append(flip_price)
+            methods_used.append('crossing')
+            break  # Use first crossing
+    
+    # Method 2: Nearest-to-zero strike (boundary method)
+    min_gex_idx = min(range(len(cum_gex)), key=lambda i: abs(cum_gex[i]))
+    nearest_zero_strike = strikes[min_gex_idx]
+    flip_estimates.append(nearest_zero_strike)
+    methods_used.append('nearest_zero')
+    
+    # Method 3: Weighted average of near-zero strikes (within 10% of minimum |GEX|)
+    min_abs_gex = abs(cum_gex[min_gex_idx])
+    threshold = min_abs_gex * 1.1 + 1e-9  # 10% tolerance + small buffer
+    near_zero_strikes = [(s, abs(g)) for s, g in zip(strikes, cum_gex) if abs(g) <= threshold]
+    if len(near_zero_strikes) >= 2:
+        weights = [1.0 / (abs_g + 1e-9) for _, abs_g in near_zero_strikes]
+        total_weight = sum(weights)
+        weighted_avg = sum(s * w for (s, _), w in zip(near_zero_strikes, weights)) / total_weight
+        flip_estimates.append(weighted_avg)
+        methods_used.append('weighted_average')
+    
+    if not flip_estimates:
+        return None
+    
+    # Calculate zone from method estimates
+    flip_point = sum(flip_estimates) / len(flip_estimates)
+    
+    if len(flip_estimates) >= 2:
+        zone_lower = min(flip_estimates)
+        zone_upper = max(flip_estimates)
+    else:
+        # Single estimate — use ±0.1% as minimum zone
+        zone_lower = flip_point * 0.999
+        zone_upper = flip_point * 1.001
+    
+    # Ensure minimum zone width of 0.2% of spot
+    min_width = spot * 0.002
+    if (zone_upper - zone_lower) < min_width:
+        center = (zone_upper + zone_lower) / 2
+        zone_lower = center - min_width / 2
+        zone_upper = center + min_width / 2
+    
+    # Confidence based on method agreement
+    if len(flip_estimates) >= 3:
+        spread = (zone_upper - zone_lower) / flip_point * 100
+        if spread < 0.3:
+            confidence = 0.9
+        elif spread < 0.5:
+            confidence = 0.7
+        else:
+            confidence = 0.5
+    elif len(flip_estimates) == 2:
+        confidence = 0.6
+    else:
+        confidence = 0.3
+    
+    zone_width_pct = (zone_upper - zone_lower) / flip_point * 100
+    
+    return {
+        'flip_point': round(flip_point, 2),
+        'flip_zone_lower': round(zone_lower, 2),
+        'flip_zone_upper': round(zone_upper, 2),
+        'zone_width_pct': round(zone_width_pct, 3),
+        'confidence': round(confidence, 2),
+        'methods_used': methods_used,
+        'method_estimates': [round(e, 2) for e in flip_estimates],
+        'spot_vs_flip': 'above' if spot > flip_point else 'below',
+        'distance_from_spot_pct': round((spot - flip_point) / spot * 100, 3)
+    }
 
 
 def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
@@ -1655,6 +1998,7 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
         logger.warning("Returning None for gamma_flip/max_pain - insufficient options data (options list is empty)")
         return {
             "gamma_flip": None,
+            "gamma_flip_zone": None,
             "max_pain": None,
             "total_gex": 0.0,
             "put_call_ratios": {
@@ -1682,6 +2026,7 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
     r = 0.05  # Risk-free rate assumption
     
     gamma_flip = calculate_gamma_flip(options, spot, T, r)
+    gamma_flip_zone = calculate_gamma_flip_zone(options, spot, T, r)
     max_pain = calculate_max_pain(options, spot)
     total_gex = calculate_total_gex(options, spot, T, r)
     put_call_ratios = calculate_put_call_ratios(options)
@@ -1690,6 +2035,7 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
     
     return {
         "gamma_flip": gamma_flip,
+        "gamma_flip_zone": gamma_flip_zone,
         "max_pain": max_pain,
         "total_gex": round(total_gex, 6),
         "put_call_ratios": put_call_ratios,
@@ -2443,7 +2789,663 @@ def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3) ->
     }
 
 
-def select_important_levels(expiries: List[Dict], spot: float) -> Dict:
+def fetch_vix() -> Optional[float]:
+    """
+    Fetch the current VIX (CBOE Volatility Index) value from yfinance.
+    
+    Returns:
+        VIX value as float, or None if fetch fails
+    """
+    try:
+        vix_ticker = yf.Ticker("^VIX")
+        vix_hist = vix_ticker.history(period="1d")
+        if vix_hist is not None and not vix_hist.empty:
+            vix_value = vix_hist['Close'].iloc[-1]
+            logger.info(f"📊 VIX fetched: {vix_value:.2f}")
+            return float(vix_value)
+        else:
+            logger.warning("⚠️ VIX history empty, using default tolerances")
+            return None
+    except Exception as e:
+        logger.warning(f"⚠️ VIX fetch failed: {e}, using default tolerances")
+        return None
+
+
+def detect_market_regime(spot: Optional[float], total_gex: Optional[float],
+                         gamma_flip: Optional[float], vix: Optional[float] = None,
+                         pcr: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Detect market regime by aggregating multiple options-based signals.
+    
+    Uses Total GEX, Gamma Flip position relative to spot, VIX level, and
+    Put/Call Ratio to classify the current market state for each symbol.
+    
+    Args:
+        spot: Current spot price of the underlying
+        total_gex: Total Gamma Exposure in billions (from calculate_total_gex_all_expiries)
+        gamma_flip: Gamma flip strike price (from calculate_gamma_flip_all_expiries)
+        vix: Current VIX value (from fetch_vix), optional
+        pcr: OI-based Put/Call Ratio, optional
+    
+    Returns:
+        Dict with keys:
+            regime: 'trending_up' | 'trending_down' | 'range_bound' | 'volatile'
+            confidence: 0.0-1.0
+            signals: dict of individual signal scores per regime
+            indicators: dict of individual signal contributions
+            interpretation: human-readable description
+    """
+    signals = {
+        'trending_up': 0.0,
+        'trending_down': 0.0,
+        'range_bound': 0.0,
+        'volatile': 0.0
+    }
+    indicators = {}
+    
+    # Signal 1: Total GEX
+    # High positive GEX → dealers buy dips / sell rips → range_bound / mean reversion
+    # Negative GEX → dealers sell dips / buy rips → volatile / trending
+    if total_gex is not None:
+        indicators['total_gex'] = round(total_gex, 4)
+        if total_gex > 5.0:
+            signals['range_bound'] += 0.4
+            indicators['gex_signal'] = 'high_positive'
+        elif total_gex > 1.0:
+            signals['range_bound'] += 0.2
+            signals['trending_up'] += 0.1
+            indicators['gex_signal'] = 'moderate_positive'
+        elif total_gex > -1.0:
+            signals['volatile'] += 0.2
+            signals['trending_down'] += 0.1
+            indicators['gex_signal'] = 'near_zero'
+        else:
+            signals['volatile'] += 0.4
+            signals['trending_down'] += 0.2
+            indicators['gex_signal'] = 'negative'
+    
+    # Signal 2: Gamma Flip Position relative to spot
+    # Spot above gamma flip → positive GEX regime → support below
+    # Spot below gamma flip → negative GEX regime → resistance above
+    # Spot near gamma flip → transition zone → volatile
+    if gamma_flip is not None and spot is not None and gamma_flip > 0:
+        flip_distance_pct = (spot - gamma_flip) / gamma_flip * 100
+        indicators['flip_distance_pct'] = round(flip_distance_pct, 2)
+        if abs(flip_distance_pct) < 0.3:
+            signals['volatile'] += 0.3
+            indicators['flip_signal'] = 'near_flip'
+        elif flip_distance_pct > 1.0:
+            signals['trending_up'] += 0.3
+            signals['range_bound'] += 0.1
+            indicators['flip_signal'] = 'above_flip'
+        elif flip_distance_pct > 0:
+            signals['range_bound'] += 0.2
+            signals['trending_up'] += 0.1
+            indicators['flip_signal'] = 'slightly_above_flip'
+        else:
+            signals['trending_down'] += 0.3
+            indicators['flip_signal'] = 'below_flip'
+    
+    # Signal 3: VIX level
+    if vix is not None:
+        indicators['vix'] = vix
+        if vix > 30:
+            signals['volatile'] += 0.4
+            indicators['vix_signal'] = 'high_volatility'
+        elif vix > 20:
+            signals['volatile'] += 0.1
+            signals['trending_down'] += 0.1
+            indicators['vix_signal'] = 'elevated'
+        elif vix < 15:
+            signals['range_bound'] += 0.3
+            signals['trending_up'] += 0.1
+            indicators['vix_signal'] = 'low_volatility'
+        else:
+            signals['trending_up'] += 0.1
+            indicators['vix_signal'] = 'normal'
+    
+    # Signal 4: Put/Call Ratio
+    if pcr is not None:
+        indicators['pcr'] = round(pcr, 3)
+        if pcr > 1.5:
+            signals['trending_down'] += 0.3
+            indicators['pcr_signal'] = 'heavy_put_bias'
+        elif pcr > 1.0:
+            signals['trending_down'] += 0.1
+            indicators['pcr_signal'] = 'moderate_put_bias'
+        elif pcr < 0.5:
+            signals['trending_up'] += 0.3
+            indicators['pcr_signal'] = 'heavy_call_bias'
+        elif pcr < 0.8:
+            signals['trending_up'] += 0.1
+            indicators['pcr_signal'] = 'moderate_call_bias'
+        else:
+            signals['range_bound'] += 0.1
+            indicators['pcr_signal'] = 'balanced'
+    
+    # Determine winner
+    regime = max(signals, key=signals.get)
+    total_signal = sum(signals.values())
+    confidence = signals[regime] / total_signal if total_signal > 0 else 0.5
+    
+    # Interpretation text
+    interpretations = {
+        'trending_up': 'Call walls are temporary resistance (breakout likely). Put walls are strong support. Gamma flip acts as dynamic support.',
+        'trending_down': 'Put walls are temporary support (breakdown likely). Call walls are strong resistance. Gamma flip acts as dynamic resistance.',
+        'range_bound': 'Call walls are solid resistance. Put walls are solid support. Gamma flip acts as a pivot point. Expect mean reversion.',
+        'volatile': 'Levels are less reliable. Gamma flip zone is a transition area. Expect larger swings and whipsaws. Use caution.'
+    }
+    
+    return {
+        'regime': regime,
+        'confidence': round(confidence, 3),
+        'signals': {k: round(v, 3) for k, v in signals.items()},
+        'indicators': indicators,
+        'interpretation': interpretations[regime]
+    }
+
+
+# ============================================================================
+# LEVEL ACTIONABILITY FRAMEWORK
+# ============================================================================
+
+def assign_actionability(level, regime, spot, expiry_label='MONTHLY'):
+    """
+    Assign actionable trading metadata to a level based on its properties and market regime.
+    
+    Args:
+        level: dict with at least 'strike', 'type'/'role', 'significance_score'/'score'
+        regime: str - market regime from detect_market_regime()
+        spot: float - current spot price
+        expiry_label: str - '0DTE', 'WEEKLY', 'MONTHLY'
+    
+    Returns: dict with actionability metadata
+    """
+    strike = level.get('strike', 0)
+    level_type = level.get('type', level.get('role', '')).upper()
+    score = level.get('significance_score', level.get('score', 0))
+    distance_pct = abs(strike - spot) / spot * 100 if spot > 0 else 999
+    
+    # Determine expected behavior based on level type and regime
+    behavior = _determine_behavior(level_type, regime, strike, spot)
+    
+    # Calculate confidence (base from score, modified by regime alignment)
+    confidence = min(100, max(20, score))
+    
+    # Generate confirmation signals
+    confirmation_signals = _get_confirmation_signals(level_type, regime, strike, spot)
+    
+    # Calculate invalidation level
+    invalidation = _calculate_invalidation(strike, level_type, spot)
+    
+    # Time decay impact (only relevant for 0DTE)
+    time_decay = _get_time_decay_impact(expiry_label, level_type)
+    
+    # Trading priority based on distance
+    if distance_pct < 1.0:
+        priority = 'primary'
+    elif distance_pct < 2.0:
+        priority = 'secondary'
+    else:
+        priority = 'contextual'
+    
+    return {
+        'expected_behavior': behavior,
+        'confidence': round(confidence, 1),
+        'confirmation_signals': confirmation_signals,
+        'invalidation_level': round(invalidation, 2),
+        'invalidation_description': _describe_invalidation(level_type, behavior, strike, invalidation),
+        'time_decay_impact': time_decay,
+        'trading_priority': priority
+    }
+
+
+def _determine_behavior(level_type, regime, strike, spot):
+    """Determine expected price behavior at this level."""
+    is_call = 'CALL' in level_type
+    is_put = 'PUT' in level_type
+    is_magnet = 'MAGNET' in level_type
+    is_confluence = 'CONFLUENCE' in level_type or 'RESONANCE' in level_type
+    
+    if is_magnet:
+        return 'magnet'
+    
+    if is_confluence:
+        # Confluence levels are strong - usually bounce unless in trending market
+        if regime == 'trending_up' and is_call:
+            return 'break'  # Call wall likely to break in uptrend
+        elif regime == 'trending_down' and is_put:
+            return 'break'  # Put wall likely to break in downtrend
+        return 'bounce'
+    
+    if is_call:  # CALL WALL
+        if regime == 'trending_up':
+            return 'break'     # Resistance likely to break
+        elif regime == 'volatile':
+            return 'magnet'    # Price gets drawn then rejects
+        else:
+            return 'bounce'    # Solid resistance
+    
+    if is_put:  # PUT WALL
+        if regime == 'trending_down':
+            return 'break'     # Support likely to break
+        elif regime == 'volatile':
+            return 'magnet'    # Price gets drawn then bounces
+        else:
+            return 'bounce'    # Solid support
+    
+    # PIVOT, FRICTION, or other
+    return 'pin'
+
+
+def _get_confirmation_signals(level_type, regime, strike, spot):
+    """List what to watch for to confirm the expected behavior."""
+    signals = []
+    is_call = 'CALL' in level_type
+    is_put = 'PUT' in level_type
+    
+    # Volume confirmation
+    signals.append('Volume spike > 2x average at ' + str(strike))
+    
+    # Price action confirmation
+    if is_call:
+        signals.append('Rejection candle (shooting star / bearish engulfing)')
+        signals.append('Break: sustained close above ' + str(strike) + ' for 5+ min')
+    elif is_put:
+        signals.append('Bounce candle (hammer / bullish engulfing)')
+        signals.append('Break: sustained close below ' + str(strike) + ' for 5+ min')
+    
+    # Regime-specific
+    if regime == 'volatile':
+        signals.append('Reduced confidence in volatile regime - use smaller size')
+    elif regime == 'range_bound':
+        signals.append('Range-bound: expect mean reversion from this level')
+    
+    return signals[:4]  # Max 4 signals
+
+
+def _calculate_invalidation(strike, level_type, spot):
+    """Calculate where the level thesis is invalidated."""
+    is_call = 'CALL' in level_type
+    is_put = 'PUT' in level_type
+    
+    if is_call:
+        # Call wall invalidated if price breaks above convincingly
+        return round(strike * 1.005, 2)  # 0.5% above strike
+    elif is_put:
+        # Put wall invalidated if price breaks below convincingly
+        return round(strike * 0.995, 2)  # 0.5% below strike
+    else:
+        # Generic: 0.3% on either side
+        if strike > spot:
+            return round(strike * 1.003, 2)
+        else:
+            return round(strike * 0.997, 2)
+
+
+def _describe_invalidation(level_type, behavior, strike, invalidation):
+    """Human-readable invalidation description."""
+    is_call = 'CALL' in level_type
+    is_put = 'PUT' in level_type
+    
+    if behavior == 'bounce':
+        if is_call:
+            return f'Invalidated if price sustains above {invalidation}'
+        elif is_put:
+            return f'Invalidated if price sustains below {invalidation}'
+    elif behavior == 'break':
+        if is_call:
+            return f'Break fails if price rejects below {invalidation}'
+        elif is_put:
+            return f'Break fails if price bounces above {invalidation}'
+    elif behavior == 'magnet':
+        return f'Magnet effect fails if price reverses before reaching {strike}'
+    return f'Thesis invalidated beyond {invalidation}'
+
+
+def _get_time_decay_impact(expiry_label, level_type):
+    """Time decay impact varies by time of day for 0DTE."""
+    if expiry_label != '0DTE':
+        return {
+            'morning': 'strong',
+            'midday': 'strong',
+            'afternoon': 'moderate',
+            'note': 'Non-0DTE: minimal theta impact intraday'
+        }
+    
+    # 0DTE options: gamma increases as expiry approaches
+    is_magnet = 'MAGNET' in level_type
+    if is_magnet:
+        return {
+            'morning': 'moderate',
+            'midday': 'strong',
+            'afternoon': 'very_strong',
+            'note': '0DTE magnet: pinning effect increases into close'
+        }
+    
+    return {
+        'morning': 'strong',
+        'midday': 'moderate',
+        'afternoon': 'weak',
+        'note': '0DTE: level significance decays into close (except gamma squeeze window 14:30-15:30)'
+    }
+
+
+def calculate_theta_adjusted_score(level, spot, current_time_utc=None):
+    """
+    Adjust level score based on time-of-day for 0DTE options.
+    
+    0DTE options rapidly lose extrinsic value as expiry approaches.
+    This adjustment reflects the diminishing significance of OI-based levels
+    throughout the day, with a special exception for gamma flip zones.
+    
+    Time schedule (ET = UTC-4/5 depending on DST):
+    - 9:30-11:00 ET → factor 1.0 (full strength)
+    - 11:00-13:00 ET → factor 0.8
+    - 13:00-14:30 ET → factor 0.6
+    - 14:30-15:30 ET → factor 0.4 (gamma squeeze window!)
+    - 15:30-16:00 ET → factor 0.2 (expiring)
+    
+    Special: Gamma flip GAINS importance near expiry (×1.2 after 14:30)
+    
+    Args:
+        level: dict with level data including 'significance_score'/'score', 'type'/'role'
+        spot: current spot price
+        current_time_utc: datetime object in UTC (default: datetime.utcnow())
+    
+    Returns: dict with adjusted_score, decay_factor, status, note
+    """
+    if current_time_utc is None:
+        current_time_utc = datetime.now(timezone.utc)
+    
+    # Convert to Eastern Time (ET = UTC-5 EST, UTC-4 EDT)
+    # Simple approach: use UTC-5 as rough ET approximation
+    hour_utc = current_time_utc.hour
+    # Market hours: 9:30-16:00 ET = 13:30-20:00 UTC (EDT) or 14:30-21:00 UTC (EST)
+    # Use approximate: hour_et = hour_utc - 5
+    hour_et_approx = hour_utc - 5  # Rough ET approximation
+    
+    # Determine time window and decay factor
+    if 9 <= hour_et_approx < 11:
+        decay_factor = 1.0
+        window = 'morning'
+    elif 11 <= hour_et_approx < 13:
+        decay_factor = 0.8
+        window = 'midday'
+    elif 13 <= hour_et_approx < 14.5:
+        decay_factor = 0.6
+        window = 'early_afternoon'
+    elif 14.5 <= hour_et_approx < 15.5:
+        decay_factor = 0.4
+        window = 'gamma_squeeze_window'
+    elif 15.5 <= hour_et_approx < 16:
+        decay_factor = 0.2
+        window = 'expiring'
+    elif hour_et_approx >= 16:
+        decay_factor = 0.1
+        window = 'after_hours'
+    else:
+        decay_factor = 1.0  # Pre-market or unknown time
+        window = 'pre_market'
+    
+    # Get original score
+    original_score = level.get('significance_score', level.get('score', 0))
+    
+    # Special case: Gamma flip GAINS importance near expiry
+    level_type = level.get('type', level.get('role', '')).upper()
+    is_gamma_flip = 'GAMMA' in level_type or 'FLIP' in level_type
+    
+    if is_gamma_flip and hour_et_approx >= 14.5:
+        # Gamma flip becomes MORE important into the close
+        adjusted_score = original_score * 1.2
+        note = 'Gamma flip GAINS importance near expiry (×1.2 boost) — potential gamma squeeze zone'
+    else:
+        adjusted_score = original_score * decay_factor
+        if decay_factor < 1.0:
+            note = f'0DTE theta decay: {window} window (×{decay_factor} adjustment)'
+        else:
+            note = f'0DTE full strength: {window} window'
+    
+    # Determine status
+    if adjusted_score >= original_score * 0.5:
+        status = 'ACTIVE'
+    elif adjusted_score >= original_score * 0.2:
+        status = 'FADING'
+    else:
+        status = 'EXPIRING'
+    
+    return {
+        'adjusted_score': round(adjusted_score, 1),
+        'original_score': round(original_score, 1),
+        'decay_factor': decay_factor,
+        'time_window': window,
+        'status': status,
+        'note': note
+    }
+
+
+def apply_theta_to_0dte_levels(selected_levels, spot):
+    """
+    Apply theta decay adjustment to all 0DTE levels in selected_levels.
+    Only affects levels from 0DTE expiry — Weekly and Monthly are untouched.
+    
+    Adds 'theta_adjustment' field to each qualifying level dict.
+    Does NOT modify the original significance_score.
+    
+    Args:
+        selected_levels: dict from select_important_levels() with keys:
+            'resonance', 'confluence', 'call_walls', 'put_walls', 'gamma_flip', 'max_pain'
+        spot: current spot price
+    
+    Returns:
+        Number of levels that received theta adjustment
+    """
+    adjusted_count = 0
+    
+    # Process resonance levels (check if 0DTE is in the expiry label)
+    for level in selected_levels.get('resonance', []):
+        expiry_label = level.get('expiry_label', '')
+        if '0DTE' in expiry_label:
+            theta_level = {
+                'strike': level.get('strike', 0),
+                'type': 'RESONANCE',
+                'role': 'RESONANCE',
+                'significance_score': 95,
+                'score': 95,
+            }
+            level['theta_adjustment'] = calculate_theta_adjusted_score(theta_level, spot)
+            adjusted_count += 1
+    
+    # Process confluence levels
+    for level in selected_levels.get('confluence', []):
+        expiry_label = level.get('expiry_label', '')
+        if '0DTE' in expiry_label:
+            theta_level = {
+                'strike': level.get('strike', 0),
+                'type': 'CONFLUENCE',
+                'role': 'CONFLUENCE',
+                'significance_score': 85,
+                'score': 85,
+            }
+            level['theta_adjustment'] = calculate_theta_adjusted_score(theta_level, spot)
+            adjusted_count += 1
+    
+    # Process call walls
+    for level in selected_levels.get('call_walls', []):
+        if level.get('expiry') == '0DTE':
+            theta_level = {
+                'strike': level.get('strike', 0),
+                'type': 'CALL WALL',
+                'role': 'WALL',
+                'significance_score': 70,
+                'score': 70,
+            }
+            level['theta_adjustment'] = calculate_theta_adjusted_score(theta_level, spot)
+            adjusted_count += 1
+    
+    # Process put walls
+    for level in selected_levels.get('put_walls', []):
+        if level.get('expiry') == '0DTE':
+            theta_level = {
+                'strike': level.get('strike', 0),
+                'type': 'PUT WALL',
+                'role': 'WALL',
+                'significance_score': 70,
+                'score': 70,
+            }
+            level['theta_adjustment'] = calculate_theta_adjusted_score(theta_level, spot)
+            adjusted_count += 1
+    
+    return adjusted_count
+
+
+def enrich_levels_with_actionability(selected_levels, regime_data, spot):
+    """
+    Enrich all levels in selected_levels with actionability metadata.
+    
+    Modifies levels in-place by adding an 'actionability' key to each level dict.
+    
+    Args:
+        selected_levels: dict from select_important_levels() with keys:
+            'resonance', 'confluence', 'call_walls', 'put_walls', 'gamma_flip', 'max_pain'
+        regime_data: dict from detect_market_regime() with key 'regime'
+        spot: current spot price
+    
+    Returns:
+        The selected_levels dict with actionability added to each level
+    """
+    regime = regime_data.get('regime', 'range_bound') if regime_data else 'range_bound'
+    
+    # Enrich resonance levels
+    for level in selected_levels.get('resonance', []):
+        call_oi = level.get('total_call_oi', 0)
+        put_oi = level.get('total_put_oi', 0)
+        if call_oi > put_oi * 1.5:
+            side = 'CALL'
+        elif put_oi > call_oi * 1.5:
+            side = 'PUT'
+        else:
+            side = 'BOTH'
+        
+        actionability_level = {
+            'strike': level.get('strike', 0),
+            'type': f'{side}_RESONANCE',
+            'role': 'RESONANCE',
+            'score': 95,
+        }
+        expiry_label = level.get('expiry_label', 'MONTHLY')
+        primary_expiry = expiry_label.split('+')[0] if '+' in expiry_label else expiry_label
+        level['actionability'] = assign_actionability(
+            actionability_level, regime, spot, expiry_label=primary_expiry
+        )
+    
+    # Enrich confluence levels
+    for level in selected_levels.get('confluence', []):
+        call_oi = level.get('total_call_oi', 0)
+        put_oi = level.get('total_put_oi', 0)
+        if call_oi > put_oi * 1.5:
+            side = 'CALL'
+        elif put_oi > call_oi * 1.5:
+            side = 'PUT'
+        else:
+            side = 'BOTH'
+        
+        actionability_level = {
+            'strike': level.get('strike', 0),
+            'type': f'{side}_CONFLUENCE',
+            'role': 'CONFLUENCE',
+            'score': 85,
+        }
+        expiry_label = level.get('expiry_label', 'MONTHLY')
+        primary_expiry = expiry_label.split('+')[0] if '+' in expiry_label else expiry_label
+        level['actionability'] = assign_actionability(
+            actionability_level, regime, spot, expiry_label=primary_expiry
+        )
+    
+    # Enrich call walls
+    for level in selected_levels.get('call_walls', []):
+        actionability_level = {
+            'strike': level.get('strike', 0),
+            'type': 'CALL_WALL',
+            'role': 'WALL',
+            'score': 70,
+        }
+        expiry_label = level.get('expiry', 'MONTHLY')
+        level['actionability'] = assign_actionability(
+            actionability_level, regime, spot, expiry_label=expiry_label
+        )
+    
+    # Enrich put walls
+    for level in selected_levels.get('put_walls', []):
+        actionability_level = {
+            'strike': level.get('strike', 0),
+            'type': 'PUT_WALL',
+            'role': 'WALL',
+            'score': 70,
+        }
+        expiry_label = level.get('expiry', 'MONTHLY')
+        level['actionability'] = assign_actionability(
+            actionability_level, regime, spot, expiry_label=expiry_label
+        )
+    
+    return selected_levels
+
+
+def calculate_dynamic_tolerances(vix: Optional[float]) -> Dict[str, Any]:
+    """
+    Calculate dynamic tolerance percentages based on VIX level.
+    
+    When VIX is high (e.g., 35+), tolerances widen to account for
+    larger price swings. When VIX is low (e.g., 12), tolerances tighten.
+    
+    Scale mapping:
+        VIX 12 → scale 0.7  (tight)
+        VIX 20 → scale 1.0  (baseline)
+        VIX 40 → scale 1.5  (wide)
+    
+    Args:
+        vix: Current VIX value, or None if unavailable
+        
+    Returns:
+        Dict with keys:
+            - resonance: tolerance for resonance level detection (decimal fraction)
+            - confluence: tolerance for confluence level detection (decimal fraction)
+            - wall_proximity: tolerance for wall proximity detection (decimal fraction)
+            - vix: the VIX value used (or None)
+            - scale: the computed scale factor
+    """
+    # Default tolerances (VIX-neutral, ~20)
+    defaults = {
+        'resonance': 0.005,      # 0.5%
+        'confluence': 0.01,      # 1.0%
+        'wall_proximity': 0.01   # 1.0%
+    }
+    
+    if vix is None:
+        return {**defaults, 'vix': None, 'scale': 1.0}
+    
+    # Piecewise linear scale factor
+    # VIX 12 → 0.7, VIX 20 → 1.0, VIX 40 → 1.5
+    if vix <= 12:
+        scale = 0.7
+    elif vix <= 20:
+        scale = 0.7 + (vix - 12) * (0.3 / 8)   # 0.7 → 1.0
+    elif vix <= 40:
+        scale = 1.0 + (vix - 20) * (0.5 / 20)   # 1.0 → 1.5
+    else:
+        scale = 1.5
+    
+    return {
+        'resonance': round(defaults['resonance'] * scale, 5),
+        'confluence': round(defaults['confluence'] * scale, 5),
+        'wall_proximity': round(defaults['wall_proximity'] * scale, 5),
+        'vix': round(vix, 2),
+        'scale': round(scale, 3)
+    }
+
+
+def select_important_levels(expiries: List[Dict], spot: float,
+                            tolerances: Optional[Dict[str, Any]] = None) -> Dict:
     """
     Seleziona i livelli più importanti usando regole algoritmiche.
     
@@ -2457,6 +3459,8 @@ def select_important_levels(expiries: List[Dict], spot: float) -> Dict:
     Args:
         expiries: Lista di expiry data con options e quantMetrics
         spot: Prezzo spot corrente
+        tolerances: Dict with dynamic tolerances from calculate_dynamic_tolerances().
+                    If None, defaults are used.
     
     Returns:
         {
@@ -2468,11 +3472,15 @@ def select_important_levels(expiries: List[Dict], spot: float) -> Dict:
             'max_pain': float
         }
     """
+    # Use dynamic tolerances if provided, otherwise fall back to defaults
+    res_tol = tolerances.get('resonance', 0.005) if tolerances else 0.005
+    conf_tol = tolerances.get('confluence', 0.01) if tolerances else 0.01
+    
     # Trova livelli resonance (enhanced with detailed metrics)
-    resonance = find_resonance_levels_enhanced(expiries, spot, tolerance_pct=0.005)
+    resonance = find_resonance_levels_enhanced(expiries, spot, tolerance_pct=res_tol)
     
     # Trova livelli confluence (enhanced with detailed metrics)
-    confluence = find_confluence_levels_enhanced(expiries, spot, tolerance_pct=0.01)
+    confluence = find_confluence_levels_enhanced(expiries, spot, tolerance_pct=conf_tol)
     
     # Seleziona walls
     walls = select_walls_by_expiry(expiries, spot, top_n=3)
@@ -2495,6 +3503,281 @@ def select_important_levels(expiries: List[Dict], spot: float) -> Dict:
         "gamma_flip": round(gamma_flip, 2) if gamma_flip is not None else None,
         "max_pain": round(max_pain, 2) if max_pain is not None else None
     }
+
+
+# ============================================================================
+# LEVEL HISTORY TRACKING
+# ============================================================================
+
+def extract_level_snapshot(symbol, symbol_data, spot):
+    """
+    Extract a lightweight snapshot of key levels for history tracking.
+    Only stores the most important data points to keep file size manageable.
+    
+    Args:
+        symbol: The symbol being tracked (e.g., 'SPY', 'QQQ')
+        symbol_data: The symbol's data dict from all_data["symbols"]
+        spot: Current spot price
+    
+    Returns:
+        Dict with timestamp, spot, key_levels, gamma_flip, total_gex
+    """
+    snapshot = {
+        'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        'spot': spot,
+        'key_levels': [],
+        'gamma_flip': None,
+        'total_gex': None
+    }
+    
+    # Extract from selected_levels (algorithmic levels)
+    selected_levels = symbol_data.get('selected_levels', {})
+    
+    # Resonance levels (highest importance)
+    for level in selected_levels.get('resonance', []):
+        snapshot['key_levels'].append({
+            'strike': level.get('strike'),
+            'role': 'RESONANCE',
+            'score': 95,
+            'oi': level.get('total_call_oi', 0) + level.get('total_put_oi', 0),
+            'volume': level.get('total_call_vol', 0) + level.get('total_put_vol', 0),
+            'expiry': level.get('expiry_label', '')
+        })
+    
+    # Confluence levels
+    for level in selected_levels.get('confluence', []):
+        snapshot['key_levels'].append({
+            'strike': level.get('strike'),
+            'role': 'CONFLUENCE',
+            'score': 85,
+            'oi': level.get('total_call_oi', 0) + level.get('total_put_oi', 0),
+            'volume': level.get('total_call_vol', 0) + level.get('total_put_vol', 0),
+            'expiry': level.get('expiry_label', '')
+        })
+    
+    # Call walls
+    for level in selected_levels.get('call_walls', []):
+        snapshot['key_levels'].append({
+            'strike': level.get('strike'),
+            'role': 'CALL_WALL',
+            'score': 70,
+            'oi': level.get('oi', 0),
+            'volume': 0,
+            'expiry': level.get('expiry', '')
+        })
+    
+    # Put walls
+    for level in selected_levels.get('put_walls', []):
+        snapshot['key_levels'].append({
+            'strike': level.get('strike'),
+            'role': 'PUT_WALL',
+            'score': 70,
+            'oi': level.get('oi', 0),
+            'volume': 0,
+            'expiry': level.get('expiry', '')
+        })
+    
+    # Extract gamma flip and total GEX
+    gamma_flip = selected_levels.get('gamma_flip')
+    if gamma_flip is not None:
+        snapshot['gamma_flip'] = gamma_flip
+    
+    total_gex_data = symbol_data.get('totalGexData', {})
+    if total_gex_data:
+        snapshot['total_gex'] = total_gex_data.get('total_gex')
+        # If gamma_flip not yet set, try from totalGexData flip_point
+        if snapshot['gamma_flip'] is None:
+            snapshot['gamma_flip'] = total_gex_data.get('flip_point')
+    
+    return snapshot
+
+
+def update_level_history(symbol, snapshot, history_file='data/level_history.json', max_snapshots=10):
+    """
+    Update level history file with new snapshot.
+    Keeps only the last max_snapshots per symbol to control file size.
+    
+    Args:
+        symbol: The symbol being tracked
+        snapshot: The snapshot dict from extract_level_snapshot()
+        history_file: Path to the history JSON file
+        max_snapshots: Maximum number of snapshots to keep per symbol (default 10)
+    
+    Returns:
+        Number of snapshots now stored for this symbol
+    """
+    # Load existing history
+    history = {}
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            logger.warning(f"⚠️ Could not read level history file, starting fresh")
+            history = {}
+    
+    # Initialize symbol history if needed
+    if 'level_history' not in history:
+        history['level_history'] = {}
+    if symbol not in history['level_history']:
+        history['level_history'][symbol] = []
+    
+    # Append new snapshot
+    history['level_history'][symbol].append(snapshot)
+    
+    # Trim to max_snapshots (keep most recent)
+    if len(history['level_history'][symbol]) > max_snapshots:
+        history['level_history'][symbol] = history['level_history'][symbol][-max_snapshots:]
+    
+    # Update metadata
+    history['last_updated'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    history['max_snapshots'] = max_snapshots
+    
+    # Save
+    history_path = Path(history_file)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(history_file, 'w') as f:
+        json.dump(history, f, indent=2)
+    
+    snapshot_count = len(history['level_history'][symbol])
+    logger.info(f"📊 Level history updated for {symbol}: {snapshot_count} snapshots")
+    return snapshot_count
+
+
+# ============================================================================
+# INTER-SYMBOL CORRELATION ANALYSIS
+# ============================================================================
+
+def _extract_strikes_with_scores(symbol_data):
+    """Extract key strikes with their scores and roles from symbol data."""
+    result = {}
+    selected = symbol_data.get('selected_levels', {})
+    
+    for category in ['resonance', 'confluence', 'call_walls', 'put_walls']:
+        levels = selected.get(category, [])
+        if isinstance(levels, dict):
+            levels = [levels]
+        for level in levels:
+            strike = level.get('strike', 0)
+            if strike > 0:
+                result[strike] = {
+                    'score': level.get('significance_score', level.get('score', 0)),
+                    'role': level.get('type', level.get('role', category)),
+                    'oi': level.get('open_interest', level.get('oi', 0))
+                }
+    
+    return result
+
+
+def analyze_cross_symbol_correlation(symbols_data):
+    """
+    Analyze correlations between symbols to find confirmation signals.
+    
+    Checks:
+    1. Equivalent levels: SPY↔SPX (×10), QQQ↔NDX (×40.5)
+    2. Divergence detection: SPY vs QQQ regime divergence
+    
+    Args:
+        symbols_data: dict of {symbol: symbol_data} with selected_levels, market_regime, etc.
+    
+    Returns: list of correlation findings
+    """
+    correlations = []
+    
+    # Define equivalent symbol pairs with conversion factors
+    equivalent_pairs = [
+        ('SPY', 'SPX', 10.0),      # SPX ≈ SPY × 10
+        ('QQQ', 'NDX', 40.5),      # NDX ≈ QQQ × 40.5 (approximate)
+    ]
+    
+    # Also check SPY ↔ QQQ for divergence
+    divergence_pairs = [
+        ('SPY', 'QQQ'),
+    ]
+    
+    # 1. Find equivalent levels
+    for sym_a, sym_b, multiplier in equivalent_pairs:
+        data_a = symbols_data.get(sym_a, {})
+        data_b = symbols_data.get(sym_b, {})
+        
+        if not data_a or not data_b:
+            continue
+        
+        levels_a = _extract_strikes_with_scores(data_a)
+        levels_b = _extract_strikes_with_scores(data_b)
+        
+        for strike_a, info_a in levels_a.items():
+            # Convert strike_a to sym_b equivalent
+            equivalent_strike = strike_a * multiplier
+            
+            # Find matching strikes within 0.5% tolerance
+            for strike_b, info_b in levels_b.items():
+                if strike_b <= 0:
+                    continue
+                distance_pct = abs(strike_b - equivalent_strike) / equivalent_strike * 100
+                
+                if distance_pct < 0.5:
+                    # Found equivalent level!
+                    correlations.append({
+                        'type': 'equivalent_level',
+                        'symbols': [sym_a, sym_b],
+                        'strikes': {sym_a: strike_a, sym_b: strike_b},
+                        'roles': {sym_a: info_a['role'], sym_b: info_b['role']},
+                        'scores': {sym_a: info_a['score'], sym_b: info_b['score']},
+                        'distance_pct': round(distance_pct, 3),
+                        'confidence_boost': 15,  # +15 importance for cross-confirmation
+                        'description': f'{sym_a} {info_a["role"]} at {strike_a} ≈ {sym_b} {info_b["role"]} at {strike_b} (±{distance_pct:.2f}%)'
+                    })
+    
+    # 2. Detect SPY-QQQ divergence
+    for sym_a, sym_b in divergence_pairs:
+        regime_a = symbols_data.get(sym_a, {}).get('market_regime', {})
+        regime_b = symbols_data.get(sym_b, {}).get('market_regime', {})
+        
+        if not regime_a or not regime_b:
+            continue
+        
+        regime_a_type = regime_a.get('regime', '')
+        regime_b_type = regime_b.get('regime', '')
+        
+        if regime_a_type != regime_b_type:
+            correlations.append({
+                'type': 'regime_divergence',
+                'symbols': [sym_a, sym_b],
+                'regimes': {sym_a: regime_a_type, sym_b: regime_b_type},
+                'confidence': {sym_a: regime_a.get('confidence', 0), sym_b: regime_b.get('confidence', 0)},
+                'description': f'{sym_a} is {regime_a_type} while {sym_b} is {regime_b_type} — possible sector rotation',
+                'trading_implication': 'Sector rotation signal: consider relative strength plays between S&P 500 and Nasdaq 100'
+            })
+    
+    # 3. Gamma flip correlation (same direction across symbols)
+    gamma_flips = {}
+    for sym, data in symbols_data.items():
+        gf = data.get('selected_levels', {}).get('gamma_flip')
+        if gf is not None:
+            gamma_flips[sym] = gf
+    
+    # Check if correlated symbols have gamma flips on the same side of spot
+    for sym_a, sym_b, _ in equivalent_pairs:
+        if sym_a in gamma_flips and sym_b in gamma_flips:
+            spot_a = symbols_data[sym_a].get('spot', 0)
+            spot_b = symbols_data[sym_b].get('spot', 0)
+            if spot_a > 0 and spot_b > 0:
+                a_above = spot_a > gamma_flips[sym_a]
+                b_above = spot_b > gamma_flips[sym_b]
+                if a_above == b_above:
+                    side = 'above' if a_above else 'below'
+                    correlations.append({
+                        'type': 'gamma_flip_alignment',
+                        'symbols': [sym_a, sym_b],
+                        'gamma_flips': {sym_a: gamma_flips[sym_a], sym_b: gamma_flips[sym_b]},
+                        'spots': {sym_a: spot_a, sym_b: spot_b},
+                        'both': side,
+                        'description': f'Both {sym_a} and {sym_b} are {side} their gamma flip — aligned dealer positioning'
+                    })
+    
+    return correlations
 
 
 def main():
@@ -2562,10 +3845,22 @@ def main():
     logger.info(f"Output: {args.output}")
     logger.info(f"TV Output: {args.tv_output}")
     
+    # =========================================================================
+    # PHASE 0: Fetch VIX and compute dynamic tolerances
+    # =========================================================================
+    logger.info("\n📊 PHASE 0: Fetching VIX for dynamic tolerances...")
+    vix_value = fetch_vix()
+    dynamic_tolerances = calculate_dynamic_tolerances(vix_value)
+    logger.info(f"  📏 Dynamic tolerances (scale={dynamic_tolerances['scale']}):")
+    logger.info(f"     Resonance:  ±{dynamic_tolerances['resonance']*100:.2f}%")
+    logger.info(f"     Confluence: ±{dynamic_tolerances['confluence']*100:.2f}%")
+    logger.info(f"     Wall Prox:  ±{dynamic_tolerances['wall_proximity']*100:.2f}%")
+    
     # Scarica dati per ogni simbolo
     all_data = {
         "version": "2.0",
         "generated": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        "dynamic_tolerances": dynamic_tolerances,
         "symbols": {}
     }
     
@@ -2588,8 +3883,8 @@ def main():
             # Genera anche formato legacy
             legacy = generate_legacy_content(data)
             
-            # Seleziona i livelli più importanti (algoritmici)
-            selected_levels = select_important_levels(data.expiries, data.spot)
+            # Seleziona i livelli più importanti (algoritmici, con tolleranze dinamiche)
+            selected_levels = select_important_levels(data.expiries, data.spot, tolerances=dynamic_tolerances)
             
             symbols_data_raw[symbol] = {
                 "spot": data.spot,
@@ -2609,6 +3904,119 @@ def main():
             logger.info(f"     Put Walls: {len(selected_levels['put_walls'])} livelli")
             logger.info(f"     Gamma Flip: {selected_levels['gamma_flip']}")
             logger.info(f"     Max Pain: {selected_levels['max_pain']}")
+            
+            # --- Market Regime Detection ---
+            # Flatten all options across expiries for aggregate PCR
+            all_options_flat = []
+            for expiry in data.expiries:
+                all_options_flat.extend(expiry.get('options', []) if isinstance(expiry, dict) else [])
+            
+            aggregate_pcr = None
+            if all_options_flat:
+                pcr_ratios = calculate_put_call_ratios(all_options_flat)
+                aggregate_pcr = pcr_ratios.get('oi_based')
+            
+            # Get total_gex and gamma_flip for regime detection
+            total_gex_for_regime = data.total_gex_data.get('total_gex') if data.total_gex_data else None
+            gamma_flip_for_regime = selected_levels.get('gamma_flip')
+            
+            regime_data = detect_market_regime(
+                spot=data.spot,
+                total_gex=total_gex_for_regime,
+                gamma_flip=gamma_flip_for_regime,
+                vix=vix_value,
+                pcr=aggregate_pcr
+            )
+            
+            symbols_data_raw[symbol]['market_regime'] = regime_data
+            
+            # Log regime detection results
+            logger.info(f"  🏛️ Market Regime for {symbol}:")
+            logger.info(f"     Regime: {regime_data['regime']} (confidence: {regime_data['confidence']:.1%})")
+            logger.info(f"     Signals: {regime_data['signals']}")
+            logger.info(f"     Indicators: {regime_data['indicators']}")
+            logger.info(f"     Interpretation: {regime_data['interpretation']}")
+            
+            # --- Level Actionability Enrichment ---
+            selected_levels = enrich_levels_with_actionability(
+                selected_levels, regime_data, data.spot
+            )
+            symbols_data_raw[symbol]['selected_levels'] = selected_levels
+            
+            # Log actionability summary
+            actionable_count = 0
+            for level in selected_levels.get('resonance', []):
+                if 'actionability' in level:
+                    actionable_count += 1
+            for level in selected_levels.get('confluence', []):
+                if 'actionability' in level:
+                    actionable_count += 1
+            for level in selected_levels.get('call_walls', []):
+                if 'actionability' in level:
+                    actionable_count += 1
+            for level in selected_levels.get('put_walls', []):
+                if 'actionability' in level:
+                    actionable_count += 1
+            logger.info(f"  🎯 Actionability enriched for {symbol}: {actionable_count} levels annotated")
+            
+            # --- 0DTE Theta Decay Adjustment ---
+            theta_count = apply_theta_to_0dte_levels(selected_levels, data.spot)
+            if theta_count > 0:
+                logger.info(f"  ⏱️ 0DTE theta adjustment applied for {symbol}: {theta_count} levels adjusted")
+                # Log details for each adjusted level
+                for level in selected_levels.get('call_walls', []) + selected_levels.get('put_walls', []):
+                    if 'theta_adjustment' in level:
+                        ta = level['theta_adjustment']
+                        logger.info(f"     → Strike {level['strike']}: {ta['status']} (×{ta['decay_factor']}, {ta['time_window']})")
+                for level in selected_levels.get('resonance', []) + selected_levels.get('confluence', []):
+                    if 'theta_adjustment' in level:
+                        ta = level['theta_adjustment']
+                        logger.info(f"     → Strike {level['strike']}: {ta['status']} (×{ta['decay_factor']}, {ta['time_window']})")
+            else:
+                logger.info(f"  ⏱️ No 0DTE levels found for theta adjustment in {symbol}")
+            
+            # --- Dealer Flow Simulation ---
+            logger.info(f"  🔄 Running dealer flow simulation for {symbol}...")
+            try:
+                flat_options = flatten_options_for_simulation(data.expiries)
+                dealer_flow = simulate_dealer_flows(flat_options, data.spot)
+                if dealer_flow:
+                    symbols_data_raw[symbol]['dealer_flow_simulation'] = dealer_flow
+                    n_accel = len(dealer_flow.get('acceleration_zones', []))
+                    n_pin = len(dealer_flow.get('pinning_zones', []))
+                    max_accel = dealer_flow.get('max_acceleration', {})
+                    logger.info(f"  ✅ Dealer flow simulation for {symbol}:")
+                    logger.info(f"     Price range: {dealer_flow['price_range']['low']:.2f} - {dealer_flow['price_range']['high']:.2f}")
+                    logger.info(f"     Acceleration zones: {n_accel}")
+                    for az in dealer_flow.get('acceleration_zones', []):
+                        logger.info(f"       → {az['price']:.2f} ({az['direction']}, strength={az['strength']})")
+                    logger.info(f"     Pinning zones: {n_pin}")
+                    for pz in dealer_flow.get('pinning_zones', []):
+                        logger.info(f"       → {pz['price']:.2f} (flow={pz['flow']:.1f}, strength={pz['strength']})")
+                    logger.info(f"     Max acceleration: {max_accel.get('price', 0):.2f} ({max_accel.get('direction', 'N/A')})")
+                else:
+                    logger.info(f"  ⚠️ Dealer flow simulation for {symbol}: insufficient data, skipped")
+            except Exception as e:
+                logger.error(f"  ❌ Dealer flow simulation failed for {symbol}: {e}")
+    
+    # =========================================================================
+    # PHASE 1.5: Inter-Symbol Correlation Analysis
+    # =========================================================================
+    logger.info("\n🔗 PHASE 1.5: Analyzing cross-symbol correlations...")
+    cross_symbol_correlations = []
+    if len(symbols_data_raw) >= 2:
+        try:
+            cross_symbol_correlations = analyze_cross_symbol_correlation(symbols_data_raw)
+            if cross_symbol_correlations:
+                logger.info(f"  🔗 Found {len(cross_symbol_correlations)} cross-symbol correlations:")
+                for corr in cross_symbol_correlations:
+                    logger.info(f"     → [{corr['type']}] {corr['description']}")
+            else:
+                logger.info("  🔗 No cross-symbol correlations found")
+        except Exception as e:
+            logger.error(f"  ❌ Cross-symbol correlation analysis failed: {e}")
+    else:
+        logger.info("  🔗 Skipping cross-symbol correlation (need ≥2 symbols)")
     
     # =========================================================================
     # PHASE 2: Execute AI calls in parallel
@@ -2683,6 +4091,9 @@ def main():
     # Add ai_ready_data to output
     all_data["ai_ready_data"] = ai_ready_data
     
+    # Add cross-symbol correlations to output (top-level, not per-symbol)
+    all_data["cross_symbol_correlations"] = cross_symbol_correlations
+    
     # Salva output principale
     if not args.tv_only:
         output_path = Path(args.output)
@@ -2700,9 +4111,27 @@ def main():
     with open(tv_output_path, 'w', encoding='utf-8') as f:
         json.dump(tv_data, f, indent=2, ensure_ascii=False)
     
+    # =========================================================================
+    # PHASE 5: Level History Tracking
+    # =========================================================================
+    logger.info("\n📊 PHASE 5: Updating level history...")
+    
+    history_file = 'data/level_history.json'
+    for symbol, symbol_data in all_data["symbols"].items():
+        try:
+            spot = symbol_data.get('spot', 0)
+            if spot > 0:
+                snapshot = extract_level_snapshot(symbol, symbol_data, spot)
+                update_level_history(symbol, snapshot, history_file=history_file, max_snapshots=10)
+        except Exception as e:
+            logger.error(f"❌ Level history update failed for {symbol}: {e}")
+    
+    logger.info(f"✅ Level history saved to {history_file}")
+    
     logger.info(f"\n{'='*60}")
     logger.info(f"✅ COMPLETATO! Scaricati {successful}/{len(symbols)} simboli")
     logger.info(f"📁 TV Levels: {tv_output_path.absolute()}")
+    logger.info(f"📁 Level History: {Path(history_file).absolute()}")
     logger.info(f"{'='*60}")
     
     # Exit code per GitHub Actions

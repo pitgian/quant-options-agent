@@ -10,6 +10,7 @@ import {
   SelectedLevels,
   TotalGexData,
   AIReadyData,
+  MarketContext,
   isEnhancedConfluenceLevel,
   isEnhancedResonanceLevel
 } from '../types';
@@ -121,6 +122,21 @@ NEW ADVANCED QUANTITATIVE RULES:
 3. Use skew sentiment to validate direction: bearish skew strengthens put walls
 4. Volume/OI ratio > 1.5 = unusual activity, importance +15
 5. If total_gex negative = prioritize support levels (movement amplification)
+
+MARKET CONTEXT RULES:
+- Use VIX level to calibrate level confidence: high VIX (>25) = wider tolerances, lower confidence; low VIX (<15) = tighter tolerances, higher confidence
+- If market_regime is provided, interpret levels accordingly:
+  * trending_up: Call walls are temporary resistance (breakout likely), put walls are strong support
+  * trending_down: Put walls are temporary support (breakdown likely), call walls are strong resistance
+  * range_bound: Both walls are solid, expect mean reversion between them
+  * volatile: All levels less reliable, use caution, wider stops needed
+- Dynamic tolerances are already calibrated to VIX — respect them for level classification
+- If actionability data is provided for a level, incorporate it into your analysis:
+  * expected_behavior indicates the most likely price reaction
+  * confirmation_signals list what to watch for
+  * invalidation_level is where the thesis fails
+- Previous day levels that held as support/resistance deserve extra attention
+- On high-VIX days (>25), reduce confidence of all levels by 10 points in your assessment
 
 Respond ONLY with a valid JSON object with the following structure (all text fields MUST be in English):
 {
@@ -335,6 +351,20 @@ const formatEnhancedLevel = (
     });
   }
   
+  // Add actionability data if available
+  if (level.actionability) {
+    const a = level.actionability;
+    details += `
+  - ACTIONABILITY: Expected ${a.expected_behavior} (confidence: ${(a.confidence * 100).toFixed(0)}%)
+  - Confirmation: ${a.confirmation_signals.join(', ')}
+  - Invalidation: ${a.invalidation_level} (${a.invalidation_description})
+  - Priority: ${a.trading_priority}`;
+    if (a.time_decay_impact) {
+      details += `
+  - Time Decay: Morning=${a.time_decay_impact.morning}, Midday=${a.time_decay_impact.midday}, Afternoon=${a.time_decay_impact.afternoon}`;
+    }
+  }
+  
   return details;
 };
 
@@ -401,13 +431,49 @@ const formatSelectedLevels = (selectedLevels: SelectedLevels, spotPrice: number)
   return output;
 };
 
+/**
+ * Formats market context data for AI prompt enhancement.
+ * Provides VIX, regime, tolerances, and timestamp information.
+ * Returns empty string if no market context is available (backward-compatible).
+ */
+const formatMarketContext = (context: MarketContext | undefined): string => {
+  if (!context) return '';
+  
+  const parts: string[] = ['\n=== MARKET CONTEXT ==='];
+  
+  // VIX and regime
+  if (context.regime) {
+    const vix = context.tolerances?.vix;
+    const regimeLabel = vix !== null && vix !== undefined
+      ? (vix > 25 ? 'HIGH VOLATILITY' : vix < 15 ? 'LOW VOLATILITY' : 'NORMAL')
+      : 'UNKNOWN';
+    parts.push(`- VIX: ${vix ?? 'N/A'} (${regimeLabel})`);
+    parts.push(`- Market Regime: ${context.regime.regime} (confidence: ${(context.regime.confidence * 100).toFixed(0)}%)`);
+    parts.push(`- Regime Interpretation: ${context.regime.interpretation}`);
+  }
+  
+  // Dynamic tolerances
+  if (context.tolerances) {
+    const t = context.tolerances;
+    parts.push(`- Tolerance Scale: ${t.scale.toFixed(1)}x (resonance: ±${(t.resonance * 100).toFixed(2)}%, confluence: ±${(t.confluence * 100).toFixed(2)}%)`);
+  }
+  
+  // Timestamp
+  if (context.timestamp) {
+    parts.push(`- Data Timestamp: ${context.timestamp}`);
+  }
+  
+  return parts.join('\n') + '\n';
+};
+
 export const getAnalysis = async (
   datasets: MarketDataset[],
   currentPrice: string,
   model?: string,
   selectedLevels?: SelectedLevels,
   totalGexData?: TotalGexData,
-  aiReadyData?: AIReadyData
+  aiReadyData?: AIReadyData,
+  marketContext?: MarketContext
 ): Promise<AnalysisResponse> => {
     const selectedModel = model || GLM_MODEL;
     const spotPrice = parseFloat(currentPrice) || 0;
@@ -443,6 +509,9 @@ export const getAnalysis = async (
           aiReadySection = formatAIReadyData(aiReadyData);
         }
         
+        // Add market context section if available
+        const marketContextSection = formatMarketContext(marketContext);
+        
         const messages: GLMMessage[] = [
             { role: 'system', content: harmonicSystemInstruction },
             {
@@ -451,6 +520,8 @@ export const getAnalysis = async (
                 Provide concise and decisive trading signals for each level.
                 Use ADVANCED QUANTITATIVE METRICS to identify additional levels (Max Pain, Gamma Flip).
                 Integrate skew sentiment and PCR to validate level importance.
+                
+                ${marketContextSection ? 'MARKET CONTEXT is provided below — use it to calibrate confidence and interpret levels:\n' + marketContextSection : ''}
                 
                 ${aiReadySection ? 'HYBRID AI APPROACH: Use AGGREGATED OPTIONS DATA below to DYNAMICALLY identify levels. Pre-calculated metrics are for reference:\n' + aiReadySection : ''}
                 

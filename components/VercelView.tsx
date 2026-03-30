@@ -14,6 +14,7 @@ import React, { useState, useEffect, useMemo, ReactElement } from 'react';
 import {
   VercelOptionsData,
   fetchVercelOptionsData,
+  fetchLevelHistory,
   getSymbolData,
   getLastUpdateTime,
   getDataAgeMinutes
@@ -22,7 +23,7 @@ import {
   SymbolData, ExpiryData, OptionData, QuantMetrics, PutCallRatios,
   VolatilitySkew, GEXData, SelectedLevels, AIAnalysis, AILevel, AIOutlook,
   ConfluenceLevel, ResonanceLevel, ConfluenceExpiryDetail, LegacyConfluenceLevel, LegacyResonanceLevel,
-  TotalGexData
+  TotalGexData, LevelHistory, LevelEvolution
 } from '../types';
 
 // ============================================================================
@@ -44,6 +45,31 @@ const EXPIRY_LABELS: Record<string, string> = {
   'WEEKLY': 'Weekly',
   'MONTHLY': 'Monthly',
 };
+
+/**
+ * Expiry weights for day-trading confluence scoring.
+ * 0DTE dominates for intraday — it expires today and has the most immediate
+ * impact on dealer hedging flows.  Weekly is secondary (near-term hedging),
+ * Monthly provides broader positioning context only.
+ *
+ * These weights multiply each expiry's raw level-score before averaging,
+ * so a level appearing on 0DTE + Monthly ranks HIGHER than one on
+ * Weekly + Monthly, reflecting the day-trader's time-horizon priority.
+ */
+const EXPIRY_WEIGHTS: Record<string, number> = {
+  '0DTE': 1.0,      // Maximum relevance — expires today
+  'WEEKLY': 0.6,    // Secondary relevance — near-term hedging
+  'MONTHLY': 0.3,   // Context — broader positioning
+};
+const DEFAULT_EXPIRY_WEIGHT = 0.3;
+
+/**
+ * Weighted-score thresholds for level classification.
+ * Higher thresholds reflect the increased bar when 0DTE is involved.
+ */
+const WEIGHTED_SCORE_RESONANCE = 70;   // 3 expiries, weighted ≥ 70
+const WEIGHTED_SCORE_CONFLUENCE_0DTE = 60;  // 0DTE + ≥1 other, weighted ≥ 60
+const WEIGHTED_SCORE_CONFLUENCE_STD = 50;    // 2+ expiries (no 0DTE), weighted ≥ 50
 
 // Tooltips for metrics
 const TOOLTIPS = {
@@ -555,6 +581,45 @@ function calculateAllQuantMetrics(options: OptionData[], spot: number, expiryDat
 }
 
 /**
+ * Validate that a QuantMetrics object has all required fields populated.
+ * Used to guard against partially-computed or malformed pre-computed metrics.
+ */
+function isValidQuantMetrics(m: QuantMetrics): boolean {
+  return (
+    m != null &&
+    typeof m === 'object' &&
+    m.gamma_flip !== undefined &&
+    m.total_gex !== undefined &&
+    m.max_pain !== undefined &&
+    m.put_call_ratios != null &&
+    m.put_call_ratios.oi_based !== undefined &&
+    m.volatility_skew != null &&
+    m.volatility_skew.skew_type !== undefined &&
+    Array.isArray(m.gex_by_strike)
+  );
+}
+
+/**
+ * Python-first, TS-fallback quant metrics resolver.
+ *
+ * Strategy:
+ *  1. If the expiry already carries pre-computed `quantMetrics` from the Python
+ *     pipeline (written to options_data.json every 15 min by GitHub Actions),
+ *     validate and return them directly — no redundant recalculation.
+ *  2. Otherwise fall back to the local TypeScript calculation via
+ *     `calculateAllQuantMetrics`, which remains the authoritative source when
+ *     Python data is stale or missing.
+ */
+function getQuantMetrics(expiry: ExpiryData, spot: number): QuantMetrics {
+  // 1. Prefer pre-calculated metrics from Python pipeline
+  if (expiry.quantMetrics && isValidQuantMetrics(expiry.quantMetrics)) {
+    return expiry.quantMetrics;
+  }
+  // 2. Fallback: calculate in TypeScript
+  return calculateAllQuantMetrics(expiry.options || [], spot, expiry.date);
+}
+
+/**
  * Calculate aggregated metrics across all expiries
  */
 function calculateAggregatedMetrics(expiries: ExpiryData[], spot: number): QuantMetrics | null {
@@ -622,11 +687,97 @@ interface LocalConfluenceScore {
   score: number;
   avgOi: number;
   avgVolume: number;
+  dominantExpiry: string;  // Expiry with highest weight contributing to this level
+  weightedScore: number;   // Expiry-weighted score (0-100 scale)
 }
 
 /**
- * Calculate multi-factor score for a level
- * Scoring weights: OI 35% + Volume 30% + IV 15% + Proximity 20%
+ * Get the expiry type label from an ExpiryData object.
+ * Reuses the existing `label` property that is already populated by the
+ * data pipeline (e.g. "0DTE", "WEEKLY", "MONTHLY").
+ * Falls back to date-based classification if label is missing.
+ */
+function getExpiryLabel(expiry: ExpiryData): string {
+  // If the expiry already has a standard label, use it directly
+  if (expiry.label && EXPIRY_WEIGHTS[expiry.label] !== undefined) {
+    return expiry.label;
+  }
+
+  // Fallback: classify by date distance from today
+  if (expiry.date) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expiryDate = new Date(expiry.date + 'T00:00:00');
+    const diffDays = Math.round((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays <= 0) return '0DTE';
+    if (diffDays <= 7) return 'WEEKLY';
+    return 'MONTHLY';
+  }
+
+  // Last resort: use the label as-is (may get DEFAULT_EXPIRY_WEIGHT)
+  return expiry.label || 'MONTHLY';
+}
+
+/**
+ * Calculate the expiry-weighted confluence score for a strike.
+ *
+ * For each expiry where the strike appears, we compute the raw level score
+ * (OI + Volume + Vol/OI + Proximity + IV) and multiply it by the expiry's
+ * day-trading weight.  The final score is the weighted average.
+ *
+ * @returns weighted score (0-100), list of contributing expiry labels, and dominant expiry
+ */
+function calculateWeightedConfluenceScore(
+  strike: number,
+  expiries: ExpiryData[],
+  spot: number,
+  maxOi: number,
+  maxVol: number
+): { weightedScore: number; contributingExpiries: string[]; dominantExpiry: string } {
+  let weightedSum = 0;
+  let totalWeight = 0;
+  const contributingExpiries: string[] = [];
+  let maxW = 0;
+  let dominantExpiry = '';
+
+  for (const expiry of expiries) {
+    const label = getExpiryLabel(expiry);
+    const weight = EXPIRY_WEIGHTS[label] ?? DEFAULT_EXPIRY_WEIGHT;
+
+    // Find all options at this strike for this expiry and compute a raw score
+    const strikeOpts = expiry.options.filter(o => o.strike === strike);
+    if (strikeOpts.length === 0) continue;
+
+    // Aggregate OI / Volume across CALL + PUT at this strike
+    const totalOi = strikeOpts.reduce((s, o) => s + o.oi, 0);
+    const totalVol = strikeOpts.reduce((s, o) => s + o.vol, 0);
+    const avgIv = strikeOpts.reduce((s, o) => s + o.iv, 0) / strikeOpts.length;
+    const distancePct = spot > 0 ? Math.abs((strike - spot) / spot) * 100 : 0;
+
+    const rawScore = calculateLevelScore(totalOi, totalVol, avgIv, distancePct, maxOi, maxVol);
+
+    weightedSum += rawScore * weight;
+    totalWeight += weight;
+    contributingExpiries.push(label);
+
+    if (weight > maxW) {
+      maxW = weight;
+      dominantExpiry = label;
+    }
+  }
+
+  return {
+    weightedScore: totalWeight > 0 ? weightedSum / totalWeight : 0,
+    contributingExpiries,
+    dominantExpiry,
+  };
+}
+
+/**
+ * Calculate multi-factor score for a level (unified 5-component scoring).
+ * Matches Python calculate_significance_score:
+ *   OI 35% + Volume 20% + Vol/OI Ratio 20% + Proximity 15% (Gaussian) + IV 10%
  */
 function calculateLevelScore(
   oi: number,
@@ -636,16 +787,25 @@ function calculateLevelScore(
   maxOi: number,
   maxVolume: number
 ): number {
-  // Normalize each factor to 0-100 scale
-  const oiScore = maxOi > 0 ? (oi / maxOi) * 100 : 0;
-  const volScore = maxVolume > 0 ? (volume / maxVolume) * 100 : 0;
-  const ivScore = Math.min(iv * 100, 100); // IV is typically 0-1, cap at 100%
-  
-  // Proximity score: closer to spot = higher score (max at 0% distance, min at5%+ distance)
-  const proximityScore = Math.max(0, 100 - Math.abs(distanceFromSpot) * 20);
-  
-  // Weighted combination: OI35% + Volume30% + IV15% + Proximity20%
-  return oiScore * 0.35 + volScore * 0.30 + ivScore * 0.15 + proximityScore * 0.20;
+  // 1. OI Score (0–35): Normalized by max OI
+  const oiScore = maxOi > 0 ? (oi / maxOi) * 35 : 0;
+
+  // 2. Volume Score (0–20): Normalized by max volume
+  const volScore = maxVolume > 0 ? (volume / maxVolume) * 20 : 0;
+
+  // 3. Vol/OI Ratio Score (0–20): Unusual activity detection, capped at ratio of 2
+  const volOiRatio = oi > 0 ? volume / oi : 0;
+  const volOiScore = (Math.min(volOiRatio, 2) / 2) * 20;
+
+  // 4. Proximity Score (0–15): Gaussian decay from spot
+  //    distanceFromSpot is in % (e.g. 3 for 3%); Python uses ratio (0.03),
+  //    so we divide by 3 instead of 0.03 to get the same result.
+  const proximityScore = Math.exp(-Math.pow(distanceFromSpot / 3, 2)) * 15;
+
+  // 5. IV Score (0–10): IV extremity
+  const ivScore = Math.min(iv * 100, 1.0) * 10;
+
+  return oiScore + volScore + volOiScore + proximityScore + ivScore;
 }
 
 /**
@@ -749,12 +909,47 @@ function calculateWalls(options: OptionData[], spot: number, topN: number = 3): 
 }
 
 /**
- * Tolerance constants for level clustering
+ * Default tolerance constants for level clustering (used as fallback)
  */
-const RESONANCE_TOLERANCE_PCT = 0.3; // ±0.3% for RESONANCE
-const CONFLUENCE_TOLERANCE_PCT = 0.5; // ±0.5% for CONFLUENCE
+const DEFAULT_RESONANCE_TOLERANCE_PCT = 0.3; // ±0.3% for RESONANCE
+const DEFAULT_CONFLUENCE_TOLERANCE_PCT = 0.5; // ±0.5% for CONFLUENCE
+const DEFAULT_WALL_PROXIMITY_TOLERANCE_PCT = 1.0; // ±1.0% for wall proximity
 const MAX_RESONANCE_LEVELS = 1; // Reduced: only the strongest resonance
 const MAX_CONFLUENCE_LEVELS = 2; // Reduced: more selective filtering
+
+/**
+ * Extract dynamic tolerances from the data payload (computed by Python from VIX).
+ * Falls back to defaults when the data is unavailable or missing.
+ *
+ * Python stores tolerances as decimal fractions (e.g., 0.005 = 0.5%).
+ * TypeScript uses percentage values (e.g., 0.5 = 0.5%).
+ * Conversion: TS_pct = python_fraction × 100
+ */
+function getDynamicTolerances(data: VercelOptionsData | null): {
+  resonance: number;
+  confluence: number;
+  wallProximity: number;
+  vix: number | null;
+  scale: number;
+} {
+  if (data?.dynamic_tolerances) {
+    const dt = data.dynamic_tolerances;
+    return {
+      resonance: dt.resonance * 100,       // 0.005 → 0.5
+      confluence: dt.confluence * 100,     // 0.01  → 1.0
+      wallProximity: dt.wall_proximity * 100, // 0.01  → 1.0
+      vix: dt.vix,
+      scale: dt.scale,
+    };
+  }
+  return {
+    resonance: DEFAULT_RESONANCE_TOLERANCE_PCT,
+    confluence: DEFAULT_CONFLUENCE_TOLERANCE_PCT,
+    wallProximity: DEFAULT_WALL_PROXIMITY_TOLERANCE_PCT,
+    vix: null,
+    scale: 1.0,
+  };
+}
 
 /**
  * Cluster strikes within tolerance and return representative strike
@@ -807,25 +1002,31 @@ function getClusterRepresentative(
 }
 
 /**
- * Find confluence levels with strict tolerance and limits
- * Uses ±0.5% tolerance and limits to max 5 levels
+ * Find confluence levels with expiry-weighted scoring.
+ *
+ * Classification thresholds (day-trading prioritised):
+ *   CONFLUENCE 0DTE+ : 0DTE present + ≥1 other expiry, weightedScore ≥ 60
+ *   CONFLUENCE STD   : 2+ expiries (no 0DTE),            weightedScore ≥ 50
+ *
+ * Uses ±0.5% tolerance for strike clustering.
  */
 function findConfluenceLevelsEnhanced(
   expiries: ExpiryData[],
-  spot: number
+  spot: number,
+  tolerancePct?: number
 ): LocalConfluenceScore[] {
   if (expiries.length < 2) return [];
-  
+
   // Collect all options with expiry info
   const strikeData: Map<number, { expiries: string[]; oi: number[]; vol: number[] }> = new Map();
-  
+
   for (const expiry of expiries) {
     const seenStrikes = new Set<number>();
-    
+
     for (const opt of expiry.options) {
       if (seenStrikes.has(opt.strike)) continue;
       seenStrikes.add(opt.strike);
-      
+
       if (!strikeData.has(opt.strike)) {
         strikeData.set(opt.strike, { expiries: [], oi: [], vol: [] });
       }
@@ -835,49 +1036,64 @@ function findConfluenceLevelsEnhanced(
       data.vol.push(opt.vol);
     }
   }
-  
-  // Filter to strikes appearing in exactly 2 expiries (not all - those are resonance)
-  const totalExpiries = expiries.length;
-  const confluenceStrikes: number[] = [];
-  const strikeScores: Map<number, number> = new Map();
-  
+
+  // Pre-compute max OI / Vol for score normalization
   const allOptions = expiries.flatMap(e => e.options);
   const maxOi = Math.max(...allOptions.map(o => o.oi), 1);
   const maxVol = Math.max(...allOptions.map(o => o.vol), 1);
-  
+
+  // Filter to strikes appearing in 2+ expiries (but NOT all — those are resonance)
+  const totalExpiries = expiries.length;
+  const confluenceStrikes: number[] = [];
+
   for (const [strike, data] of strikeData) {
-    // Confluence: appears in 2+ expiries but NOT all (resonance is for all)
     if (data.expiries.length >= 2 && data.expiries.length < totalExpiries) {
       confluenceStrikes.push(strike);
-      const avgOi = data.oi.reduce((a, b) => a + b, 0) / data.oi.length;
-      const avgVol = data.vol.reduce((a, b) => a + b, 0) / data.vol.length;
-      const distancePct = spot > 0 ? Math.abs((strike - spot) / spot) * 100 : 0;
-      const score = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
-      strikeScores.set(strike, score);
     }
   }
-  
-  // Cluster strikes within tolerance
-  const clusters = clusterStrikes(confluenceStrikes, CONFLUENCE_TOLERANCE_PCT, spot);
-  
-  // Get representatives and score them
-  const candidates: LocalConfluenceScore[] = clusters.map(cluster => {
+
+  // Cluster strikes within tolerance (use dynamic or default)
+  const clusters = clusterStrikes(confluenceStrikes, tolerancePct ?? DEFAULT_CONFLUENCE_TOLERANCE_PCT, spot);
+
+  // Score each cluster using expiry-weighted confluence scoring
+  const candidates: LocalConfluenceScore[] = [];
+
+  for (const cluster of clusters) {
     const representative = getClusterRepresentative(cluster, allOptions);
     const originalData = strikeData.get(cluster[0])!;
-    const avgScore = cluster.reduce((sum, s) => sum + (strikeScores.get(s) || 0), 0) / cluster.length;
-    
-    return {
+
+    // Compute expiry-weighted score for the representative strike
+    const { weightedScore, contributingExpiries, dominantExpiry } =
+      calculateWeightedConfluenceScore(representative, expiries, spot, maxOi, maxVol);
+
+    // Apply classification thresholds
+    const has0DTE = contributingExpiries.includes('0DTE');
+    const passesThreshold = has0DTE
+      ? weightedScore >= WEIGHTED_SCORE_CONFLUENCE_0DTE
+      : weightedScore >= WEIGHTED_SCORE_CONFLUENCE_STD;
+
+    if (!passesThreshold) continue;
+
+    // Raw score for backward compat / display
+    const avgOi = originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length;
+    const avgVol = originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length;
+    const distancePct = spot > 0 ? Math.abs((representative - spot) / spot) * 100 : 0;
+    const rawScore = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
+
+    candidates.push({
       strike: representative,
-      expiries: originalData.expiries,
-      score: avgScore,
-      avgOi: originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length,
-      avgVolume: originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length
-    };
-  });
-  
-  // Sort by score and limit to MAX_CONFLUENCE_LEVELS
+      expiries: contributingExpiries,
+      score: rawScore,
+      avgOi,
+      avgVolume: avgVol,
+      dominantExpiry,
+      weightedScore,
+    });
+  }
+
+  // Sort by weighted score (primary) and limit to MAX_CONFLUENCE_LEVELS
   return candidates
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.weightedScore - a.weightedScore)
     .slice(0, MAX_CONFLUENCE_LEVELS);
 }
 
@@ -894,25 +1110,28 @@ function findConfluenceLevels(expiries: ExpiryData[], spot: number): Map<number,
 }
 
 /**
- * Find resonance levels with strict tolerance and limits
- * Uses ±0.3% tolerance and limits to max 2 levels
+ * Find resonance levels with expiry-weighted scoring.
+ *
+ * A resonance level appears in ALL (3) expiries within ±0.3% tolerance.
+ * The weighted score must be ≥ WEIGHTED_SCORE_RESONANCE (70) to qualify.
  */
 function findResonanceLevelsEnhanced(
   expiries: ExpiryData[],
-  spot: number
+  spot: number,
+  tolerancePct?: number
 ): LocalConfluenceScore[] {
   if (expiries.length < 2) return [];
-  
+
   // Collect strikes appearing in ALL expiries
   const strikeCounts: Map<number, { count: number; oi: number[]; vol: number[] }> = new Map();
-  
+
   for (const expiry of expiries) {
     const seenStrikes = new Set<number>();
-    
+
     for (const opt of expiry.options) {
       if (seenStrikes.has(opt.strike)) continue;
       seenStrikes.add(opt.strike);
-      
+
       if (!strikeCounts.has(opt.strike)) {
         strikeCounts.set(opt.strike, { count: 0, oi: [], vol: [] });
       }
@@ -922,49 +1141,58 @@ function findResonanceLevelsEnhanced(
       data.vol.push(opt.vol);
     }
   }
-  
+
   // Filter to strikes appearing in ALL expiries
   const totalExpiries = expiries.length;
   const resonanceStrikes: number[] = [];
-  const strikeScores: Map<number, number> = new Map();
-  
+
   const allOptions = expiries.flatMap(e => e.options);
   const maxOi = Math.max(...allOptions.map(o => o.oi), 1);
   const maxVol = Math.max(...allOptions.map(o => o.vol), 1);
-  
+
   for (const [strike, data] of strikeCounts) {
     if (data.count === totalExpiries) {
       resonanceStrikes.push(strike);
-      const avgOi = data.oi.reduce((a, b) => a + b, 0) / data.oi.length;
-      const avgVol = data.vol.reduce((a, b) => a + b, 0) / data.vol.length;
-      const distancePct = spot > 0 ? Math.abs((strike - spot) / spot) * 100 : 0;
-      const score = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
-      strikeScores.set(strike, score);
     }
   }
-  
-  // Cluster strikes within tolerance
-  const clusters = clusterStrikes(resonanceStrikes, RESONANCE_TOLERANCE_PCT, spot);
-  
-  // Get representatives and score them
-  const candidates: LocalConfluenceScore[] = clusters.map(cluster => {
+
+  // Cluster strikes within tolerance (use dynamic or default)
+  const clusters = clusterStrikes(resonanceStrikes, tolerancePct ?? DEFAULT_RESONANCE_TOLERANCE_PCT, spot);
+
+  // Score each cluster using expiry-weighted confluence scoring
+  const candidates: LocalConfluenceScore[] = [];
+
+  for (const cluster of clusters) {
     const representative = getClusterRepresentative(cluster, allOptions);
     const originalData = strikeCounts.get(cluster[0])!;
-    const avgScore = cluster.reduce((sum, s) => sum + (strikeScores.get(s) || 0), 0) / cluster.length;
-    const expiryLabels = expiries.map(e => e.label);
-    
-    return {
+
+    // Compute expiry-weighted score
+    const { weightedScore, contributingExpiries, dominantExpiry } =
+      calculateWeightedConfluenceScore(representative, expiries, spot, maxOi, maxVol);
+
+    // Apply resonance threshold
+    if (weightedScore < WEIGHTED_SCORE_RESONANCE) continue;
+
+    // Raw score for backward compat
+    const avgOi = originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length;
+    const avgVol = originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length;
+    const distancePct = spot > 0 ? Math.abs((representative - spot) / spot) * 100 : 0;
+    const rawScore = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
+
+    candidates.push({
       strike: representative,
-      expiries: expiryLabels,
-      score: avgScore,
-      avgOi: originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length,
-      avgVolume: originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length
-    };
-  });
-  
-  // Sort by score and limit to MAX_RESONANCE_LEVELS
+      expiries: contributingExpiries,
+      score: rawScore,
+      avgOi,
+      avgVolume: avgVol,
+      dominantExpiry,
+      weightedScore,
+    });
+  }
+
+  // Sort by weighted score and limit to MAX_RESONANCE_LEVELS
   return candidates
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.weightedScore - a.weightedScore)
     .slice(0, MAX_RESONANCE_LEVELS);
 }
 
@@ -1024,8 +1252,99 @@ function getExpiryDisplayLabel(expiry: ExpiryData): string {
 }
 
 // ============================================================================
+// LEVEL EVOLUTION HELPERS
+// ============================================================================
+
+/**
+ * Compute the evolution trend for a specific strike across history snapshots.
+ *
+ * Compares the latest two snapshots for the given strike to determine if the
+ * level is strengthening, weakening, stable, or new.
+ *
+ * @param strike - The strike price to evaluate
+ * @param symbol - The symbol (e.g., 'SPY', 'QQQ')
+ * @param history - The level history data (may be null if fetch failed)
+ * @returns LevelEvolution object with trend, score change, OI change, and snapshot count
+ */
+function getLevelEvolution(
+  strike: number,
+  symbol: string,
+  history: LevelHistory | null
+): LevelEvolution {
+  if (!history?.level_history?.[symbol]) {
+    return { trend: 'new', scoreChange: 0, oiChange: 0, snapshots: 0 };
+  }
+
+  const snapshots = history.level_history[symbol];
+  // Find this strike across snapshots
+  const strikeSnapshots = snapshots
+    .map(s => s.key_levels.find(l => l.strike === strike))
+    .filter(Boolean);
+
+  if (strikeSnapshots.length < 2) {
+    return { trend: 'new', scoreChange: 0, oiChange: 0, snapshots: strikeSnapshots.length };
+  }
+
+  const latest = strikeSnapshots[strikeSnapshots.length - 1]!;
+  const previous = strikeSnapshots[strikeSnapshots.length - 2]!;
+  const scoreChange = latest.score - previous.score;
+  const oiChange = latest.oi - previous.oi;
+
+  let trend: 'strengthening' | 'weakening' | 'stable' | 'new';
+  if (Math.abs(scoreChange) < 5) trend = 'stable';
+  else if (scoreChange > 0) trend = 'strengthening';
+  else trend = 'weakening';
+
+  return { trend, scoreChange, oiChange, snapshots: strikeSnapshots.length };
+}
+
+// ============================================================================
 // SUB-COMPONENTS
 // ============================================================================
+
+/**
+ * Small inline badge showing level evolution trend.
+ * Rendered next to the level score/role badge.
+ */
+const LevelEvolutionBadge: React.FC<{ evolution?: LevelEvolution }> = ({ evolution }) => {
+  if (!evolution || (evolution.snapshots === 0 && evolution.trend === 'new')) {
+    // Show NEW badge only when there are truly 0 snapshots
+    if (evolution?.snapshots === 0) {
+      return (
+        <span style={{ color: '#3b82f6', fontSize: '11px', fontWeight: 700 }} className="ml-1">NEW</span>
+      );
+    }
+    return null;
+  }
+
+  if (evolution.trend === 'strengthening') {
+    return (
+      <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600 }} className="ml-1">
+        ↑ +{evolution.scoreChange.toFixed(1)}
+      </span>
+    );
+  }
+
+  if (evolution.trend === 'weakening') {
+    return (
+      <span style={{ color: '#ef4444', fontSize: '11px', fontWeight: 600 }} className="ml-1">
+        ↓ {evolution.scoreChange.toFixed(1)}
+      </span>
+    );
+  }
+
+  if (evolution.trend === 'stable') {
+    return (
+      <span style={{ color: '#9ca3af', fontSize: '11px' }} className="ml-1">→</span>
+    );
+  }
+
+  // trend === 'new' but has some snapshots (appeared recently)
+  return (
+    <span style={{ color: '#3b82f6', fontSize: '11px', fontWeight: 700 }} className="ml-1">NEW</span>
+  );
+};
+
 
 /**
  * Loading spinner component
@@ -1462,7 +1781,8 @@ const LevelRow: React.FC<{
   isMatch?: boolean;
   wallType?: WallType;
   enhancedData?: ConfluenceLevel | ResonanceLevel | LegacyConfluenceLevel | LegacyResonanceLevel;
-}> = ({ level, type, spot, expiries = [], oi, isMatch = false, wallType, enhancedData }) => {
+  evolution?: LevelEvolution;
+}> = ({ level, type, spot, expiries = [], oi, isMatch = false, wallType, enhancedData, evolution }) => {
   const distancePct = spot > 0 ? ((level - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
@@ -1591,6 +1911,9 @@ const LevelRow: React.FC<{
   const displayExpiries = enhanced?.expiry_label ? enhanced.expiry_label.split('+') : expiries;
   const expiryLabelDisplay = enhanced?.expiry_label || (expiries.length > 0 ? expiries.join('+') : '');
 
+  // Extract dominant expiry for weighted confluence display
+  const dominantExpiry = enhanced?.dominantExpiry || '';
+
   return (
     <div
       className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-6
@@ -1603,6 +1926,7 @@ const LevelRow: React.FC<{
             {t.icon} {getLabel()}
           </span>
           {wallType && getWallTypeBadge()}
+          <LevelEvolutionBadge evolution={evolution} />
           {isMatch && (
             <span className="text-[8px] font-black text-cyan-400 bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-500/30">
               ✓ MATCH
@@ -1616,6 +1940,18 @@ const LevelRow: React.FC<{
                 : 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
             }`}>
               {expiryLabelDisplay}
+            </span>
+          )}
+          {/* Dominant expiry badge — shows which expiry drives this confluence level */}
+          {(type === 'CONFLUENCE' || type === 'RESONANCE') && dominantExpiry && (
+            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${
+              dominantExpiry === '0DTE'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                : dominantExpiry === 'WEEKLY'
+                  ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                  : 'bg-gray-500/20 text-gray-300 border border-gray-500/30'
+            }`}>
+              {dominantExpiry}-dominant
             </span>
           )}
           {isVeryClose && (
@@ -1722,10 +2058,11 @@ const LevelRow: React.FC<{
 function findMatchingStrikes(
   aiLevels: AILevel[],
   algoLevels: Array<{ level: number }>,
-  spot: number
+  spot: number,
+  tolerancePct?: number
 ): Set<number> {
   const matches = new Set<number>();
-  const tolerance = spot * 0.003; // 0.3% tolerance
+  const tolerance = spot * ((tolerancePct ?? DEFAULT_RESONANCE_TOLERANCE_PCT) / 100);
 
   for (const ai of aiLevels) {
     for (const algo of algoLevels) {
@@ -1746,7 +2083,8 @@ const AILevelRow: React.FC<{
   level: AILevel;
   spot: number;
   isMatch?: boolean;
-}> = ({ level, spot, isMatch = false }) => {
+  evolution?: LevelEvolution;
+}> = ({ level, spot, isMatch = false, evolution }) => {
   const distancePct = spot > 0 ? ((level.prezzo - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
@@ -1836,6 +2174,7 @@ const AILevelRow: React.FC<{
               ✓ MATCH
             </span>
           )}
+          <LevelEvolutionBadge evolution={evolution} />
           {level.scadenzaTipo && (
             <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">
               {level.scadenzaTipo}
@@ -2782,6 +3121,7 @@ export function VercelView(): ReactElement {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0); // Timer tick to force age recalculation
+  const [levelHistory, setLevelHistory] = useState<LevelHistory | null>(null);
 
   // Fetch data on mount
   useEffect(() => {
@@ -2814,6 +3154,13 @@ export function VercelView(): ReactElement {
 
     loadData();
 
+    // Non-blocking: fetch level history independently
+    fetchLevelHistory().then(history => {
+      if (isMounted && history) {
+        setLevelHistory(history);
+      }
+    });
+
     return () => {
       isMounted = false;
     };
@@ -2844,6 +3191,9 @@ export function VercelView(): ReactElement {
     return getDataAgeMinutes(data);
   }, [data, tick]); // Include tick to recalculate when time passes
 
+  // Extract dynamic tolerances from data (VIX-based)
+  const dynamicTolerances = useMemo(() => getDynamicTolerances(data), [data]);
+
   // Calculate quantitative analysis
   const quantAnalysis = useMemo(() => {
     if (!activeSymbolData || !activeSymbolData.expiries || activeSymbolData.expiries.length === 0) {
@@ -2854,6 +3204,7 @@ export function VercelView(): ReactElement {
     const expiries = activeSymbolData.expiries;
     const selectedLevels = activeSymbolData.selected_levels;
     const aiAnalysis = activeSymbolData.ai_analysis;
+    const tolerances = dynamicTolerances;
 
     // Combine all options for aggregated metrics
     const allOptions: OptionData[] = [];
@@ -2947,10 +3298,47 @@ export function VercelView(): ReactElement {
         aggregatedMetrics.max_pain = selectedLevels.max_pain;
       }
     } else {
-      // Fallback: calculate locally
+      // Fallback: calculate locally with expiry-weighted scoring
       walls = calculateWalls(allOptions, spot);
-      confluenceLevels = findConfluenceLevels(expiries, spot);
-      resonanceLevels = findResonanceLevels(expiries, spot);
+
+      // Use enhanced functions to get weighted scores + dominant expiry (with dynamic tolerances)
+      const confEnhanced = findConfluenceLevelsEnhanced(expiries, spot, tolerances.confluence);
+      confluenceLevels = new Map();
+      for (const level of confEnhanced) {
+        confluenceLevels.set(level.strike, level.expiries);
+        // Store as enhanced ConfluenceLevel with dominantExpiry for UI display
+        enhancedConfluenceData.set(level.strike, {
+          strike: level.strike,
+          expiries: level.expiries,
+          expiry_label: level.expiries.join('+'),
+          total_call_oi: 0,
+          total_put_oi: 0,
+          total_call_vol: 0,
+          total_put_vol: 0,
+          put_call_ratio: 0,
+          total_gamma: 0,
+          expiry_details: [],
+          dominantExpiry: level.dominantExpiry,
+        });
+      }
+
+      const resEnhanced = findResonanceLevelsEnhanced(expiries, spot, tolerances.resonance);
+      resonanceLevels = resEnhanced.map(l => l.strike);
+      for (const level of resEnhanced) {
+        enhancedResonanceData.set(level.strike, {
+          strike: level.strike,
+          expiries: level.expiries,
+          expiry_label: level.expiries.join('+'),
+          total_call_oi: 0,
+          total_put_oi: 0,
+          total_call_vol: 0,
+          total_put_vol: 0,
+          put_call_ratio: 0,
+          total_gamma: 0,
+          expiry_details: [],
+          dominantExpiry: level.dominantExpiry,
+        });
+      }
     }
 
     // Calculate sentiment - prefer AI sentiment if available
@@ -2966,13 +3354,10 @@ export function VercelView(): ReactElement {
       aggregatedMetrics.gamma_flip = aiAnalysis.outlook.gammaFlipZone;
     }
 
-    // Get individual expiry metrics
+    // Get individual expiry metrics — uses getQuantMetrics() which prefers
+    // pre-computed Python metrics (quantMetrics) and falls back to TS calculation
     const expiryMetrics = expiries.map(expiry => {
-      // Use pre-calculated metrics if available, otherwise calculate
-      if (expiry.quantMetrics) {
-        return { ...expiry, calculatedMetrics: expiry.quantMetrics };
-      }
-      const calculated = calculateAllQuantMetrics(expiry.options, spot, expiry.date);
+      const calculated = getQuantMetrics(expiry, spot);
       return { ...expiry, calculatedMetrics: calculated };
     });
 
@@ -3025,7 +3410,7 @@ export function VercelView(): ReactElement {
     
     // Track used strikes to avoid duplicates (with ±0.5% tolerance for confluence matching)
     const usedStrikes = new Set<number>();
-    const TOLERANCE_PCT = 0.5; // ±0.5% tolerance for strike matching
+    const TOLERANCE_PCT = dynamicTolerances.confluence; // Dynamic: ±0.5% baseline, scales with VIX
     
     // Helper function to check if a strike is already used (within tolerance)
     const isStrikeUsed = (strike: number): boolean => {
@@ -3196,14 +3581,38 @@ export function VercelView(): ReactElement {
           <div className="space-y-6">
             {/* Spot Price Header */}
             <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 rounded-xl p-6 border border-blue-500/30">
-              <div className="text-sm text-gray-400 uppercase tracking-wider mb-1">
-                {activeTab} Spot Price
-              </div>
-              <div className="text-4xl md:text-5xl font-bold text-white">
-                {formatCurrency(activeSymbolData.spot)}
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Generated: {activeSymbolData.generated || 'Unknown'}
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-sm text-gray-400 uppercase tracking-wider mb-1">
+                    {activeTab} Spot Price
+                  </div>
+                  <div className="text-4xl md:text-5xl font-bold text-white">
+                    {formatCurrency(activeSymbolData.spot)}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    Generated: {activeSymbolData.generated || 'Unknown'}
+                  </div>
+                </div>
+                {/* VIX Badge */}
+                {dynamicTolerances.vix !== null && (
+                  <div className="flex flex-col items-end gap-1">
+                    <div className={`px-3 py-1.5 rounded-lg border text-xs font-bold ${
+                      dynamicTolerances.vix > 25
+                        ? 'bg-red-500/15 border-red-500/40 text-red-400'
+                        : dynamicTolerances.vix > 18
+                          ? 'bg-yellow-500/15 border-yellow-500/40 text-yellow-400'
+                          : 'bg-green-500/15 border-green-500/40 text-green-400'
+                    }`}>
+                      VIX {dynamicTolerances.vix.toFixed(1)}
+                    </div>
+                    <div className="text-[10px] text-gray-500">
+                      Scale: {dynamicTolerances.scale.toFixed(2)}×
+                    </div>
+                    <div className="text-[10px] text-gray-600">
+                      Res: ±{dynamicTolerances.resonance.toFixed(2)}% | Conf: ±{dynamicTolerances.confluence.toFixed(2)}%
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -3249,6 +3658,7 @@ export function VercelView(): ReactElement {
                           key={`ai-above-${i}`}
                           level={level}
                           spot={quantAnalysis.spot}
+                          evolution={getLevelEvolution(level.prezzo, activeTab, levelHistory)}
                         />
                       ))}
 
@@ -3267,6 +3677,7 @@ export function VercelView(): ReactElement {
                           key={`ai-below-${i}`}
                           level={level}
                           spot={quantAnalysis.spot}
+                          evolution={getLevelEvolution(level.prezzo, activeTab, levelHistory)}
                         />
                       ))}
                     </div>
@@ -3296,6 +3707,7 @@ export function VercelView(): ReactElement {
                             oi={l.oi}
                             wallType={l.wallType}
                             enhancedData={l.enhancedData}
+                            evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
                           />
                         ))}
 
@@ -3319,6 +3731,7 @@ export function VercelView(): ReactElement {
                             oi={l.oi}
                             wallType={l.wallType}
                             enhancedData={l.enhancedData}
+                            evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
                           />
                         ))}
                       </div>

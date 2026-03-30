@@ -108,8 +108,8 @@ export interface SelectedLevels {
   // Enhanced format: full ConfluenceLevel objects, or legacy format with just strike/distance
   resonance: Array<ResonanceLevel | LegacyResonanceLevel>;
   confluence: Array<ConfluenceLevel | LegacyConfluenceLevel>;
-  call_walls: Array<{strike: number; oi: number; expiry: string}>;
-  put_walls: Array<{strike: number; oi: number; expiry: string}>;
+  call_walls: Array<{strike: number; oi: number; expiry: string; actionability?: LevelActionability}>;
+  put_walls: Array<{strike: number; oi: number; expiry: string; actionability?: LevelActionability}>;
   gamma_flip: number;
   max_pain: number;
 }
@@ -264,6 +264,81 @@ export interface QuantMetrics {
 }
 
 // ============================================================================
+// MARKET REGIME & CONTEXT TYPES
+// ============================================================================
+
+/**
+ * Market regime detected by the Python backend using GEX, gamma flip, VIX, and PCR signals.
+ * Computed per-symbol by detect_market_regime().
+ */
+export interface MarketRegime {
+  /** Current market regime classification */
+  regime: 'trending_up' | 'trending_down' | 'range_bound' | 'volatile';
+  /** Confidence of the regime classification (0.0-1.0) */
+  confidence: number;
+  /** Individual signal scores per regime */
+  signals: Record<string, number>;
+  /** Individual indicator values used for classification */
+  indicators: Record<string, unknown>;
+  /** Human-readable interpretation of the regime */
+  interpretation: string;
+}
+
+/**
+ * Dynamic tolerances calibrated to VIX level.
+ * Computed by calculate_dynamic_tolerances() in the Python backend.
+ */
+export interface DynamicTolerances {
+  /** Resonance tolerance as decimal fraction (e.g., 0.005 = 0.5%) */
+  resonance: number;
+  /** Confluence tolerance as decimal fraction (e.g., 0.01 = 1.0%) */
+  confluence: number;
+  /** Wall proximity tolerance as decimal fraction (e.g., 0.01 = 1.0%) */
+  wall_proximity: number;
+  /** VIX value used for calculation, or null if unavailable */
+  vix: number | null;
+  /** Scale factor applied (0.7 at VIX 12, 1.0 at VIX 20, 1.5 at VIX 40) */
+  scale: number;
+}
+
+/**
+ * Complete market context for AI prompt enhancement.
+ * Combines regime, tolerances, and timestamp into a single object
+ * that can be passed through the AI service chain.
+ */
+export interface MarketContext {
+  /** Market regime data (per-symbol) */
+  regime?: MarketRegime;
+  /** Dynamic tolerances calibrated to VIX */
+  tolerances?: DynamicTolerances;
+  /** ISO timestamp of the data */
+  timestamp?: string;
+}
+
+// ============================================================================
+// LEVEL ACTIONABILITY TYPES
+// ============================================================================
+
+/**
+ * Actionable trading metadata for a level.
+ * Computed in Python by assign_actionability() based on level type, market regime, and spot price.
+ */
+export interface LevelActionability {
+  expected_behavior: 'bounce' | 'break' | 'magnet' | 'pin';
+  confidence: number;
+  confirmation_signals: string[];
+  invalidation_level: number;
+  invalidation_description: string;
+  time_decay_impact: {
+    morning: 'strong' | 'moderate' | 'weak' | 'very_strong';
+    midday: 'strong' | 'moderate' | 'weak' | 'very_strong';
+    afternoon: 'strong' | 'moderate' | 'weak' | 'very_strong';
+    note: string;
+  } | null;
+  trading_priority: 'primary' | 'secondary' | 'contextual';
+}
+
+// ============================================================================
 // ENHANCED CONFLUENCE LEVEL TYPES
 // ============================================================================
 
@@ -295,6 +370,8 @@ export interface ConfluenceLevel {
   total_gamma: number;
   expiry_details: ConfluenceExpiryDetail[];
   distance_pct?: number;       // Distance from spot price (optional for backward compat)
+  dominantExpiry?: string;     // Expiry with highest weight contributing to this level (e.g., "0DTE")
+  actionability?: LevelActionability;
 }
 
 /**
@@ -369,4 +446,51 @@ export interface AIReadyData {
     total_gex: number;
     max_pain: number;
   };
+}
+
+// ============================================================================
+// LEVEL HISTORY TYPES (Evolution Tracking)
+// ============================================================================
+
+/**
+ * A single key level within a level history snapshot
+ */
+export interface HistoryKeyLevel {
+  strike: number;
+  role: string;
+  score: number;
+  oi: number;
+  volume: number;
+  expiry: string;
+}
+
+/**
+ * A snapshot of key levels at a point in time for a symbol
+ */
+export interface LevelSnapshot {
+  timestamp: string;
+  spot: number;
+  key_levels: HistoryKeyLevel[];
+  gamma_flip: number | null;
+  total_gex: number | null;
+}
+
+/**
+ * Complete level history data structure
+ * Contains the last N snapshots per symbol
+ */
+export interface LevelHistory {
+  level_history: Record<string, LevelSnapshot[]>;
+  last_updated: string;
+  max_snapshots: number;
+}
+
+/**
+ * Evolution trend for a level across snapshots
+ */
+export interface LevelEvolution {
+  trend: 'strengthening' | 'weakening' | 'stable' | 'new';
+  scoreChange: number;
+  oiChange: number;
+  snapshots: number;
 }
