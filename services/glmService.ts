@@ -21,7 +21,7 @@ const MAX_RETRIES = 3;
 // Get API key from Vite environment variables
 const GLM_API_KEY = import.meta.env.VITE_GLM_API_KEY;
 const GLM_API_URL = 'https://api.z.ai/api/coding/paas/v4/chat/completions';
-const GLM_MODEL = 'glm-5'; // GLM-5 model
+const GLM_MODEL = 'glm-5.1'; // GLM-5.1 model
 
 if (!GLM_API_KEY) {
     console.warn('VITE_GLM_API_KEY not set. GLM AI features will not work.');

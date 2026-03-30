@@ -17,7 +17,7 @@ export const GEMINI_MODELS = [
 ] as const;
 
 export const GLM_MODELS = [
-    { id: 'glm-5', name: 'GLM-5', description: 'Z.ai new-generation flagship base model' },
+    { id: 'glm-5.1', name: 'GLM-5.1', description: 'Z.ai new-generation flagship base model' },
     { id: 'glm-4.7', name: 'GLM-4.7', description: 'Latest flagship with open-source SOTA capabilities' },
     { id: 'glm-4.5-air', name: 'GLM-4.5-Air', description: 'New lightweight flagship model' },
     { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash', description: '30B parameters, lightweight and efficient' },
@@ -52,14 +52,14 @@ export const setStoredProvider = (provider: AIProvider): void => {
 // Get the stored model preference for a provider
 export const getStoredModel = (provider: AIProvider): string => {
     if (typeof window === 'undefined') {
-        return provider === 'gemini' ? 'gemini-2.5-flash' : 'glm-5';
+        return provider === 'gemini' ? 'gemini-2.5-flash' : 'glm-5.1';
     }
     const stored = localStorage.getItem(`${MODEL_STORAGE_KEY}_${provider}`);
     if (stored) {
         return stored;
     }
     // Default models
-    return provider === 'gemini' ? 'gemini-2.5-flash' : 'glm-5';
+    return provider === 'gemini' ? 'gemini-2.5-flash' : 'glm-5.1';
 };
 
 // Store model preference
