@@ -500,6 +500,7 @@ class OptionsDataset:
     expiries: List[Dict[str, Any]]
     spot_source: str = 'yahoo'  # 'twelvedata', 'yahoo', 'none'
     total_gex_data: Dict[str, Any] = None  # GEX calcolato su TUTTE le scadenze
+    data_quality: Dict[str, Any] = None  # Data quality assessment
 
 
 def is_friday(date_str: str) -> bool:
@@ -791,9 +792,9 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
         oi = opt['oi']
         side = opt['side']
         
-        # Filter strikes beyond 15% from spot
+        # Filter strikes beyond 10% from spot
         if spot > 0:
-            max_dist = spot * 0.15
+            max_dist = spot * 0.10
             if abs(strike - spot) > max_dist:
                 continue
         
@@ -834,7 +835,14 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
             if abs(prev_gex) + abs(curr_gex) > 0:
                 ratio = abs(prev_gex) / (abs(prev_gex) + abs(curr_gex))
                 flip_point = prev_strike + ratio * (curr_strike - prev_strike)
-                return round(flip_point, 2)
+                # Post-validation: reject flip points too far from spot
+                if spot > 0:
+                    distance_pct = abs(flip_point - spot) / spot
+                    if distance_pct > 0.10:
+                        logger.warning(f"Gamma flip {flip_point:.2f} is {distance_pct*100:.1f}% from spot {spot:.2f} — unreliable, setting to None")
+                        flip_point = None
+                if flip_point is not None:
+                    return round(flip_point, 2)
     
     # If no flip found, return None
     logger.warning("Cannot calculate gamma flip across all expiries: no GEX sign change found (OI may be zero - market closed)")
@@ -934,6 +942,7 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
         # Processa CALLs
         for _, row in chain.calls.iterrows():
             iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > 0 else DEFAULT_IV
+            iv = min(iv, 3.0)  # Cap at 300% to prevent extreme values
             options.append({
                 "strike": round(float(row['strike']), 2),
                 "side": "CALL",
@@ -945,6 +954,7 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
         # Processa PUTs
         for _, row in chain.puts.iterrows():
             iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > 0 else DEFAULT_IV
+            iv = min(iv, 3.0)  # Cap at 300% to prevent extreme values
             options.append({
                 "strike": round(float(row['strike']), 2),
                 "side": "PUT",
@@ -962,6 +972,43 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
     except Exception as e:
         logger.error(f"  ❌ Errore su {label}: {e}")
         return None
+
+
+def check_data_quality(expiries, spot):
+    """Check if options data is sufficient for reliable analysis."""
+    total_oi = 0
+    near_money_oi = 0
+    put_oi_near = 0
+    call_oi_near = 0
+    
+    for exp in expiries:
+        opts = exp.get('options', []) if isinstance(exp, dict) else []
+        for opt in opts:
+            oi = opt.get('oi', 0)
+            strike = opt.get('strike', 0)
+            side = opt.get('side', '')
+            total_oi += oi
+            if spot > 0 and abs(strike - spot) / spot < 0.05:
+                near_money_oi += oi
+                if side == 'PUT':
+                    put_oi_near += oi
+                elif side == 'CALL':
+                    call_oi_near += oi
+    
+    if near_money_oi > 1000 and put_oi_near > 100 and call_oi_near > 100:
+        quality = 'good'
+    elif total_oi > 0:
+        quality = 'degraded'
+    else:
+        quality = 'stale'
+    
+    return {
+        'total_oi': total_oi,
+        'near_money_oi': near_money_oi,
+        'put_oi_near_money': put_oi_near,
+        'call_oi_near_money': call_oi_near,
+        'quality': quality
+    }
 
 
 def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
@@ -1024,13 +1071,17 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
         total_gex_data = calculate_total_gex_all_expiries(ticker, spot, expirations)
         logger.info(f"  -> GEX Totale: {total_gex_data['total_gex']:.2f}B (Positive: {total_gex_data['positive_gex']:.2f}B, Negative: {total_gex_data['negative_gex']:.2f}B)")
         
+        # Add data quality check
+        quality = check_data_quality(expiries, spot)
+        
         return OptionsDataset(
             symbol=symbol,  # Usa il simbolo originale (senza ^)
             spot=round(spot, 2),
             spot_source=spot_source,
             generated=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             expiries=expiries,
-            total_gex_data=total_gex_data  # NUOVO: GEX su tutte le scadenze
+            total_gex_data=total_gex_data,  # NUOVO: GEX su tutte le scadenze
+            data_quality=quality
         )
         
     except Exception as e:
@@ -1407,9 +1458,9 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
         if strike <= 0:
             continue
         
-        # Filter strikes beyond 15% from spot
+        # Filter strikes beyond 10% from spot
         if spot > 0:
-            max_dist = spot * 0.15
+            max_dist = spot * 0.10
             if abs(strike - spot) > max_dist:
                 continue
         
@@ -1519,6 +1570,16 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
             logger.warning("Cannot calculate gamma flip: insufficient data")
         return None
     
+    # Post-validation: reject flip points too far from spot
+    if gamma_flip is not None and spot > 0:
+        distance_pct = abs(gamma_flip - spot) / spot
+        if distance_pct > 0.10:
+            logger.warning(f"Gamma flip {gamma_flip:.2f} is {distance_pct*100:.1f}% from spot {spot:.2f} — unreliable, setting to None")
+            gamma_flip = None
+    
+    if gamma_flip is None:
+        return None
+    
     logger.info(f"Gamma flip calculated: {gamma_flip:.2f} (method: {flip_method})")
     return round(gamma_flip, 2)
 
@@ -1555,6 +1616,12 @@ def calculate_gamma_flip_zone(options: List[Dict[str, Any]], spot: float, T: flo
         strike = opt.get('strike', 0)
         if strike <= 0:
             continue
+        
+        # Filter strikes beyond 10% from spot
+        if spot > 0:
+            max_dist = spot * 0.10
+            if abs(strike - spot) > max_dist:
+                continue
         
         if strike not in strikes_data:
             strikes_data[strike] = {'call_oi': 0, 'put_oi': 0, 'call_iv': 0.3, 'put_iv': 0.3}
@@ -1722,6 +1789,16 @@ def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
     
     # Testa ogni strike come possibile prezzo alla scadenza
     test_strikes = sorted(strikes_data.keys())
+    
+    # Filter test strikes to within 10% of spot
+    if spot > 0:
+        max_dist = spot * 0.10
+        test_strikes = [s for s in test_strikes if abs(s - spot) <= max_dist]
+    
+    if not test_strikes:
+        logger.warning("Cannot calculate max pain: no strikes within 10% of spot")
+        return None
+    
     min_value = float('inf')
     max_pain = None
     
@@ -1742,6 +1819,12 @@ def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
     if max_pain is None:
         logger.warning("Cannot calculate max pain: no valid strike found")
         return None
+    
+    if max_pain is not None and spot > 0:
+        distance_pct = abs(max_pain - spot) / spot
+        if distance_pct > 0.10:
+            logger.warning(f"Max pain {max_pain:.2f} is {distance_pct*100:.1f}% from spot — unreliable, setting to None")
+            return None
     
     return round(max_pain, 2)
 
@@ -1870,7 +1953,7 @@ def calculate_volatility_skew(options: List[Dict[str, Any]], spot: float) -> Dic
         iv = opt.get('iv', 0)
         oi = opt.get('oi', 0)
         
-        if iv <= 0:
+        if iv <= 0 or iv > 2.0:  # Skip IV > 200%
             continue
         
         if opt.get('side') == 'PUT':
@@ -1886,8 +1969,8 @@ def calculate_volatility_skew(options: List[Dict[str, Any]], spot: float) -> Dic
             return 0.0
         return sum(v * w for v, w in zip(values, weights)) / sum(weights)
     
-    put_iv_avg = weighted_avg(put_ivs, put_oi_weights) if put_ivs else 0.0
-    call_iv_avg = weighted_avg(call_ivs, call_oi_weights) if call_ivs else 0.0
+    put_iv_avg = weighted_avg(put_ivs, put_oi_weights) if put_ivs else DEFAULT_IV
+    call_iv_avg = weighted_avg(call_ivs, call_oi_weights) if call_ivs else DEFAULT_IV
     
     # Calculate skew ratio
     if call_iv_avg > 0:
@@ -2773,23 +2856,17 @@ def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3) ->
         calls.sort(key=lambda x: x[1], reverse=True)
         puts.sort(key=lambda x: x[1], reverse=True)
         
-        # Prendi top N call walls (sopra lo spot)
-        for strike, oi in calls[:top_n]:
-            if strike > spot:
-                call_walls.append({
-                    "strike": round(strike, 2),
-                    "oi": oi,
-                    "expiry": expiry_label
-                })
+        # Filter to above spot FIRST, then take top N by OI
+        calls_above = [(s, o) for s, o in calls if s > spot and o > 0]
+        calls_above.sort(key=lambda x: x[1], reverse=True)
+        for strike, oi in calls_above[:top_n]:
+            call_walls.append({"strike": round(strike, 2), "oi": oi, "expiry": expiry_label})
         
-        # Prendi top N put walls (sotto lo spot)
-        for strike, oi in puts[:top_n]:
-            if strike < spot:
-                put_walls.append({
-                    "strike": round(strike, 2),
-                    "oi": oi,
-                    "expiry": expiry_label
-                })
+        # Filter to below spot FIRST, then take top N by OI
+        puts_below = [(s, o) for s, o in puts if s < spot and o > 0]
+        puts_below.sort(key=lambda x: x[1], reverse=True)
+        for strike, oi in puts_below[:top_n]:
+            put_walls.append({"strike": round(strike, 2), "oi": oi, "expiry": expiry_label})
     
     # Ordina per OI decrescente e limita a top N globali
     call_walls.sort(key=lambda x: x['oi'], reverse=True)
