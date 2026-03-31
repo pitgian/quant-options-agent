@@ -795,7 +795,7 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
         # Filter strikes beyond 10% from spot
         if spot > 0:
             max_dist = spot * 0.10
-            if abs(strike - spot) > max_dist:
+            if abs(strike - spot) >= max_dist:
                 continue
         
         gamma = calculate_black_scholes_gamma(spot, strike, T, r, iv)
@@ -838,7 +838,7 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
                 # Post-validation: reject flip points too far from spot
                 if spot > 0:
                     distance_pct = abs(flip_point - spot) / spot
-                    if distance_pct > 0.10:
+                    if distance_pct >= 0.10:
                         logger.warning(f"Gamma flip {flip_point:.2f} is {distance_pct*100:.1f}% from spot {spot:.2f} — unreliable, setting to None")
                         flip_point = None
                 if flip_point is not None:
@@ -1461,7 +1461,7 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
         # Filter strikes beyond 10% from spot
         if spot > 0:
             max_dist = spot * 0.10
-            if abs(strike - spot) > max_dist:
+            if abs(strike - spot) >= max_dist:
                 continue
         
         if strike not in strikes_data:
@@ -1573,7 +1573,7 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
     # Post-validation: reject flip points too far from spot
     if gamma_flip is not None and spot > 0:
         distance_pct = abs(gamma_flip - spot) / spot
-        if distance_pct > 0.10:
+        if distance_pct >= 0.10:
             logger.warning(f"Gamma flip {gamma_flip:.2f} is {distance_pct*100:.1f}% from spot {spot:.2f} — unreliable, setting to None")
             gamma_flip = None
     
@@ -1620,7 +1620,7 @@ def calculate_gamma_flip_zone(options: List[Dict[str, Any]], spot: float, T: flo
         # Filter strikes beyond 10% from spot
         if spot > 0:
             max_dist = spot * 0.10
-            if abs(strike - spot) > max_dist:
+            if abs(strike - spot) >= max_dist:
                 continue
         
         if strike not in strikes_data:
@@ -1793,7 +1793,7 @@ def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
     # Filter test strikes to within 10% of spot
     if spot > 0:
         max_dist = spot * 0.10
-        test_strikes = [s for s in test_strikes if abs(s - spot) <= max_dist]
+        test_strikes = [s for s in test_strikes if abs(s - spot) < max_dist]
     
     if not test_strikes:
         logger.warning("Cannot calculate max pain: no strikes within 10% of spot")
@@ -1822,7 +1822,7 @@ def calculate_max_pain(options: List[Dict[str, Any]], spot: float) -> float:
     
     if max_pain is not None and spot > 0:
         distance_pct = abs(max_pain - spot) / spot
-        if distance_pct > 0.10:
+        if distance_pct >= 0.10:
             logger.warning(f"Max pain {max_pain:.2f} is {distance_pct*100:.1f}% from spot — unreliable, setting to None")
             return None
     

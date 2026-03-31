@@ -3750,12 +3750,46 @@ export function VercelView(): ReactElement {
                   </div>
                 )}
 
+                {/* Pre-market / Stale data warning for 0DTE metrics */}
+                {quantAnalysis && quantAnalysis.expiryMetrics && quantAnalysis.expiryMetrics.length > 0 && quantAnalysis.expiryMetrics[0].calculatedMetrics &&
+                  quantAnalysis.expiryMetrics[0].calculatedMetrics.total_gex !== undefined &&
+                  Math.abs(quantAnalysis.expiryMetrics[0].calculatedMetrics.total_gex) < 0.001 && (
+                  <div style={{
+                    background: 'rgba(255, 152, 0, 0.1)',
+                    border: '1px solid rgba(255, 152, 0, 0.3)',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    marginBottom: '12px',
+                    fontSize: '12px',
+                    color: '#ff9800',
+                    textAlign: 'center'
+                  }}>
+                    ⚠️ Pre-market data — OI not yet available. Metrics will update after market open (9:30 AM ET).
+                  </div>
+                )}
+
                 {/* 0DTE Metrics Display - First Expiry Only */}
                 {quantAnalysis && quantAnalysis.expiryMetrics && quantAnalysis.expiryMetrics.length > 0 && quantAnalysis.expiryMetrics[0].calculatedMetrics && (
                   <ZeroDTEMetricsDisplay
                     metrics={quantAnalysis.expiryMetrics[0].calculatedMetrics}
                     spot={activeSymbolData.spot}
                   />
+                )}
+
+                {/* Pre-market / Stale data warning for Total Market GEX */}
+                {activeSymbolData.totalGexData && Math.abs(activeSymbolData.totalGexData.total_gex) < 0.001 && (
+                  <div style={{
+                    background: 'rgba(255, 152, 0, 0.1)',
+                    border: '1px solid rgba(255, 152, 0, 0.3)',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    marginBottom: '12px',
+                    fontSize: '12px',
+                    color: '#ff9800',
+                    textAlign: 'center'
+                  }}>
+                    ⚠️ Pre-market data — GEX will populate after market open.
+                  </div>
                 )}
 
                 {/* Total GEX Display (All Expiries) */}
