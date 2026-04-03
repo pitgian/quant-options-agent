@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "generated": "2026-04-03T13:56:10.856766Z",
+  "generated": "2026-04-03T15:06:33.016659Z",
   "dynamic_tolerances": {
     "resonance": 0.00548,
     "confluence": 0.01097,
@@ -11,7 +11,7 @@
   "symbols": {
     "SPY": {
       "spot": 655.83,
-      "generated": "2026-04-03T13:56:13.641814Z",
+      "generated": "2026-04-03T15:06:34.816956Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -10555,9 +10555,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -10625,9 +10625,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           }
         ],
@@ -11035,9 +11035,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -11089,9 +11089,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -11120,9 +11120,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           }
         ],
@@ -11268,9 +11268,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -11299,9 +11299,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -11330,9 +11330,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -11921,68 +11921,11 @@
           "step_pct": 0.05
         }
       },
-      "ai_analysis": {
-        "outlook": {
-          "sentiment": "bearish",
-          "gammaFlipZone": 591.0,
-          "volatilityExpectation": "High volatility expected: Negative GEX amplifies downside movement",
-          "summary": "Dealers are heavily short gamma, forcing them to sell into declines. Massive Put OI at 630 creates a gravitational pull, while Max Pain at 650 exacerbates downside pressure."
-        },
-        "levels": [
-          {
-            "livello": "PUT WALL (RESONANCE)",
-            "prezzo": 630.0,
-            "motivazione": "Massive Put Open Interest across ALL expiries (35k 0DTE, 129k Weekly, 131k Monthly) creates the ultimate structural support.",
-            "sintesiOperativa": "MM DEFENSE: Ultimate support floor",
-            "colore": "verde",
-            "importanza": 99,
-            "ruolo": "RESONANCE",
-            "isDayTrade": false,
-            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
-            "lato": "PUT"
-          },
-          {
-            "livello": "MAGNET (MAX PAIN)",
-            "prezzo": 650.0,
-            "motivazione": "0DTE Max Pain level combined with high Put OI in Monthly (76k) creates strong downward attraction from current spot.",
-            "sintesiOperativa": "ATTRACTION: Max Pain target active",
-            "colore": "ambra",
-            "importanza": 92,
-            "ruolo": "CONFLUENCE",
-            "isDayTrade": true,
-            "scadenzaTipo": "0DTE+MONTHLY",
-            "lato": "PUT"
-          },
-          {
-            "livello": "PUT WALL (CONFLUENCE)",
-            "prezzo": 640.0,
-            "motivazione": "Significant Put concentration in Weekly (23k OI) and Monthly (100k OI) acts as a secondary structural defense.",
-            "sintesiOperativa": "SUPPORT: Secondary defense zone",
-            "colore": "verde",
-            "importanza": 88,
-            "ruolo": "CONFLUENCE",
-            "isDayTrade": false,
-            "scadenzaTipo": "WEEKLY+MONTHLY",
-            "lato": "PUT"
-          },
-          {
-            "livello": "CALL WALL",
-            "prezzo": 685.0,
-            "motivazione": "Dominant Call Open Interest in Monthly (34k) defines the major upside resistance cap for the structure.",
-            "sintesiOperativa": "SELL AREA: Strong resistance cap",
-            "colore": "rosso",
-            "importanza": 82,
-            "ruolo": "WALL",
-            "isDayTrade": false,
-            "scadenzaTipo": "MONTHLY",
-            "lato": "CALL"
-          }
-        ]
-      }
+      "ai_analysis": null
     },
     "QQQ": {
       "spot": 584.98,
-      "generated": "2026-04-03T13:56:17.967724Z",
+      "generated": "2026-04-03T15:06:38.570654Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -20335,9 +20278,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -20403,9 +20346,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           }
         ],
@@ -20790,9 +20733,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -20867,9 +20810,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -20898,9 +20841,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           }
         ],
@@ -21000,9 +20943,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -21054,9 +20997,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -21085,9 +21028,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -21703,102 +21646,90 @@
       },
       "ai_analysis": {
         "outlook": {
-          "sentiment": "neutral",
-          "gammaFlipZone": 609.97,
-          "volatilityExpectation": "MODERATE: Mixed GEX - short-term positive, monthly negative (-0.52B) creates asymmetric risk. Bearish skew suggests downside protection demand.",
-          "summary": "Market pinned near Weekly Max Pain at 585. Strong RESONANCE support cluster at 570-580 across all expiries. High 0DTE PCR (1.84) indicates extreme bearish positioning - potential contrarian bounce. Breakout above 595 CALL WALL targets 600."
+          "sentiment": "bearish",
+          "gammaFlipZone": 534.32,
+          "volatilityExpectation": "Moderate volatility expected; positive total GEX stabilizes but negative monthly GEX and smirk skews suggest downside bias if support breaks.",
+          "summary": "Spot (584.98) is trapped between structural support at 580 and resistance at 590-595. High PCR (1.84 0DTE) and bearish skew indicate pessimism, but positive total GEX and proximity to Max Pain (580-585) suggest dealers may pin price. Watch 580 support - break targets 570."
         },
         "levels": [
           {
-            "livello": "PUT WALL RESONANCE",
+            "livello": "PUT WALL",
             "prezzo": 580.0,
-            "motivazione": "RESONANCE across ALL expiries (0DTE+WEEKLY+MONTHLY). Top 0DTE PUT OI (12,516) with massive volume (57,538). Aligns with 0DTE Max Pain. Primary dealer hedging anchor.",
-            "sintesiOperativa": "MM DEFENSE: Critical support",
-            "colore": "verde",
-            "importanza": 95,
-            "ruolo": "RESONANCE",
-            "isDayTrade": true,
-            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
-            "lato": "PUT"
-          },
-          {
-            "livello": "PUT WALL RESONANCE",
-            "prezzo": 570.0,
-            "motivazione": "RESONANCE across ALL expiries. Monthly top PUT OI (40,311). Deep institutional support with strong dealer interest. Secondary floor below 580.",
-            "sintesiOperativa": "FLOOR: Institutional anchor",
+            "motivazione": "Massive Put OI (12,516 0DTE, 6,505 WEEKLY, 32,142 MONTHLY). Max Pain alignment. Highest VOL (57,538) confirms active defense.",
+            "sintesiOperativa": "MM DEFENSE: Critical support zone",
             "colore": "verde",
             "importanza": 92,
-            "ruolo": "RESONANCE",
-            "isDayTrade": false,
-            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "ruolo": "WALL",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE",
             "lato": "PUT"
           },
           {
-            "livello": "GAMMA PIVOT",
+            "livello": "PIVOT / MAX PAIN",
             "prezzo": 585.0,
-            "motivazione": "Weekly Max Pain EXACT level. Spot equilibrium at 584.98. High 0DTE volume cluster (585 CALL 36,918 VOL). Natural price magnet zone.",
-            "sintesiOperativa": "MAGNET: Pin zone active",
+            "motivazione": "WEEKLY Max Pain. Balanced Put/Call structure creates equilibrium. Spot proximity (0.00%) indicates pinning potential.",
+            "sintesiOperativa": "ATTRACTION: Price magnet active",
             "colore": "indigo",
-            "importanza": 90,
+            "importanza": 88,
             "ruolo": "PIVOT",
             "isDayTrade": true,
             "scadenzaTipo": "WEEKLY",
             "lato": "BOTH"
           },
           {
-            "livello": "CALL WALL CONFLUENCE",
+            "livello": "CALL WALL",
             "prezzo": 595.0,
-            "motivazione": "CONFLUENCE (0DTE+WEEKLY). Top 0DTE CALL OI (7,904). Weekly 2nd top CALL (7,467). Primary resistance above spot.",
-            "sintesiOperativa": "RESISTANCE: Breakout needed",
-            "colore": "rosso",
-            "importanza": 88,
-            "ruolo": "CONFLUENCE",
-            "isDayTrade": true,
-            "scadenzaTipo": "0DTE+WEEKLY",
-            "lato": "CALL"
-          },
-          {
-            "livello": "WALL",
-            "prezzo": 590.0,
-            "motivazione": "Monthly Max Pain target. Massive OI cluster (PUT 30,889 + CALL 20,735). Weekly top PUT (10,466). Key resistance/magnet above spot.",
-            "sintesiOperativa": "TARGET: Max Pain draw",
+            "motivazione": "Dominant Call OI across 0DTE (7,904) and MONTHLY (7,908). Structural resistance. 1.71% above spot.",
+            "sintesiOperativa": "SHORT: Strong resistance zone",
             "colore": "rosso",
             "importanza": 85,
             "ruolo": "WALL",
             "isDayTrade": false,
-            "scadenzaTipo": "MONTHLY",
-            "lato": "BOTH"
-          },
-          {
-            "livello": "MAJOR CALL WALL",
-            "prezzo": 600.0,
-            "motivazione": "Massive Monthly structure (PUT 38,747 + CALL 37,024). Psychological ceiling. Negative monthly GEX amplifies moves near this level.",
-            "sintesiOperativa": "CEILING: Structural cap",
-            "colore": "rosso",
-            "importanza": 82,
-            "ruolo": "WALL",
-            "isDayTrade": false,
-            "scadenzaTipo": "MONTHLY",
+            "scadenzaTipo": "0DTE+MONTHLY",
             "lato": "CALL"
           },
           {
             "livello": "PUT WALL",
-            "prezzo": 560.0,
-            "motivazione": "Strong Monthly PUT OI (32,800). Deep support below 570. Tail risk hedge zone.",
-            "sintesiOperativa": "FLOOR: Emergency support",
+            "prezzo": 570.0,
+            "motivazione": "Major Put OI in MONTHLY (40,311) with WEEKLY (4,591) and 0DTE (10,417) confluence. Secondary support 2.56% below spot.",
+            "sintesiOperativa": "MM DEFENSE: Structural support",
             "colore": "verde",
-            "importanza": 78,
+            "importanza": 84,
             "ruolo": "WALL",
             "isDayTrade": false,
             "scadenzaTipo": "MONTHLY",
             "lato": "PUT"
+          },
+          {
+            "livello": "GAMMA FLIP",
+            "prezzo": 534.32,
+            "motivazione": "0DTE Gamma Flip - far below spot indicating positive gamma regime. If approached, volatility acceleration zone.",
+            "sintesiOperativa": "RISK: Volatility trigger if breached",
+            "colore": "ambra",
+            "importanza": 65,
+            "ruolo": "PIVOT",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE",
+            "lato": "GAMMA_FLIP"
+          },
+          {
+            "livello": "FRICTION ZONE",
+            "prezzo": 590.0,
+            "motivazione": "WEEKLY Put Wall (10,466 OI) + Call Wall confluence. High Put OI (30,889 MONTHLY). Transitional friction zone.",
+            "sintesiOperativa": "SCALPING: Expected volatility in range",
+            "colore": "ambra",
+            "importanza": 80,
+            "ruolo": "FRICTION",
+            "isDayTrade": true,
+            "scadenzaTipo": "WEEKLY",
+            "lato": "BOTH"
           }
         ]
       }
     },
     "SPX": {
       "spot": 6603.75,
-      "generated": "2026-04-03T13:56:23.337568Z",
+      "generated": "2026-04-03T15:06:42.866744Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -38565,9 +38496,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -38633,9 +38564,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           }
         ],
@@ -38997,9 +38928,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -39028,9 +38959,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -39082,9 +39013,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -39299,9 +39230,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -39330,9 +39261,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -39361,9 +39292,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           }
         ],
@@ -39935,7 +39866,7 @@
     },
     "NDX": {
       "spot": 24129.75,
-      "generated": "2026-04-03T13:56:27.628586Z",
+      "generated": "2026-04-03T15:06:46.391282Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -45611,9 +45542,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -45682,9 +45613,9 @@
               "adjusted_score": 95.0,
               "original_score": 95,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           }
         ],
@@ -46103,9 +46034,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -46135,9 +46066,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -46167,9 +46098,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -46345,9 +46276,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -46377,9 +46308,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -46409,9 +46340,9 @@
               "adjusted_score": 70.0,
               "original_score": 70,
               "decay_factor": 1.0,
-              "time_window": "pre_market",
+              "time_window": "morning",
               "status": "ACTIVE",
-              "note": "0DTE full strength: pre_market window"
+              "note": "0DTE full strength: morning window"
             }
           },
           {
@@ -47001,106 +46932,82 @@
       "ai_analysis": {
         "outlook": {
           "sentiment": "neutral",
-          "gammaFlipZone": 22984.29,
-          "volatilityExpectation": "Moderate volatility with upside bias; positive GEX suppresses large moves but monthly negative GEX adds tail risk",
-          "summary": "Spot hovers near 24000 max pain magnetic zone with positive aggregate GEX providing stability. Bearish skew (1.32-1.33) and elevated volume PCR (1.10) suggest caution, but dealers are long gamma. Watch 24300 confluence resistance and 23300-23400 structural support."
+          "gammaFlipZone": 23175.12,
+          "volatilityExpectation": "Positive total GEX (~0.32B net) suppresses volatility. Monthly negative GEX may amplify moves near 24000. Bearish skew (1.32-1.33) indicates hedging pressure.",
+          "summary": "Market consolidating between RESONANCE levels at 24000 support and 24400 resistance. Monthly Max Pain at 24100 acts as primary magnet. Bearish skew suggests protective put hedging, but positive gamma exposure indicates dealer hedging will dampen volatility. Watch 24000 for breakdown or 24400 breakout. Unusual call activity at 24100 signals intraday interest."
         },
         "levels": [
           {
-            "livello": "MAX PAIN MAGNET",
+            "livello": "PUT WALL - RESONANCE",
             "prezzo": 24000.0,
-            "motivazione": "0DTE max pain + Monthly Put OI (535) + 0DTE Put OI (122). Spot within 0.54% creates powerful magnetic attraction. Institutional target zone.",
-            "sintesiOperativa": "MAGNET: Strong pull to 24000",
+            "motivazione": "CRITICAL: Structural support across ALL 3 expiries. 0DTE: 122 Put OI + Max Pain alignment. Weekly: 74 total OI. Monthly: 535 Put OI (massive). Bears' final defense line. Break triggers acceleration to 23500.",
+            "sintesiOperativa": "MM DEFENSE: Key structural support",
             "colore": "verde",
-            "importanza": 92,
+            "importanza": 98,
+            "ruolo": "RESONANCE",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "PUT"
+          },
+          {
+            "livello": "MAX PAIN - MAGNET",
+            "prezzo": 24100.0,
+            "motivazione": "Monthly Max Pain level - dealer target zone. 0DTE unusual activity: 226 VOL vs 30 OI (7.5x ratio). Spot within 0.12%. Strong magnetic pull expected.",
+            "sintesiOperativa": "ATTRACTION: Price magnet active",
+            "colore": "indigo",
+            "importanza": 90,
             "ruolo": "MAGNET",
             "isDayTrade": true,
             "scadenzaTipo": "0DTE+MONTHLY",
             "lato": "BOTH"
           },
           {
-            "livello": "CALL WALL CONFLUENCE",
-            "prezzo": 24300.0,
-            "motivazione": "Call OI confluence: Weekly (202) + Monthly (411). Immediate resistance 0.7% above spot. High volume activity confirms level importance.",
-            "sintesiOperativa": "WALL: Resistance at 24300",
+            "livello": "CALL WALL - RESONANCE",
+            "prezzo": 24400.0,
+            "motivazione": "First major resistance across ALL 3 expiries. 0DTE: 49 Call OI. Weekly: 211 Call OI. Monthly: 181 combined OI. Dealer gamma selling creates ceiling.",
+            "sintesiOperativa": "SELL AREA: Strong resistance zone",
             "colore": "rosso",
-            "importanza": 88,
-            "ruolo": "CONFLUENCE",
+            "importanza": 92,
+            "ruolo": "RESONANCE",
             "isDayTrade": true,
-            "scadenzaTipo": "WEEKLY+MONTHLY",
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
             "lato": "CALL"
           },
           {
             "livello": "CALL WALL",
             "prezzo": 24700.0,
-            "motivazione": "Highest 0DTE call OI (188). Primary upside cap for intraday. MM delta hedging creates firm resistance.",
-            "sintesiOperativa": "WALL: Major resistance 24700",
-            "colore": "rosso",
-            "importanza": 85,
-            "ruolo": "WALL",
-            "isDayTrade": true,
-            "scadenzaTipo": "0DTE",
-            "lato": "CALL"
-          },
-          {
-            "livello": "PUT WALL STRUCTURE",
-            "prezzo": 23400.0,
-            "motivazione": "Weekly Put OI (205) forms structural support. Flat skew in weekly suggests balanced defense at this level.",
-            "sintesiOperativa": "SUPPORT: Structural floor 23400",
-            "colore": "verde",
-            "importanza": 82,
-            "ruolo": "WALL",
-            "isDayTrade": false,
-            "scadenzaTipo": "WEEKLY",
-            "lato": "PUT"
-          },
-          {
-            "livello": "PUT WALL",
-            "prezzo": 23300.0,
-            "motivazione": "Weekly Put OI (208). Combined with 23400 creates support band. MM gamma support zone.",
-            "sintesiOperativa": "SUPPORT: Key level 23300",
-            "colore": "verde",
-            "importanza": 80,
-            "ruolo": "WALL",
-            "isDayTrade": false,
-            "scadenzaTipo": "WEEKLY",
-            "lato": "PUT"
-          },
-          {
-            "livello": "CALL OI CLUSTER",
-            "prezzo": 24100.0,
-            "motivazione": "Monthly max pain + Monthly Call OI (245) + 0DTE Call VOL spike (226). Near-spot friction level with unusual activity.",
-            "sintesiOperativa": "FRICTION: Battle zone 24100",
-            "colore": "ambra",
-            "importanza": 86,
-            "ruolo": "FRICTION",
-            "isDayTrade": true,
-            "scadenzaTipo": "0DTE+MONTHLY",
-            "lato": "CALL"
-          },
-          {
-            "livello": "CALL WALL",
-            "prezzo": 25000.0,
-            "motivazione": "0DTE Call OI (167) + Weekly Call OI (106). Secondary resistance. Upside target if 24700 breaks.",
-            "sintesiOperativa": "WALL: Secondary resistance 25000",
+            "motivazione": "0DTE dominant CALL concentration (188 OI - highest). Intraday resistance for gamma scalping. High volume activity validates level.",
+            "sintesiOperativa": "RESISTANCE: Intraday sell zone",
             "colore": "rosso",
             "importanza": 78,
             "ruolo": "WALL",
-            "isDayTrade": false,
-            "scadenzaTipo": "0DTE+WEEKLY",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE",
             "lato": "CALL"
           },
           {
-            "livello": "GAMMA FLIP",
-            "prezzo": 22984.29,
-            "motivazione": "0DTE gamma flip below spot. Transition zone where dealer hedging reverses. Far from spot - low immediate relevance.",
-            "sintesiOperativa": "PIVOT: Gamma regime change",
-            "colore": "indigo",
-            "importanza": 65,
-            "ruolo": "PIVOT",
+            "livello": "CALL WALL - RESONANCE",
+            "prezzo": 25000.0,
+            "motivazione": "Major structural resistance across ALL 3 expiries. 0DTE: 167 Call OI. Weekly: 106 Call OI. Monthly: 67 Call OI. Psychological barrier + dealer target.",
+            "sintesiOperativa": "MM TARGET: Major resistance",
+            "colore": "rosso",
+            "importanza": 88,
+            "ruolo": "RESONANCE",
             "isDayTrade": false,
-            "scadenzaTipo": "0DTE",
-            "lato": "GAMMA_FLIP"
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "CALL"
+          },
+          {
+            "livello": "PUT WALL - CONFLUENCE",
+            "prezzo": 23500.0,
+            "motivazione": "Secondary support confluence. Weekly: 32 Put OI. Monthly: 266 Put OI. Bearish skew (1.33) validates support strength. Breakdown target if 24000 fails.",
+            "sintesiOperativa": "SUPPORT: Secondary structure",
+            "colore": "verde",
+            "importanza": 82,
+            "ruolo": "CONFLUENCE",
+            "isDayTrade": false,
+            "scadenzaTipo": "WEEKLY+MONTHLY",
+            "lato": "PUT"
           }
         ]
       }
