@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "generated": "2026-04-03T18:34:23.879528Z",
+  "generated": "2026-04-03T19:25:28.938377Z",
   "dynamic_tolerances": {
     "resonance": 0.00548,
     "confluence": 0.01097,
@@ -11,7 +11,7 @@
   "symbols": {
     "SPY": {
       "spot": 655.83,
-      "generated": "2026-04-03T18:34:27.822129Z",
+      "generated": "2026-04-03T19:25:30.952436Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -11925,89 +11925,101 @@
         "outlook": {
           "sentiment": "bearish",
           "gammaFlipZone": 591.0,
-          "volatilityExpectation": "HIGH - Negative GEX regime amplifies all price movements. Total GEX at -5.28B indicates dealers short gamma across all expiries.",
-          "summary": "Market in acute short gamma regime with extreme bearish positioning. Negative GEX across all expiries (-5.28B total) means dealer hedging will amplify moves. Extreme PCR (4.09 MONTHLY) and steep smirk skew (1.42) confirm panic-level bearishness. Spot trapped between 650 support and 665 resistance with WEEKLY Max Pain at 656 acting as near-term magnet."
+          "volatilityExpectation": "HIGH VOLATILITY: Negative total GEX (-5.28B combined) across all expiries indicates dealers are aggressively short gamma, amplifying price movements. Bearish smirk skew (1.28-1.42) confirms persistent hedging pressure.",
+          "summary": "Extremely bearish structure with PCR ratios escalating from 1.76 (0DTE) to 4.09 (MONTHLY). Spot at 655.83 is magnetically attracted to weekly max pain at 656. Major structural support at 630-640 resonance zone. Resistance cluster 660-685 caps upside. Short gamma environment will accelerate any directional moves."
         },
         "levels": [
           {
             "livello": "PUT WALL - RESONANCE",
             "prezzo": 630.0,
-            "motivazione": "Ultimate structural support with massive OI across ALL expiries: 0DTE 35K, WEEKLY 129K, MONTHLY 131K. Highest concentration of put open interest. Bearish smirk skew validates strength.",
-            "sintesiOperativa": "DEFENSE: Ultimate support zone",
+            "motivazione": "DOMINANT put wall across ALL three expiries with 35K/129K/132K OI progression. Primary structural floor in short gamma environment. Extremely high VOL/OI ratio confirms active defense.",
+            "sintesiOperativa": "MM DEFENSE: Structural support",
             "colore": "verde",
             "importanza": 98,
             "ruolo": "RESONANCE",
-            "isDayTrade": false,
+            "isDayTrade": true,
             "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
             "lato": "PUT"
           },
           {
             "livello": "PUT WALL - RESONANCE",
             "prezzo": 640.0,
-            "motivazione": "Major structural support with 100K+ OI in MONTHLY. Significant OI in all three expiries. Secondary defense line before 630.",
-            "sintesiOperativa": "SUPPORT: Key level for bulls",
+            "motivazione": "Significant put support across all expiries with 29K/23K/100K OI. Secondary structural support reinforcing 630 zone. Monthly OI of 100K+ confirms institutional positioning.",
+            "sintesiOperativa": "SUPPORT: Major put wall",
             "colore": "verde",
-            "importanza": 95,
+            "importanza": 92,
             "ruolo": "RESONANCE",
-            "isDayTrade": false,
+            "isDayTrade": true,
             "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
             "lato": "PUT"
           },
           {
-            "livello": "PUT WALL + MAX PAIN",
+            "livello": "MAX PAIN - MAGNET",
             "prezzo": 650.0,
-            "motivazione": "RESONANCE support confluence with 0DTE Max Pain. High volume 71K in 0DTE indicates active hedging. MM target zone.",
-            "sintesiOperativa": "MAGNET: Max Pain attraction active",
-            "colore": "verde",
-            "importanza": 93,
-            "ruolo": "RESONANCE",
-            "isDayTrade": true,
-            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
-            "lato": "PUT"
-          },
-          {
-            "livello": "FRICTION ZONE",
-            "prezzo": 655.0,
-            "motivazione": "Current battleground near spot. High volume on both calls (63K) and puts (45K) in 0DTE. Vol/OI ratio >8 indicates intense intraday warfare.",
-            "sintesiOperativa": "SCALPING: High volatility zone",
+            "motivazione": "0DTE max pain level with significant put OI 27K. First magnetic target below spot. Market maker pin risk active here.",
+            "sintesiOperativa": "ATTRACTION: 0DTE magnet active",
             "colore": "ambra",
-            "importanza": 85,
-            "ruolo": "FRICTION",
+            "importanza": 88,
+            "ruolo": "MAGNET",
             "isDayTrade": true,
-            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "scadenzaTipo": "0DTE",
             "lato": "BOTH"
           },
           {
-            "livello": "WEEKLY MAX PAIN",
+            "livello": "MAX PAIN - WEEKLY",
             "prezzo": 656.0,
-            "motivazione": "WEEKLY Max Pain level just above spot. Primary MM pinning target for weekly expiry. Price magnet active.",
+            "motivazione": "WEEKLY max pain only 0.17 points from spot (655.83). STRONGEST magnetic attraction. High volume at 655 strikes (45K/64K VOL) confirms active price discovery zone.",
             "sintesiOperativa": "ATTRACTION: Price magnet active",
-            "colore": "indigo",
-            "importanza": 82,
+            "colore": "ambra",
+            "importanza": 95,
             "ruolo": "MAGNET",
             "isDayTrade": true,
             "scadenzaTipo": "WEEKLY",
             "lato": "BOTH"
           },
           {
-            "livello": "CALL WALL + MAX PAIN",
-            "prezzo": 665.0,
-            "motivazione": "MONTHLY Max Pain confluence with call resistance. 0DTE high activity (28K vol). Upper bound of MM target zone.",
-            "sintesiOperativa": "RESISTANCE: Max Pain target zone",
+            "livello": "CALL WALL - CONFLUENCE",
+            "prezzo": 660.0,
+            "motivazione": "Significant call resistance in WEEKLY (18K OI) and MONTHLY (11K OI). Combined with substantial put OI creates friction zone. Immediate ceiling above spot.",
+            "sintesiOperativa": "RESISTANCE: Call wall active",
             "colore": "rosso",
-            "importanza": 88,
+            "importanza": 85,
             "ruolo": "CONFLUENCE",
-            "isDayTrade": false,
-            "scadenzaTipo": "0DTE+MONTHLY",
+            "isDayTrade": true,
+            "scadenzaTipo": "WEEKLY+MONTHLY",
             "lato": "CALL"
           },
           {
+            "livello": "MAX PAIN - MONTHLY",
+            "prezzo": 665.0,
+            "motivazione": "MONTHLY max pain level. Medium-term equilibrium target. Significant put OI (30K) and call OI (9K) creates balanced structure.",
+            "sintesiOperativa": "TARGET: Monthly max pain",
+            "colore": "ambra",
+            "importanza": 87,
+            "ruolo": "MAGNET",
+            "isDayTrade": false,
+            "scadenzaTipo": "MONTHLY",
+            "lato": "BOTH"
+          },
+          {
             "livello": "CALL WALL",
-            "prezzo": 685.0,
-            "motivazione": "Dominant MONTHLY call wall with 34K OI. Major structural resistance. Upside cap for any recovery attempts.",
-            "sintesiOperativa": "SELL AREA: Strong resistance",
+            "prezzo": 670.0,
+            "motivazione": "0DTE call wall with 7.3K OI. Highest call OI in 0DTE. Immediate resistance with elevated IV suggesting expected breakout.",
+            "sintesiOperativa": "SELL AREA: 0DTE resistance",
             "colore": "rosso",
-            "importanza": 90,
+            "importanza": 78,
+            "ruolo": "WALL",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE",
+            "lato": "CALL"
+          },
+          {
+            "livello": "CALL WALL - MONTHLY",
+            "prezzo": 685.0,
+            "motivazione": "DOMINANT MONTHLY call wall with 34K OI - highest single-strike call OI. Major structural resistance capping upside. Low IV (0.1365) suggests complacent sellers.",
+            "sintesiOperativa": "SELL ZONE: Monthly wall",
+            "colore": "rosso",
+            "importanza": 88,
             "ruolo": "WALL",
             "isDayTrade": false,
             "scadenzaTipo": "MONTHLY",
@@ -12018,7 +12030,7 @@
     },
     "QQQ": {
       "spot": 584.98,
-      "generated": "2026-04-03T18:34:33.945058Z",
+      "generated": "2026-04-03T19:25:34.875976Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -21741,7 +21753,7 @@
     },
     "SPX": {
       "spot": 6603.75,
-      "generated": "2026-04-03T18:34:40.133239Z",
+      "generated": "2026-04-03T19:25:40.045566Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -39874,11 +39886,104 @@
           "step_pct": 0.05
         }
       },
-      "ai_analysis": null
+      "ai_analysis": {
+        "outlook": {
+          "sentiment": "bearish",
+          "gammaFlipZone": 6541.6,
+          "volatilityExpectation": "Near-term stability from positive 0DTE GEX (8.52B), but elevated medium-term volatility risk from negative monthly GEX (-12.55B). Range break triggers acceleration.",
+          "summary": "Bearish structure with extreme put skew (1.37) and monthly PCR 3.27 indicating heavy hedging. 0DTE positive GEX stabilizes spot near 6600, while monthly negative GEX signals volatility amplification risk. Max pain magnet zone 6535-6580 may attract price lower. Key resistance 6700, structural support 6400."
+        },
+        "levels": [
+          {
+            "livello": "PUT WALL",
+            "prezzo": 6400.0,
+            "motivazione": "RESONANCE: Massive PUT OI across ALL expirations (35,307 total). Monthly 23,612 OI anchors strongest structural support. Elevated Vol/OI (2.09) signals aggressive hedging.",
+            "sintesiOperativa": "MM DEFENSE: Structural support",
+            "colore": "verde",
+            "importanza": 98,
+            "ruolo": "RESONANCE",
+            "isDayTrade": false,
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "PUT"
+          },
+          {
+            "livello": "CALL WALL",
+            "prezzo": 6700.0,
+            "motivazione": "RESONANCE: Dominant 0DTE CALL OI (10,537) with significant presence across all expirations. Primary resistance capping upside. 1.5% above spot.",
+            "sintesiOperativa": "SELL AREA: Major resistance",
+            "colore": "rosso",
+            "importanza": 96,
+            "ruolo": "RESONANCE",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "CALL"
+          },
+          {
+            "livello": "GAMMA FLIP",
+            "prezzo": 6541.6,
+            "motivazione": "0DTE gamma equilibrium. Confluence with Max Pain 6535 creates magnetic attraction. Critical pivot - below triggers dealer short gamma dynamics.",
+            "sintesiOperativa": "PIVOT: Critical gamma threshold",
+            "colore": "indigo",
+            "importanza": 92,
+            "ruolo": "PIVOT",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE",
+            "lato": "GAMMA_FLIP"
+          },
+          {
+            "livello": "MAX PAIN",
+            "prezzo": 6535.0,
+            "motivazione": "0DTE Max Pain aligned with gamma flip zone. MM target creating strong magnetic pull. Weekly max pain 6580 extends attraction zone below spot.",
+            "sintesiOperativa": "ATTRACTION: Price magnet active",
+            "colore": "ambra",
+            "importanza": 88,
+            "ruolo": "MAGNET",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE",
+            "lato": "BOTH"
+          },
+          {
+            "livello": "ATM ZONE",
+            "prezzo": 6600.0,
+            "motivazione": "CONFLUENCE: Heavy mixed OI across expirations (53,014 total). Current spot vicinity. Neutral gamma zone with balanced CALL/PUT positioning.",
+            "sintesiOperativa": "PIVOT: Watch for direction",
+            "colore": "indigo",
+            "importanza": 86,
+            "ruolo": "CONFLUENCE",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "BOTH"
+          },
+          {
+            "livello": "PUT SUPPORT",
+            "prezzo": 6500.0,
+            "motivazione": "CONFLUENCE: Strong PUT OI across expirations (28,005 total). High Vol/OI (2.05) indicates active protection. Secondary support above 6400 wall.",
+            "sintesiOperativa": "BUY ZONE: Support expected",
+            "colore": "verde",
+            "importanza": 84,
+            "ruolo": "CONFLUENCE",
+            "isDayTrade": false,
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "PUT"
+          },
+          {
+            "livello": "CALL RESISTANCE",
+            "prezzo": 6800.0,
+            "motivazione": "CONFLUENCE: Significant CALL OI across expirations (12,394 total). Secondary resistance above 6700. Near weekly gamma flip 6748.",
+            "sintesiOperativa": "SELL AREA: Secondary resistance",
+            "colore": "rosso",
+            "importanza": 82,
+            "ruolo": "CONFLUENCE",
+            "isDayTrade": false,
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "CALL"
+          }
+        ]
+      }
     },
     "NDX": {
       "spot": 24129.75,
-      "generated": "2026-04-03T18:34:45.401081Z",
+      "generated": "2026-04-03T19:25:43.874319Z",
       "expiries": [
         {
           "label": "0DTE",
@@ -46944,81 +47049,105 @@
       "ai_analysis": {
         "outlook": {
           "sentiment": "neutral",
-          "gammaFlipZone": 23175.12,
-          "volatilityExpectation": "Suppressed volatility expected; positive total GEX (0.32B) with spot magnetized near max pain",
-          "summary": "Market in positive gamma territory with all gamma flips well below spot. Price pinned between 24000-24300 confluence zones. Bearish skew (1.32-1.33) indicates hedging pressure, but positive GEX stabilizes prices. Expect range-bound behavior with max pain magnet at 24100."
+          "gammaFlipZone": 22984.29,
+          "volatilityExpectation": "Mixed regime: short-term stability from positive GEX, but negative monthly gamma suggests underlying volatility risk if support breaks",
+          "summary": "Price consolidates above critical 24000 RESONANCE level. Short-term dealers long gamma suppresses volatility, but bearish monthly skew (1.33) and negative GEX (-0.09B) create asymmetric downside risk. Max Pain convergence at 24000-24100 zone acts as magnetic attractor."
         },
         "levels": [
           {
-            "livello": "MONTHLY MAX PAIN",
-            "prezzo": 24100,
-            "motivazione": "Monthly max pain only 0.12% from spot with extreme unusual 0DTE activity (Vol/OI 7.5x). Strong magnetic attraction active.",
-            "sintesiOperativa": "MAGNET: Pinning zone active",
+            "livello": "RESONANCE SUPPORT",
+            "prezzo": 24000.0,
+            "motivazione": "Triple expiry confluence: 0DTE Max Pain + Put OI 122, WEEKLY Put OI 47, MONTHLY Put OI 535 (highest). Institutional gamma defense zone.",
+            "sintesiOperativa": "MM DEFENSE: Critical support zone",
+            "colore": "verde",
+            "importanza": 98,
+            "ruolo": "RESONANCE",
+            "isDayTrade": true,
+            "scadenzaTipo": "0DTE+WEEKLY+MONTHLY",
+            "lato": "PUT"
+          },
+          {
+            "livello": "MAX PAIN MAGNET",
+            "prezzo": 24100.0,
+            "motivazione": "Monthly Max Pain with CALL OI 245. Near-spot magnetic attraction. 0DTE shows unusual VOL 226 indicating heavy dealer positioning.",
+            "sintesiOperativa": "ATTRACTION: Price magnet active",
             "colore": "indigo",
-            "importanza": 95,
+            "importanza": 89,
             "ruolo": "MAGNET",
             "isDayTrade": true,
             "scadenzaTipo": "MONTHLY",
             "lato": "BOTH"
           },
           {
-            "livello": "PUT WALL CONFLUENCE",
-            "prezzo": 24000,
-            "motivazione": "Put wall in 0DTE (122 OI) and MONTHLY (535 OI). Coincides with 0DTE max pain. Major structural support zone.",
-            "sintesiOperativa": "MM DEFENSE: Structural support",
-            "colore": "verde",
-            "importanza": 90,
-            "ruolo": "CONFLUENCE",
-            "isDayTrade": true,
-            "scadenzaTipo": "0DTE+MONTHLY",
-            "lato": "PUT"
-          },
-          {
             "livello": "CALL WALL CONFLUENCE",
-            "prezzo": 24300,
-            "motivazione": "Call wall in WEEKLY (202 OI) and MONTHLY (411 OI). Primary resistance zone above spot with dealer hedging pressure.",
-            "sintesiOperativa": "SELL AREA: Resistance confirmed",
+            "prezzo": 24300.0,
+            "motivazione": "WEEKLY CALL OI 202 + MONTHLY CALL OI 411. Significant resistance with multi-expiry dealer hedging pressure.",
+            "sintesiOperativa": "SELL AREA: Strong resistance",
             "colore": "rosso",
-            "importanza": 88,
+            "importanza": 87,
             "ruolo": "CONFLUENCE",
             "isDayTrade": false,
             "scadenzaTipo": "WEEKLY+MONTHLY",
             "lato": "CALL"
           },
           {
-            "livello": "CALL WALL",
-            "prezzo": 24700,
-            "motivazione": "Dominant 0DTE call wall with 188 OI. Secondary resistance cap in positive gamma zone.",
-            "sintesiOperativa": "RESISTANCE: Cap level active",
+            "livello": "CALL WALL CONFLUENCE",
+            "prezzo": 24400.0,
+            "motivazione": "WEEKLY CALL OI 211 + MONTHLY CALL OI 87/PUT OI 94. Secondary resistance zone with gamma imbalance.",
+            "sintesiOperativa": "SELL AREA: Secondary resistance",
             "colore": "rosso",
+            "importanza": 85,
+            "ruolo": "CONFLUENCE",
+            "isDayTrade": false,
+            "scadenzaTipo": "WEEKLY+MONTHLY",
+            "lato": "CALL"
+          },
+          {
+            "livello": "PUT WALL CONFLUENCE",
+            "prezzo": 23300.0,
+            "motivazione": "WEEKLY PUT OI 208 + MONTHLY nearby support. Deep support zone with bearish skew validation (1.32-1.33 ratio).",
+            "sintesiOperativa": "LONG: Institutional support level",
+            "colore": "verde",
+            "importanza": 83,
+            "ruolo": "CONFLUENCE",
+            "isDayTrade": false,
+            "scadenzaTipo": "WEEKLY+MONTHLY",
+            "lato": "PUT"
+          },
+          {
+            "livello": "WEEKLY MAGNET",
+            "prezzo": 23900.0,
+            "motivazione": "WEEKLY CALL OI 543 (highest single-strike OI). Strong magnetic pull below spot. Weekly Max Pain 23775 nearby.",
+            "sintesiOperativa": "ATTRACTION: Pull below spot",
+            "colore": "indigo",
             "importanza": 82,
+            "ruolo": "MAGNET",
+            "isDayTrade": false,
+            "scadenzaTipo": "WEEKLY",
+            "lato": "CALL"
+          },
+          {
+            "livello": "0DTE CALL WALL",
+            "prezzo": 24700.0,
+            "motivazione": "0DTE highest CALL OI 188 with VOL 68. Immediate-term resistance for intraday moves.",
+            "sintesiOperativa": "SELL: Intraday resistance",
+            "colore": "rosso",
+            "importanza": 78,
             "ruolo": "WALL",
             "isDayTrade": true,
             "scadenzaTipo": "0DTE",
             "lato": "CALL"
           },
           {
-            "livello": "PUT ACTIVITY ZONE",
-            "prezzo": 23000,
-            "motivazione": "Extreme unusual 0DTE put activity (Vol/OI 13.1x) with MONTHLY put wall (255 OI). Tail risk hedging detected.",
-            "sintesiOperativa": "TAIL RISK: Unusual hedging",
+            "livello": "PUT WALL CONFLUENCE",
+            "prezzo": 23400.0,
+            "motivazione": "WEEKLY PUT OI 205 + MONTHLY PUT OI 90. Secondary support with high IV puts indicating fear premium.",
+            "sintesiOperativa": "LONG: Secondary support",
             "colore": "verde",
-            "importanza": 78,
-            "ruolo": "FRICTION",
+            "importanza": 81,
+            "ruolo": "CONFLUENCE",
             "isDayTrade": false,
-            "scadenzaTipo": "0DTE",
-            "lato": "PUT"
-          },
-          {
-            "livello": "PUT WALL",
-            "prezzo": 23400,
-            "motivazione": "WEEKLY put wall with 205 OI. Structural support zone in weekly expiration below spot.",
-            "sintesiOperativa": "SUPPORT: Weekly defense zone",
-            "colore": "verde",
-            "importanza": 75,
-            "ruolo": "WALL",
-            "isDayTrade": false,
-            "scadenzaTipo": "WEEKLY",
+            "scadenzaTipo": "WEEKLY+MONTHLY",
             "lato": "PUT"
           }
         ]
