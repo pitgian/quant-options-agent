@@ -2,14 +2,23 @@ name: Fetch Options Data
 
 on:
   schedule:
-    # US Session (14:30-21:00 UTC = 9:30 AM - 4:00 PM ET) - Every 15 minutes
-    - cron: '0,15,30,45 15-20 * * 1-5'   # 15:00-20:45 UTC (covers 10:00-15:45 ET)
-    - cron: '30,45 14 * * 1-5'           # 14:30-14:45 UTC (covers 9:30-9:45 ET)
-    - cron: '0,15 21 * * 1-5'            # 21:00-21:15 UTC (covers 16:00-16:15 ET)
-    # Outside US Session - Every hour
-    - cron: '0 0-13 * * 1-5'             # 00:00-13:00 UTC (before US session)
-    - cron: '0 22-23 * * 1-5'            # 22:00-23:00 UTC (after US session)
+    # US Session (14:30-21:00 UTC = 9:30 AM - 4:00 PM ET) - Every hour (reduced from 30min to avoid AI rate limits)
+    - cron: '0 15-20 * * 1-5'            # 15:00-20:00 UTC (covers 10:00-15:00 ET)
+    - cron: '30 14 * * 1-5'              # 14:30 UTC (covers 9:30 ET)
+    - cron: '0 21 * * 1-5'               # 21:00 UTC (covers 16:00 ET)
+    # Outside US Session - Every 2 hours (reduced from hourly to minimize AI API calls)
+    - cron: '0 0,2,4,6,8,10,12 * * 1-5' # Every 2 hours before US session
+    - cron: '0 22 * * 1-5'               # 22:00 UTC (after US session)
   workflow_dispatch: # Manual trigger
+    inputs:
+      skip_ai_analysis:
+        description: 'Skip AI analysis (true/false)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 # Opt into Node.js 24 for JavaScript actions to resolve deprecation warning
 env:
@@ -44,8 +53,33 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r scripts/requirements.txt
           
+      - name: Determine AI analysis setting
+        id: ai_config
+        run: |
+          # For manual triggers, respect the user's choice
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "skip_ai=${{ github.event.inputs.skip_ai_analysis || 'false' }}" >> $GITHUB_OUTPUT
+            echo "📋 Manual trigger — skip_ai=${{ github.event.inputs.skip_ai_analysis || 'false' }}"
+            exit 0
+          fi
+
+          # For scheduled runs, only enable AI during US market hours (14:30-21:00 UTC)
+          # to reduce API call frequency and avoid rate limits
+          CURRENT_HOUR=$(date -u +%H)
+          CURRENT_MIN=$(date -u +%M)
+          CURRENT_TIME=$((CURRENT_HOUR * 60 + CURRENT_MIN))
+
+          # US market hours in UTC minutes: 14:30 (870) to 21:00 (1260)
+          if [ "$CURRENT_TIME" -ge 870 ] && [ "$CURRENT_TIME" -le 1260 ]; then
+            echo "skip_ai=false" >> $GITHUB_OUTPUT
+            echo "🤖 US market hours detected ($CURRENT_HOUR:$CURRENT_MIN UTC) — AI analysis ENABLED"
+          else
+            echo "skip_ai=true" >> $GITHUB_OUTPUT
+            echo "⏸️ Outside US market hours ($CURRENT_HOUR:$CURRENT_MIN UTC) — AI analysis SKIPPED"
+          fi
+
       - name: Fetch options data
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
         env:
@@ -53,6 +87,7 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          SKIP_AI_ANALYSIS: ${{ steps.ai_config.outputs.skip_ai }}
           
       - name: Commit and push changes
         run: |

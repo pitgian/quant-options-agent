@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# Note: ThreadPoolExecutor removed — AI calls are now sequential to avoid rate limiting
 
 # HTTP client for AI API calls
 try:
@@ -47,12 +47,12 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# CONFIGURAZIONE AI API (GLM-5)
+# CONFIGURAZIONE AI API (GLM-5.1)
 # ============================================================================
 
 # API Configuration - same as glmService.ts
 AI_API_URL = 'https://api.z.ai/api/coding/paas/v4/chat/completions'
-AI_MODEL = 'glm-5'
+AI_MODEL = 'glm-5.1'
 AI_API_KEY = os.environ.get('AI_API_KEY', '')
 
 # Real-time Spot Price API Configuration
@@ -315,7 +315,7 @@ def format_options_for_ai(expiries: List[Dict], spot: float) -> str:
 
 def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3, num_expiries: int = 3) -> Optional[str]:
     """
-    Call GLM-5 API with adaptive timeout and enhanced retry logic.
+    Call GLM-5.1 API with adaptive timeout and enhanced retry logic.
     
     Args:
         messages: Chat messages for the API
@@ -367,6 +367,14 @@ def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3, num_expiri
                     return content
                 else:
                     logger.warning(f"⚠️ Empty response from AI API (attempt {attempt + 1})")
+            elif response.status_code == 429:
+                # Rate limiting - use longer backoff with Retry-After header
+                retry_after = int(response.headers.get('Retry-After', 30))
+                delay = retry_after + random.uniform(2, 5)
+                logger.warning(f"⚠️ Rate limited (429). Waiting {delay:.0f}s before retry (attempt {attempt + 1}/{max_retries})...")
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                continue
             else:
                 logger.warning(f"⚠️ AI API error: {response.status_code} - {response.text[:200]} (attempt {attempt + 1})")
         
@@ -449,7 +457,7 @@ Integrate skew sentiment and PCR to validate level importance.
 def process_ai_analysis_for_symbol(symbol: str, expiries: List[Dict], spot: float) -> Tuple[str, Optional[Dict[str, Any]]]:
     """
     Process AI analysis for a single symbol.
-    Designed to be run in parallel using ThreadPoolExecutor.
+    Called sequentially with delays between symbols to avoid API rate limits.
     
     Args:
         symbol: The symbol being analyzed
@@ -4108,50 +4116,53 @@ def main():
         logger.info("  🔗 Skipping cross-symbol correlation (need ≥2 symbols)")
     
     # =========================================================================
-    # PHASE 2: Execute AI calls in parallel
+    # PHASE 2: Execute AI calls sequentially (rate limit protection)
     # =========================================================================
-    logger.info(f"\n🤖 PHASE 2: Executing AI analysis in parallel for {len(symbols_data_raw)} symbols...")
+    AI_CALL_DELAY = 15  # seconds between AI calls to avoid rate limiting
+    
+    # Check if AI analysis should be skipped via environment variable
+    skip_ai = os.environ.get('SKIP_AI_ANALYSIS', 'false').lower() in ('true', '1', 'yes')
+    
+    logger.info(f"\n🤖 PHASE 2: Executing AI analysis sequentially for {len(symbols_data_raw)} symbols...")
     
     ai_results = {}
-    if AI_API_KEY and symbols_data_raw:
-        # Prepare data for parallel execution
+    if skip_ai:
+        logger.info("ℹ️ SKIP_AI_ANALYSIS is set — skipping AI analysis phase")
+    elif AI_API_KEY and symbols_data_raw:
+        # Prepare data for sequential execution
         ai_tasks = []
         for symbol, data in symbols_data_raw.items():
             ai_tasks.append((symbol, data['expiries'], data['spot']))
         
-        # Execute AI calls in parallel using ThreadPoolExecutor
+        # Execute AI calls sequentially with delays between each
         start_time = time.time()
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            # Submit all AI analysis tasks
-            future_to_symbol = {
-                executor.submit(process_ai_analysis_for_symbol, symbol, expiries, spot): symbol
-                for symbol, expiries, spot in ai_tasks
-            }
+        for idx, (symbol, expiries, spot) in enumerate(ai_tasks):
+            if idx > 0:
+                logger.info(f"⏳ Waiting {AI_CALL_DELAY}s before next AI call (rate limit protection)...")
+                time.sleep(AI_CALL_DELAY)
             
-            # Collect results as they complete
-            for future in as_completed(future_to_symbol):
-                symbol = future_to_symbol[future]
-                try:
-                    result_symbol, ai_analysis = future.result()
-                    ai_results[result_symbol] = ai_analysis
+            logger.info(f"  🤖 Processing AI analysis for {symbol} ({idx + 1}/{len(ai_tasks)})...")
+            try:
+                result_symbol, ai_analysis = process_ai_analysis_for_symbol(symbol, expiries, spot)
+                ai_results[result_symbol] = ai_analysis
+                
+                # Log AI analysis result
+                if ai_analysis:
+                    outlook = ai_analysis.get('outlook', {})
+                    levels = ai_analysis.get('levels', [])
+                    logger.info(f"  🤖 AI Analysis per {result_symbol}:")
+                    logger.info(f"     Sentiment: {outlook.get('sentiment', 'N/A')}")
+                    logger.info(f"     Volatility: {outlook.get('volatilityExpectation', 'N/A')}")
+                    logger.info(f"     AI Levels: {len(levels)} livelli identificati")
+                else:
+                    logger.info(f"  🤖 AI Analysis per {result_symbol}: Nessun risultato")
                     
-                    # Log AI analysis result
-                    if ai_analysis:
-                        outlook = ai_analysis.get('outlook', {})
-                        levels = ai_analysis.get('levels', [])
-                        logger.info(f"  🤖 AI Analysis per {result_symbol}:")
-                        logger.info(f"     Sentiment: {outlook.get('sentiment', 'N/A')}")
-                        logger.info(f"     Volatility: {outlook.get('volatilityExpectation', 'N/A')}")
-                        logger.info(f"     AI Levels: {len(levels)} livelli identificati")
-                    else:
-                        logger.info(f"  🤖 AI Analysis per {result_symbol}: Nessun risultato")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error collecting AI result for {symbol}: {e}")
-                    ai_results[symbol] = None
+            except Exception as e:
+                logger.error(f"❌ Error in AI analysis for {symbol}: {e}")
+                ai_results[symbol] = None
         
         elapsed_time = time.time() - start_time
-        logger.info(f"✅ Parallel AI analysis completed in {elapsed_time:.1f}s")
+        logger.info(f"✅ Sequential AI analysis completed in {elapsed_time:.1f}s")
     else:
         if not AI_API_KEY:
             logger.info("ℹ️ AI_API_KEY not configured, skipping AI analysis")
