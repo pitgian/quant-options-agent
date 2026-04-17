@@ -846,7 +846,7 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
                 # Post-validation: reject flip points too far from spot
                 if spot > 0:
                     distance_pct = abs(flip_point - spot) / spot
-                    if distance_pct >= 0.10:
+                    if distance_pct >= 0.05:
                         logger.warning(f"Gamma flip {flip_point:.2f} is {distance_pct*100:.1f}% from spot {spot:.2f} — unreliable, setting to None")
                         flip_point = None
                 if flip_point is not None:
@@ -1581,7 +1581,7 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
     # Post-validation: reject flip points too far from spot
     if gamma_flip is not None and spot > 0:
         distance_pct = abs(gamma_flip - spot) / spot
-        if distance_pct >= 0.10:
+        if distance_pct >= 0.05:
             logger.warning(f"Gamma flip {gamma_flip:.2f} is {distance_pct*100:.1f}% from spot {spot:.2f} — unreliable, setting to None")
             gamma_flip = None
     
@@ -2152,17 +2152,30 @@ def calculate_quant_metrics(options: List[Dict[str, Any]], spot: float, expiry_d
 # ============================================================================
 
 def calculate_significance_score(strike_data: Dict, spot: float,
-                                  max_oi: int, max_vol: int, avg_iv: float) -> float:
+                                  max_oi: int, max_vol: int, avg_iv: float,
+                                  data_quality: str = 'good') -> float:
     """
     Calculate significance score for a strike.
     Score = 35% OI + 20% Vol + 20% Vol/OI Ratio + 15% Proximity + 10% IV
+    
+    When data_quality is 'degraded' or 'stale', proximity weight increases
+    from 15% to 25% (and OI weight decreases from 35% to 25%) to prefer
+    near-spot levels when OI data is unreliable.
     """
     total_oi = strike_data['call_oi'] + strike_data['put_oi']
     total_vol = strike_data['call_vol'] + strike_data['put_vol']
     avg_strike_iv = (strike_data['call_iv'] + strike_data['put_iv']) / 2
     
-    # 1. OI Score (0-35): Normalized by max OI
-    oi_score = (total_oi / max_oi) * 35 if max_oi > 0 else 0
+    # Adjust weights based on data quality
+    if data_quality in ('degraded', 'stale'):
+        oi_weight = 25       # Reduced from 35 — OI is unreliable
+        proximity_weight = 25  # Boosted from 15 — prefer near-spot levels
+    else:
+        oi_weight = 35
+        proximity_weight = 15
+    
+    # 1. OI Score: Normalized by max OI
+    oi_score = (total_oi / max_oi) * oi_weight if max_oi > 0 else 0
     
     # 2. Volume Score (0-20): Normalized by max volume
     vol_score = (total_vol / max_vol) * 20 if max_vol > 0 else 0
@@ -2171,9 +2184,9 @@ def calculate_significance_score(strike_data: Dict, spot: float,
     vol_oi_ratio = total_vol / total_oi if total_oi > 0 else 0
     vol_oi_score = min(vol_oi_ratio, 2) * 10  # Cap at 2x ratio
     
-    # 4. Proximity Score (0-15): Gaussian decay from spot
+    # 4. Proximity Score: Gaussian decay from spot
     distance_pct = abs(strike_data['strike'] - spot) / spot if spot > 0 else 0
-    proximity_score = math.exp(-((distance_pct / 0.03) ** 2)) * 15
+    proximity_score = math.exp(-((distance_pct / 0.03) ** 2)) * proximity_weight
     
     # 5. IV Extremity Score (0-10): Deviation from average IV
     iv_deviation = abs(avg_strike_iv - avg_iv) / avg_iv if avg_iv > 0 else 0
@@ -2283,9 +2296,12 @@ def create_ai_ready_data(expiries: List[Dict[str, Any]], spot: float) -> Dict[st
         max_vol = max((s['call_vol'] + s['put_vol']) for s in all_strikes) if all_strikes else 1
         avg_iv = sum((s['call_iv'] + s['put_iv']) / 2 for s in all_strikes) / len(all_strikes) if all_strikes else 0
         
+        # Determine data quality for adaptive scoring
+        expiry_quality = check_data_quality(expiries, spot).get('quality', 'good')
+        
         # Calculate scores and sort by significance
         scored_strikes = [
-            (strike_data, calculate_significance_score(strike_data, spot, max_oi, max_vol, avg_iv))
+            (strike_data, calculate_significance_score(strike_data, spot, max_oi, max_vol, avg_iv, data_quality=expiry_quality))
             for strike_data in all_strikes
         ]
         scored_strikes.sort(key=lambda x: x[1], reverse=True)
@@ -2581,6 +2597,10 @@ def find_confluence_levels_enhanced(expiries: List[Dict], spot: float, tolerance
             if opt_strike <= 0:
                 continue
             
+            # Skip strikes with no market activity (pre-market grid artifacts)
+            if opt.get('oi', 0) == 0 and opt.get('vol', 0) == 0:
+                continue
+            
             # Check if we already have a similar strike
             found_key = None
             for existing_strike in strike_presence.keys():
@@ -2724,6 +2744,10 @@ def find_resonance_levels_enhanced(expiries: List[Dict], spot: float, tolerance_
         for opt in options:
             opt_strike = round(opt.get('strike', 0), 2)
             if opt_strike <= 0:
+                continue
+            
+            # Skip strikes with no market activity (pre-market grid artifacts)
+            if opt.get('oi', 0) == 0 and opt.get('vol', 0) == 0:
                 continue
             
             # Check if we already have a similar strike
@@ -3573,11 +3597,20 @@ def select_important_levels(expiries: List[Dict], spot: float,
     res_tol = tolerances.get('resonance', 0.005) if tolerances else 0.005
     conf_tol = tolerances.get('confluence', 0.01) if tolerances else 0.01
     
-    # Trova livelli resonance (enhanced with detailed metrics)
-    resonance = find_resonance_levels_enhanced(expiries, spot, tolerance_pct=res_tol)
+    # Check data quality — skip confluence/resonance when OI is zero (pre-market)
+    data_quality = check_data_quality(expiries, spot)
+    quality = data_quality.get('quality', 'unknown')
     
-    # Trova livelli confluence (enhanced with detailed metrics)
-    confluence = find_confluence_levels_enhanced(expiries, spot, tolerance_pct=conf_tol)
+    if quality == 'stale':
+        logger.warning("⚠️ Data quality is STALE — skipping confluence/resonance (pre-market, OI=0)")
+        resonance = []
+        confluence = []
+    else:
+        # Trova livelli resonance (enhanced with detailed metrics)
+        resonance = find_resonance_levels_enhanced(expiries, spot, tolerance_pct=res_tol)
+        
+        # Trova livelli confluence (enhanced with detailed metrics)
+        confluence = find_confluence_levels_enhanced(expiries, spot, tolerance_pct=conf_tol)
     
     # Seleziona walls
     walls = select_walls_by_expiry(expiries, spot, top_n=3)

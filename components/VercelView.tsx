@@ -1786,6 +1786,12 @@ const LevelRow: React.FC<{
   const distancePct = spot > 0 ? ((level - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
+  // Distance-based opacity for levels far from spot
+  const absDistancePct = spot > 0 ? Math.abs((level - spot) / spot) * 100 : 0;
+  const opacityClass = absDistancePct > 5 ? 'opacity-30' :
+                       absDistancePct > 3 ? 'opacity-50' :
+                       absDistancePct > 1 ? 'opacity-70' : '';
+
   const getTheme = () => {
     if (type === 'RESONANCE') return {
       border: 'border-amber-500/60',
@@ -1918,7 +1924,8 @@ const LevelRow: React.FC<{
     <div
       className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-6
         ${t.bg} ${t.border} hover:scale-[1.01] hover:border-white/20
-        ${isMatch ? 'ring-2 ring-cyan-500/50 bg-cyan-500/5' : ''}`}
+        ${isMatch ? 'ring-2 ring-cyan-500/50 bg-cyan-500/5' : ''}
+        ${opacityClass}`}
     >
       <div className="flex-grow min-w-0">
         <div className="flex items-center gap-3 mb-2">
@@ -2088,6 +2095,12 @@ const AILevelRow: React.FC<{
   const distancePct = spot > 0 ? ((level.prezzo - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
+  // Distance-based opacity for AI levels far from spot
+  const absDistancePct = spot > 0 ? Math.abs((level.prezzo - spot) / spot) * 100 : 0;
+  const opacityClass = absDistancePct > 5 ? 'opacity-30' :
+                       absDistancePct > 3 ? 'opacity-50' :
+                       absDistancePct > 1 ? 'opacity-70' : '';
+
   const getTheme = () => {
     if (level.ruolo === 'RESONANCE') return {
       border: 'border-amber-500/60',
@@ -2162,7 +2175,8 @@ const AILevelRow: React.FC<{
     <div
       className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-6
         ${t.bg} ${t.border} hover:scale-[1.01] hover:border-white/20
-        ${isMatch ? 'ring-2 ring-cyan-500/50 bg-cyan-500/5' : ''}`}
+        ${isMatch ? 'ring-2 ring-cyan-500/50 bg-cyan-500/5' : ''}
+        ${opacityClass}`}
     >
       <div className="flex-grow min-w-0">
         <div className="flex items-center gap-3 mb-2">
@@ -3389,8 +3403,19 @@ export function VercelView(): ReactElement {
     const spot = quantAnalysis.spot;
     const aiLevels = quantAnalysis.aiAnalysis.levels;
 
-    // Sort and split by spot
-    const sorted = [...aiLevels].sort((a, b) => b.prezzo - a.prezzo);
+    // Filter out levels more than 5% from spot
+    const MAX_AI_DISPLAY_DISTANCE_PCT = 5.0;
+    const nearbyAiLevels = aiLevels.filter(l => {
+      const dist = spot > 0 ? Math.abs((l.prezzo - spot) / spot) * 100 : 0;
+      return dist <= MAX_AI_DISPLAY_DISTANCE_PCT;
+    });
+
+    // Sort by proximity to spot (closest first), then split
+    const sorted = [...nearbyAiLevels].sort((a, b) => {
+      const distA = Math.abs(a.prezzo - spot);
+      const distB = Math.abs(b.prezzo - spot);
+      return distA - distB;
+    });
     return {
       aboveSpot: sorted.filter(l => l.prezzo > spot),
       belowSpot: sorted.filter(l => l.prezzo <= spot)
@@ -3513,8 +3538,19 @@ export function VercelView(): ReactElement {
       }
     }
 
-    // Sort and split by spot
-    const sorted = [...levels].sort((a, b) => b.level - a.level);
+    // Filter out levels more than 5% from spot
+    const MAX_DISPLAY_DISTANCE_PCT = 5.0;
+    const nearbyLevels = levels.filter(l => {
+      const dist = spot > 0 ? Math.abs((l.level - spot) / spot) * 100 : 0;
+      return dist <= MAX_DISPLAY_DISTANCE_PCT;
+    });
+
+    // Sort by proximity to spot (closest first)
+    const sorted = [...nearbyLevels].sort((a, b) => {
+      const distA = Math.abs(a.level - spot);
+      const distB = Math.abs(b.level - spot);
+      return distA - distB;
+    });
     return {
       aboveSpot: sorted.filter(l => l.level > spot),
       belowSpot: sorted.filter(l => l.level <= spot)
@@ -3642,6 +3678,19 @@ export function VercelView(): ReactElement {
                     sentiment={quantAnalysis.sentiment}
                     gammaFlipCluster={quantAnalysis.aggregatedMetrics.gamma_flip}
                   />
+                )}
+
+                {/* Pre-market / Stale data warning for levels */}
+                {quantAnalysis && quantAnalysis.expiryMetrics && quantAnalysis.expiryMetrics.length > 0 &&
+                  quantAnalysis.expiryMetrics[0].calculatedMetrics &&
+                  quantAnalysis.expiryMetrics[0].calculatedMetrics.total_gex !== undefined &&
+                  Math.abs(quantAnalysis.expiryMetrics[0].calculatedMetrics.total_gex) < 0.001 && (
+                  <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-3 mb-4">
+                    <span className="text-yellow-400 font-bold">⚠️ Pre-Market Data</span>
+                    <span className="text-yellow-300 text-sm ml-2">
+                      OI is zero — levels may be unreliable until market open (9:30 AM ET)
+                    </span>
+                  </div>
                 )}
 
                 {/* Single Column Levels Display - AI preferred, Algorithmic as fallback */}
