@@ -3416,16 +3416,13 @@ export function VercelView(): ReactElement {
       const distB = Math.abs(b.prezzo - spot);
       return distA - distB;
     });
-    return {
-      aboveSpot: sorted.filter(l => l.prezzo > spot),
-      belowSpot: sorted.filter(l => l.prezzo <= spot)
-    };
+    return sorted;
   }, [quantAnalysis]);
 
   // Build levels array for display (algorithmic fallback - ONLY used when AI is unavailable)
   const displayLevels = useMemo(() => {
     // Only compute algorithmic levels as fallback when AI is not available
-    if (!quantAnalysis || quantAnalysis.aiAnalysis?.levels?.length) return { aboveSpot: [], belowSpot: [] };
+    if (!quantAnalysis || quantAnalysis.aiAnalysis?.levels?.length) return [];
 
     const levels: Array<{
       level: number;
@@ -3551,10 +3548,7 @@ export function VercelView(): ReactElement {
       const distB = Math.abs(b.level - spot);
       return distA - distB;
     });
-    return {
-      aboveSpot: sorted.filter(l => l.level > spot),
-      belowSpot: sorted.filter(l => l.level <= spot)
-    };
+    return sorted;
   }, [quantAnalysis]);
 
   // Render loading state
@@ -3706,16 +3700,6 @@ export function VercelView(): ReactElement {
                     </div>
                     
                     <div className="flex flex-col gap-2">
-                      {/* AI Levels Above Spot */}
-                      {aiDisplayLevels.aboveSpot.map((level, i) => (
-                        <AILevelRow
-                          key={`ai-above-${i}`}
-                          level={level}
-                          spot={quantAnalysis.spot}
-                          evolution={getLevelEvolution(level.prezzo, activeTab, levelHistory)}
-                        />
-                      ))}
-
                       {/* Spot Price Divider */}
                       <div className="py-3 flex items-center gap-3">
                         <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-purple-500/40 to-purple-500/40"></div>
@@ -3725,10 +3709,10 @@ export function VercelView(): ReactElement {
                         <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-purple-500/40 to-purple-500/40"></div>
                       </div>
 
-                      {/* AI Levels Below Spot */}
-                      {aiDisplayLevels.belowSpot.map((level, i) => (
+                      {/* AI Levels sorted by proximity to spot */}
+                      {aiDisplayLevels.map((level, i) => (
                         <AILevelRow
-                          key={`ai-below-${i}`}
+                          key={`ai-level-${i}`}
                           level={level}
                           spot={quantAnalysis.spot}
                           evolution={getLevelEvolution(level.prezzo, activeTab, levelHistory)}
@@ -3743,28 +3727,13 @@ export function VercelView(): ReactElement {
                       <span className="text-xl">⚙️</span>
                       <h3 className="text-lg font-bold text-amber-400">Fallback Analysis</h3>
                       <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded-full">
-                        {displayLevels.aboveSpot.length + displayLevels.belowSpot.length} LEVELS
+                        {displayLevels.length} LEVELS
                       </span>
                       <span className="text-[9px] text-gray-500 italic ml-2">AI unavailable - using algorithmic analysis</span>
                     </div>
                     
-                    {(displayLevels.aboveSpot.length + displayLevels.belowSpot.length) > 0 ? (
+                    {displayLevels.length > 0 ? (
                       <div className="flex flex-col gap-2">
-                        {/* Algorithmic Levels Above Spot */}
-                        {displayLevels.aboveSpot.map((l, i) => (
-                          <LevelRow
-                            key={`algo-above-${i}`}
-                            level={l.level}
-                            type={l.type}
-                            spot={quantAnalysis.spot}
-                            expiries={l.expiries}
-                            oi={l.oi}
-                            wallType={l.wallType}
-                            enhancedData={l.enhancedData}
-                            evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
-                          />
-                        ))}
-
                         {/* Spot Price Divider */}
                         <div className="py-3 flex items-center gap-3">
                           <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-amber-500/40 to-amber-500/40"></div>
@@ -3774,10 +3743,10 @@ export function VercelView(): ReactElement {
                           <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-amber-500/40 to-amber-500/40"></div>
                         </div>
 
-                        {/* Algorithmic Levels Below Spot */}
-                        {displayLevels.belowSpot.map((l, i) => (
+                        {/* Algorithmic Levels sorted by proximity to spot */}
+                        {displayLevels.map((l, i) => (
                           <LevelRow
-                            key={`algo-below-${i}`}
+                            key={`algo-level-${i}`}
                             level={l.level}
                             type={l.type}
                             spot={quantAnalysis.spot}
