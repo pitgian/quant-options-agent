@@ -63,20 +63,12 @@ jobs:
             exit 0
           fi
 
-          # For scheduled runs, only enable AI during US market hours (14:30-21:00 UTC)
-          # to reduce API call frequency and avoid rate limits
-          CURRENT_HOUR=$(date -u +%H)
-          CURRENT_MIN=$(date -u +%M)
-          CURRENT_TIME=$((CURRENT_HOUR * 60 + CURRENT_MIN))
-
-          # US market hours in UTC minutes: 14:30 (870) to 21:00 (1260)
-          if [ "$CURRENT_TIME" -ge 870 ] && [ "$CURRENT_TIME" -le 1260 ]; then
-            echo "skip_ai=false" >> $GITHUB_OUTPUT
-            echo "🤖 US market hours detected ($CURRENT_HOUR:$CURRENT_MIN UTC) — AI analysis ENABLED"
-          else
-            echo "skip_ai=true" >> $GITHUB_OUTPUT
-            echo "⏸️ Outside US market hours ($CURRENT_HOUR:$CURRENT_MIN UTC) — AI analysis SKIPPED"
-          fi
+          # For scheduled runs, always enable AI analysis.
+          # The Python script has built-in rate limiting (15s delay between calls).
+          # Previous time-based restriction prevented AI from ever running on
+          # off-hours cron schedules (0,2,4,...22 UTC).
+          echo "skip_ai=false" >> $GITHUB_OUTPUT
+          echo "🤖 Scheduled run — AI analysis ENABLED"
 
       - name: Fetch options data
         timeout-minutes: 20

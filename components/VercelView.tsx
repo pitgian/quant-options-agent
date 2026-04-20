@@ -3235,6 +3235,12 @@ export function VercelView(): ReactElement {
     // Fall back to local calculation if not available
     let aggregatedMetrics: QuantMetrics | null = null;
     
+    // Helper: validate that a level is within reasonable distance from spot
+    const isValidLevel = (level: number | null | undefined, maxDistPct: number): boolean => {
+      if (level == null || spot <= 0) return false;
+      return Math.abs(level - spot) / spot < maxDistPct;
+    };
+    
     if (activeSymbolData.totalGexData) {
       // Use pre-calculated values from Python for GEX and gamma flip
       const totalGexData = activeSymbolData.totalGexData;
@@ -3248,15 +3254,26 @@ export function VercelView(): ReactElement {
       // Calculate PCR and skew locally (these are not in totalGexData)
       const putCallRatios = calculatePutCallRatios(allOptionsForMetrics);
       const volatilitySkew = calculateVolatilitySkew(allOptionsForMetrics, spot);
-      const maxPain = calculateMaxPain(allOptionsForMetrics, spot);
+      
+      // Prefer pre-calculated max_pain from selectedLevels (weighted across all expiries)
+      // Fall back to local calculation only if not available
+      let maxPain: number;
+      if (selectedLevels?.max_pain != null && isValidLevel(selectedLevels.max_pain, 0.10)) {
+        maxPain = selectedLevels.max_pain;
+      } else {
+        maxPain = calculateMaxPain(allOptionsForMetrics, spot);
+      }
       
       // Use first expiry for T calculation
       const firstExpiryDate = expiries[0]?.date || new Date().toISOString().split('T')[0];
       const gexByStrike = calculateGexByStrike(allOptionsForMetrics, spot, calculateTimeToExpiry(firstExpiryDate));
       
+      // Validate flip_point from totalGexData — reject if too far from spot
+      const flipPoint = isValidLevel(totalGexData.flip_point, 0.05) ? totalGexData.flip_point : undefined;
+      
       aggregatedMetrics = {
         total_gex: totalGexData.total_gex, // Value is already in billions
-        gamma_flip: totalGexData.flip_point,
+        gamma_flip: flipPoint ?? spot,
         max_pain: maxPain,
         put_call_ratios: putCallRatios,
         volatility_skew: volatilitySkew,
@@ -3309,12 +3326,12 @@ export function VercelView(): ReactElement {
       
       resonanceLevels = selectedLevels.resonance.map(r => r.strike);
       
-      // Override gamma_flip and max_pain in aggregatedMetrics if available
-      if (aggregatedMetrics && selectedLevels.gamma_flip) {
-        aggregatedMetrics.gamma_flip = selectedLevels.gamma_flip;
+      // Override gamma_flip and max_pain in aggregatedMetrics if available and valid
+      if (aggregatedMetrics && isValidLevel(selectedLevels.gamma_flip, 0.05)) {
+        aggregatedMetrics.gamma_flip = selectedLevels.gamma_flip!;
       }
-      if (aggregatedMetrics && selectedLevels.max_pain) {
-        aggregatedMetrics.max_pain = selectedLevels.max_pain;
+      if (aggregatedMetrics && isValidLevel(selectedLevels.max_pain, 0.10)) {
+        aggregatedMetrics.max_pain = selectedLevels.max_pain!;
       }
     } else {
       // Fallback: calculate locally with expiry-weighted scoring

@@ -3615,23 +3615,61 @@ def select_important_levels(expiries: List[Dict], spot: float,
     # Seleziona walls
     walls = select_walls_by_expiry(expiries, spot, top_n=3)
     
-    # Estrai gamma_flip e max_pain dal 0DTE (prima expiry)
+    # Estrai gamma_flip e max_pain usando media ponderata su TUTTE le scadenze
+    # (non solo 0DTE, che può avere OI sparse e valori inaffidabili)
     gamma_flip = None
     max_pain = None
     
     if expiries:
-        first_expiry = expiries[0]
-        quant_metrics = first_expiry.get('quantMetrics', {})
-        gamma_flip = quant_metrics.get('gamma_flip')
-        max_pain = quant_metrics.get('max_pain')
+        weighted_gamma_flip = 0.0
+        weighted_max_pain = 0.0
+        gamma_flip_count = 0
+        max_pain_count = 0
+        
+        for expiry in expiries:
+            quant_metrics = expiry.get('quantMetrics', {})
+            label = expiry.get('label', '')
+            
+            # Stessi pesi usati in create_ai_ready_data per precalc_metrics
+            if label == '0DTE':
+                weight = 3.0
+            elif label.startswith('WEEKLY'):
+                weight = 2.0
+            else:
+                weight = 1.0
+            
+            gf = quant_metrics.get('gamma_flip')
+            if gf is not None:
+                weighted_gamma_flip += gf * weight
+                gamma_flip_count += weight
+            
+            mp = quant_metrics.get('max_pain')
+            if mp is not None:
+                weighted_max_pain += mp * weight
+                max_pain_count += weight
+        
+        gamma_flip = round(weighted_gamma_flip / gamma_flip_count, 2) if gamma_flip_count > 0 else None
+        max_pain = round(weighted_max_pain / max_pain_count, 2) if max_pain_count > 0 else None
+        
+        # Post-validation: reject values too far from spot (unreliable with sparse OI)
+        if gamma_flip is not None and spot > 0:
+            dist_pct = abs(gamma_flip - spot) / spot
+            if dist_pct >= 0.05:
+                logger.warning(f"select_important_levels: gamma_flip {gamma_flip:.2f} is {dist_pct*100:.1f}% from spot {spot:.2f} — rejecting")
+                gamma_flip = None
+        if max_pain is not None and spot > 0:
+            dist_pct = abs(max_pain - spot) / spot
+            if dist_pct >= 0.10:
+                logger.warning(f"select_important_levels: max_pain {max_pain:.2f} is {dist_pct*100:.1f}% from spot {spot:.2f} — rejecting")
+                max_pain = None
     
     return {
         "resonance": resonance,
         "confluence": confluence,
         "call_walls": walls["call_walls"],
         "put_walls": walls["put_walls"],
-        "gamma_flip": round(gamma_flip, 2) if gamma_flip is not None else None,
-        "max_pain": round(max_pain, 2) if max_pain is not None else None
+        "gamma_flip": gamma_flip,
+        "max_pain": max_pain
     }
 
 
