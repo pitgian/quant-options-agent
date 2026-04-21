@@ -3727,24 +3727,67 @@ export function VercelView(): ReactElement {
                     </div>
                     
                     <div className="flex flex-col gap-2">
-                      {/* Spot Price Divider */}
-                      <div className="py-3 flex items-center gap-3">
-                        <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-purple-500/40 to-purple-500/40"></div>
-                        <div className="shrink-0 bg-purple-600 px-3 py-1 rounded-full border border-purple-400 shadow-[0_0_10px_rgba(147,51,234,0.3)]">
-                          <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot?.toFixed(2) ?? 'N/A'}</span>
-                        </div>
-                        <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-purple-500/40 to-purple-500/40"></div>
-                      </div>
+                      {(() => {
+                        const spot = quantAnalysis.spot;
+                        // Split levels by position relative to spot
+                        const resistances = aiDisplayLevels
+                          .filter(l => l.prezzo >= spot)
+                          .sort((a, b) => b.prezzo - a.prezzo); // descending (highest first)
+                        const supports = aiDisplayLevels
+                          .filter(l => l.prezzo < spot)
+                          .sort((a, b) => a.prezzo - b.prezzo); // ascending (lowest first)
 
-                      {/* AI Levels sorted by proximity to spot */}
-                      {aiDisplayLevels.map((level, i) => (
-                        <AILevelRow
-                          key={`ai-level-${i}`}
-                          level={level}
-                          spot={quantAnalysis.spot}
-                          evolution={getLevelEvolution(level.prezzo, activeTab, levelHistory)}
-                        />
-                      ))}
+                        return (
+                          <>
+                            {/* RESISTANCES (above spot) */}
+                            {resistances.length > 0 && (
+                              <>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-[10px] font-black text-red-400 uppercase tracking-widest">▲ RESISTANCES</span>
+                                  <div className="h-[1px] flex-grow bg-gradient-to-r from-red-500/30 to-transparent"></div>
+                                  <span className="text-[10px] text-gray-500">{resistances.length} level{resistances.length !== 1 ? 's' : ''}</span>
+                                </div>
+                                {resistances.map((level, i) => (
+                                  <AILevelRow
+                                    key={`ai-res-${i}`}
+                                    level={level}
+                                    spot={spot}
+                                    evolution={getLevelEvolution(level.prezzo, activeTab, levelHistory)}
+                                  />
+                                ))}
+                              </>
+                            )}
+
+                            {/* Spot Price Divider */}
+                            <div className="py-3 flex items-center gap-3">
+                              <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-purple-500/40 to-purple-500/40"></div>
+                              <div className="shrink-0 bg-purple-600 px-3 py-1 rounded-full border border-purple-400 shadow-[0_0_10px_rgba(147,51,234,0.3)]">
+                                <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {spot?.toFixed(2) ?? 'N/A'}</span>
+                              </div>
+                              <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-purple-500/40 to-purple-500/40"></div>
+                            </div>
+
+                            {/* SUPPORTS (below spot) */}
+                            {supports.length > 0 && (
+                              <>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-[10px] font-black text-green-400 uppercase tracking-widest">▼ SUPPORTS</span>
+                                  <div className="h-[1px] flex-grow bg-gradient-to-r from-green-500/30 to-transparent"></div>
+                                  <span className="text-[10px] text-gray-500">{supports.length} level{supports.length !== 1 ? 's' : ''}</span>
+                                </div>
+                                {supports.map((level, i) => (
+                                  <AILevelRow
+                                    key={`ai-sup-${i}`}
+                                    level={level}
+                                    spot={spot}
+                                    evolution={getLevelEvolution(level.prezzo, activeTab, levelHistory)}
+                                  />
+                                ))}
+                              </>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 ) : (
@@ -3761,29 +3804,77 @@ export function VercelView(): ReactElement {
                     
                     {displayLevels.length > 0 ? (
                       <div className="flex flex-col gap-2">
-                        {/* Spot Price Divider */}
-                        <div className="py-3 flex items-center gap-3">
-                          <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-amber-500/40 to-amber-500/40"></div>
-                          <div className="shrink-0 bg-amber-600 px-3 py-1 rounded-full border border-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
-                            <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {quantAnalysis.spot?.toFixed(2) ?? 'N/A'}</span>
-                          </div>
-                          <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-amber-500/40 to-amber-500/40"></div>
-                        </div>
+                        {(() => {
+                          const spot = quantAnalysis.spot;
+                          // Split levels by position relative to spot
+                          const resistances = displayLevels
+                            .filter(l => l.level >= spot)
+                            .sort((a, b) => b.level - a.level); // descending (highest first)
+                          const supports = displayLevels
+                            .filter(l => l.level < spot)
+                            .sort((a, b) => a.level - b.level); // ascending (lowest first)
 
-                        {/* Algorithmic Levels sorted by proximity to spot */}
-                        {displayLevels.map((l, i) => (
-                          <LevelRow
-                            key={`algo-level-${i}`}
-                            level={l.level}
-                            type={l.type}
-                            spot={quantAnalysis.spot}
-                            expiries={l.expiries}
-                            oi={l.oi}
-                            wallType={l.wallType}
-                            enhancedData={l.enhancedData}
-                            evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
-                          />
-                        ))}
+                          return (
+                            <>
+                              {/* RESISTANCES (above spot) */}
+                              {resistances.length > 0 && (
+                                <>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-[10px] font-black text-red-400 uppercase tracking-widest">▲ RESISTANCES</span>
+                                    <div className="h-[1px] flex-grow bg-gradient-to-r from-red-500/30 to-transparent"></div>
+                                    <span className="text-[10px] text-gray-500">{resistances.length} level{resistances.length !== 1 ? 's' : ''}</span>
+                                  </div>
+                                  {resistances.map((l, i) => (
+                                    <LevelRow
+                                      key={`algo-res-${i}`}
+                                      level={l.level}
+                                      type={l.type}
+                                      spot={spot}
+                                      expiries={l.expiries}
+                                      oi={l.oi}
+                                      wallType={l.wallType}
+                                      enhancedData={l.enhancedData}
+                                      evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
+                                    />
+                                  ))}
+                                </>
+                              )}
+
+                              {/* Spot Price Divider */}
+                              <div className="py-3 flex items-center gap-3">
+                                <div className="h-[1px] flex-grow bg-gradient-to-r from-transparent via-amber-500/40 to-amber-500/40"></div>
+                                <div className="shrink-0 bg-amber-600 px-3 py-1 rounded-full border border-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
+                                  <span className="text-[10px] font-black text-white uppercase tracking-wider">SPOT: {spot?.toFixed(2) ?? 'N/A'}</span>
+                                </div>
+                                <div className="h-[1px] flex-grow bg-gradient-to-l from-transparent via-amber-500/40 to-amber-500/40"></div>
+                              </div>
+
+                              {/* SUPPORTS (below spot) */}
+                              {supports.length > 0 && (
+                                <>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-[10px] font-black text-green-400 uppercase tracking-widest">▼ SUPPORTS</span>
+                                    <div className="h-[1px] flex-grow bg-gradient-to-r from-green-500/30 to-transparent"></div>
+                                    <span className="text-[10px] text-gray-500">{supports.length} level{supports.length !== 1 ? 's' : ''}</span>
+                                  </div>
+                                  {supports.map((l, i) => (
+                                    <LevelRow
+                                      key={`algo-sup-${i}`}
+                                      level={l.level}
+                                      type={l.type}
+                                      spot={spot}
+                                      expiries={l.expiries}
+                                      oi={l.oi}
+                                      wallType={l.wallType}
+                                      enhancedData={l.enhancedData}
+                                      evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
+                                    />
+                                  ))}
+                                </>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <div className="text-center py-8 text-gray-500">
