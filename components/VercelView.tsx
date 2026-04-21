@@ -3727,7 +3727,7 @@ export function VercelView(): ReactElement {
                           .sort((a, b) => b.prezzo - a.prezzo); // descending (highest first)
                         const supports = aiDisplayLevels
                           .filter(l => l.prezzo < spot)
-                          .sort((a, b) => a.prezzo - b.prezzo); // ascending (lowest first)
+                          .sort((a, b) => b.prezzo - a.prezzo); // descending (highest/closest to spot first)
 
                         return (
                           <>
@@ -3803,8 +3803,8 @@ export function VercelView(): ReactElement {
                             .filter(l => l.level >= spot)
                             .sort((a, b) => b.level - a.level); // descending (highest first)
                           const supports = displayLevels
-                            .filter(l => l.level < spot)
-                            .sort((a, b) => a.level - b.level); // ascending (lowest first)
+                              .filter(l => l.level < spot)
+                              .sort((a, b) => b.level - a.level); // descending (highest/closest to spot first)
 
                           return (
                             <>
