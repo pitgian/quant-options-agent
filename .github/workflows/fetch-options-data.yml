@@ -2,13 +2,8 @@ name: Fetch Options Data
 
 on:
   schedule:
-    # US Session (14:30-21:00 UTC = 9:30 AM - 4:00 PM ET) - Every hour (reduced from 30min to avoid AI rate limits)
-    - cron: '0 15-20 * * 1-5'            # 15:00-20:00 UTC (covers 10:00-15:00 ET)
-    - cron: '30 14 * * 1-5'              # 14:30 UTC (covers 9:30 ET)
-    - cron: '0 21 * * 1-5'               # 21:00 UTC (covers 16:00 ET)
-    # Outside US Session - Every 2 hours (reduced from hourly to minimize AI API calls)
-    - cron: '0 0,2,4,6,8,10,12 * * 1-5' # Every 2 hours before US session
-    - cron: '0 22 * * 1-5'               # 22:00 UTC (after US session)
+    # Every 15 minutes during market hours (12:00-21:45 UTC covers 8:30 AM - 4:00 PM ET for both EDT/EST)
+    - cron: '*/15 12-21 * * 1-5'
   workflow_dispatch: # Manual trigger
     inputs:
       skip_ai_analysis:
