@@ -2098,8 +2098,11 @@ const AILevelRow: React.FC<{
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
   // Distance-based opacity for AI levels far from spot
+  // High-importance levels (≥80%) stay fully visible regardless of distance
   const absDistancePct = spot > 0 ? Math.abs((level.prezzo - spot) / spot) * 100 : 0;
-  const opacityClass = absDistancePct > 5 ? 'opacity-30' :
+  const isHighImportance = (level.importanza ?? 0) >= 80;
+  const opacityClass = isHighImportance ? '' :
+                       absDistancePct > 5 ? 'opacity-30' :
                        absDistancePct > 3 ? 'opacity-50' :
                        absDistancePct > 1 ? 'opacity-70' : '';
 
@@ -3721,13 +3724,20 @@ export function VercelView(): ReactElement {
                     <div className="flex flex-col gap-2">
                       {(() => {
                         const spot = quantAnalysis.spot;
-                        // Split levels by position relative to spot
+                        // Semantic classification: CALL = resistance, PUT = support by definition
+                        // Only use price position for ambiguous types (GAMMA_FLIP, BOTH)
+                        const isResistance = (l: any): boolean => {
+                          if (l.lato === 'CALL') return true;    // CALL = always resistance
+                          if (l.lato === 'PUT') return false;     // PUT = always support
+                          if (l.lato === 'GAMMA_FLIP') return l.prezzo >= spot; // pivot: use price
+                          return l.prezzo >= spot; // BOTH or undefined: use price position
+                        };
                         const resistances = aiDisplayLevels
-                          .filter(l => l.prezzo >= spot)
-                          .sort((a, b) => b.prezzo - a.prezzo); // descending (highest first)
+                          .filter(l => isResistance(l))
+                          .sort((a, b) => a.prezzo - b.prezzo); // ascending (closest to spot first)
                         const supports = aiDisplayLevels
-                          .filter(l => l.prezzo < spot)
-                          .sort((a, b) => b.prezzo - a.prezzo); // descending (highest/closest to spot first)
+                          .filter(l => !isResistance(l))
+                          .sort((a, b) => b.prezzo - a.prezzo); // descending (closest to spot first)
 
                         return (
                           <>
