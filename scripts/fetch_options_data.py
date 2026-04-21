@@ -935,6 +935,8 @@ def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirat
 
 
 DEFAULT_IV = 0.30  # 30% default IV - reasonable for equity options when yfinance returns 0 or NaN
+MIN_IV = 0.01     # 1% minimum IV — values below this are data artifacts (e.g., deep ITM options
+                   # with IV ~0.00001 that pass the >0 check but round to 0.0, causing gamma=0)
 
 
 def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Optional[ExpiryData]:
@@ -949,7 +951,7 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
         
         # Processa CALLs
         for _, row in chain.calls.iterrows():
-            iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > 0 else DEFAULT_IV
+            iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > MIN_IV else DEFAULT_IV
             iv = min(iv, 3.0)  # Cap at 300% to prevent extreme values
             options.append({
                 "strike": round(float(row['strike']), 2),
@@ -961,7 +963,7 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
         
         # Processa PUTs
         for _, row in chain.puts.iterrows():
-            iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > 0 else DEFAULT_IV
+            iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) and row['impliedVolatility'] > MIN_IV else DEFAULT_IV
             iv = min(iv, 3.0)  # Cap at 300% to prevent extreme values
             options.append({
                 "strike": round(float(row['strike']), 2),
@@ -1434,6 +1436,7 @@ def calculate_total_gex(options: List[Dict[str, Any]], spot: float, T: float, r:
     for opt in options:
         oi = opt.get('oi', 0)
         iv = opt.get('iv', 0.3)  # Default IV if not available
+        iv = iv if iv > MIN_IV else DEFAULT_IV  # Floor: prevent gamma=0 from data artifacts
         strike = opt.get('strike', 0)
         
         if oi <= 0 or strike <= 0:
@@ -1477,10 +1480,12 @@ def calculate_gamma_flip(options: List[Dict[str, Any]], spot: float, T: float, r
         
         if opt.get('side') == 'CALL':
             strikes_data[strike]['call_oi'] = opt.get('oi', 0)
-            strikes_data[strike]['call_iv'] = opt.get('iv', 0.3)
+            raw_iv = opt.get('iv', 0.3)
+            strikes_data[strike]['call_iv'] = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
         else:
             strikes_data[strike]['put_oi'] = opt.get('oi', 0)
-            strikes_data[strike]['put_iv'] = opt.get('iv', 0.3)
+            raw_iv = opt.get('iv', 0.3)
+            strikes_data[strike]['put_iv'] = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
     
     if not strikes_data:
         logger.warning("Cannot calculate gamma flip: no valid strikes data (options list may be empty)")
@@ -1636,10 +1641,12 @@ def calculate_gamma_flip_zone(options: List[Dict[str, Any]], spot: float, T: flo
         
         if opt.get('side') == 'CALL':
             strikes_data[strike]['call_oi'] = opt.get('oi', 0)
-            strikes_data[strike]['call_iv'] = opt.get('iv', 0.3)
+            raw_iv = opt.get('iv', 0.3)
+            strikes_data[strike]['call_iv'] = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
         else:
             strikes_data[strike]['put_oi'] = opt.get('oi', 0)
-            strikes_data[strike]['put_iv'] = opt.get('iv', 0.3)
+            raw_iv = opt.get('iv', 0.3)
+            strikes_data[strike]['put_iv'] = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
     
     if len(strikes_data) < 3:
         return None
@@ -2030,10 +2037,12 @@ def calculate_gex_by_strike(options: List[Dict[str, Any]], spot: float, T: float
         
         if opt.get('side') == 'CALL':
             strikes_data[strike]['call_oi'] = opt.get('oi', 0)
-            strikes_data[strike]['call_iv'] = opt.get('iv', 0.3)
+            raw_iv = opt.get('iv', 0.3)
+            strikes_data[strike]['call_iv'] = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
         else:
             strikes_data[strike]['put_oi'] = opt.get('oi', 0)
-            strikes_data[strike]['put_iv'] = opt.get('iv', 0.3)
+            raw_iv = opt.get('iv', 0.3)
+            strikes_data[strike]['put_iv'] = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
     
     if not strikes_data:
         return []
@@ -2660,9 +2669,11 @@ def find_confluence_levels_enhanced(expiries: List[Dict], spot: float, tolerance
             for opt in options:
                 if abs(opt.get('strike', 0) - actual_strike) / max(actual_strike, 1) <= tolerance_pct:
                     if opt.get('side') == 'CALL':
-                        call_iv = opt.get('iv', 0.3)
+                        raw_iv = opt.get('iv', 0.3)
+                        call_iv = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
                     else:
-                        put_iv = opt.get('iv', 0.3)
+                        raw_iv = opt.get('iv', 0.3)
+                        put_iv = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
             
             call_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, call_iv)
             put_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, put_iv)
@@ -2809,9 +2820,11 @@ def find_resonance_levels_enhanced(expiries: List[Dict], spot: float, tolerance_
             for opt in options:
                 if abs(opt.get('strike', 0) - actual_strike) / max(actual_strike, 1) <= tolerance_pct:
                     if opt.get('side') == 'CALL':
-                        call_iv = opt.get('iv', 0.3)
+                        raw_iv = opt.get('iv', 0.3)
+                        call_iv = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
                     else:
-                        put_iv = opt.get('iv', 0.3)
+                        raw_iv = opt.get('iv', 0.3)
+                        put_iv = raw_iv if raw_iv > MIN_IV else DEFAULT_IV
             
             call_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, call_iv)
             put_gamma = calculate_black_scholes_gamma(spot, actual_strike, T, r, put_iv)

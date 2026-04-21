@@ -267,10 +267,13 @@ function calculateTimeToExpiry(expiryDate: string): number {
  */
 function calculateTotalGEX(options: OptionData[], spot: number, T: number, r: number = 0.05): number {
   let totalGex = 0.0;
+  const MIN_IV = 0.01;
+  const DEFAULT_IV = 0.30;
 
   for (const opt of options) {
     const oi = opt.oi || 0;
-    const iv = opt.iv || 0.3;
+    const rawIv = opt.iv || 0;
+    const iv = rawIv > MIN_IV ? rawIv : DEFAULT_IV; // Floor: prevent gamma=0 from data artifacts
     const strike = opt.strike || 0;
 
     if (oi <= 0 || strike <= 0) continue;
@@ -297,6 +300,8 @@ function calculateGammaFlip(options: OptionData[], spot: number, T: number, r: n
   // Filter out options too far from spot (> 20%)
   // Far-OTM options have minimal gamma impact on current spot but can skew the flip calculation
   const MAX_DISTANCE_PCT = 0.20;
+  const MIN_IV = 0.01; // Floor: IV below 1% is a data artifact (e.g., deep ITM with IV~0.00001)
+  const DEFAULT_IV = 0.30;
   const minStrike = spot * (1 - MAX_DISTANCE_PCT);
   const maxStrike = spot * (1 + MAX_DISTANCE_PCT);
   
@@ -311,16 +316,18 @@ function calculateGammaFlip(options: OptionData[], spot: number, T: number, r: n
     if (strike < minStrike || strike > maxStrike) continue;
 
     if (!strikesData.has(strike)) {
-      strikesData.set(strike, { callOi: 0, putOi: 0, callIv: 0.3, putIv: 0.3 });
+      strikesData.set(strike, { callOi: 0, putOi: 0, callIv: DEFAULT_IV, putIv: DEFAULT_IV });
     }
 
     const data = strikesData.get(strike)!;
+    // Floor IV at MIN_IV to prevent gamma=0 from data artifacts (IV=0 or IV~0.00001)
+    const safeIv = (iv: number) => (iv > MIN_IV ? iv : DEFAULT_IV);
     if (opt.side === 'CALL') {
       data.callOi = opt.oi || 0;
-      data.callIv = opt.iv || 0.3;
+      data.callIv = safeIv(opt.iv || 0);
     } else {
       data.putOi = opt.oi || 0;
-      data.putIv = opt.iv || 0.3;
+      data.putIv = safeIv(opt.iv || 0);
     }
   }
 
@@ -517,6 +524,8 @@ function calculateVolatilitySkew(options: OptionData[], spot: number): Volatilit
  */
 function calculateGexByStrike(options: OptionData[], spot: number, T: number, r: number = 0.05): GEXData[] {
   // Group options by strike
+  const MIN_IV = 0.01;
+  const DEFAULT_IV = 0.30;
   const strikesData: Map<number, { callOi: number; putOi: number; callIv: number; putIv: number }> = new Map();
 
   for (const opt of options) {
@@ -524,16 +533,17 @@ function calculateGexByStrike(options: OptionData[], spot: number, T: number, r:
     if (strike <= 0) continue;
 
     if (!strikesData.has(strike)) {
-      strikesData.set(strike, { callOi: 0, putOi: 0, callIv: 0.3, putIv: 0.3 });
+      strikesData.set(strike, { callOi: 0, putOi: 0, callIv: DEFAULT_IV, putIv: DEFAULT_IV });
     }
 
     const data = strikesData.get(strike)!;
+    const safeIv = (iv: number) => (iv > MIN_IV ? iv : DEFAULT_IV);
     if (opt.side === 'CALL') {
       data.callOi = opt.oi || 0;
-      data.callIv = opt.iv || 0.3;
+      data.callIv = safeIv(opt.iv || 0);
     } else {
       data.putOi = opt.oi || 0;
-      data.putIv = opt.iv || 0.3;
+      data.putIv = safeIv(opt.iv || 0);
     }
   }
 
