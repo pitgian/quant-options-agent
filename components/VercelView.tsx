@@ -1317,13 +1317,7 @@ function getLevelEvolution(
  * Rendered next to the level score/role badge.
  */
 const LevelEvolutionBadge: React.FC<{ evolution?: LevelEvolution }> = ({ evolution }) => {
-  if (!evolution || (evolution.snapshots === 0 && evolution.trend === 'new')) {
-    // Show NEW badge only when there are truly 0 snapshots
-    if (evolution?.snapshots === 0) {
-      return (
-        <span style={{ color: '#3b82f6', fontSize: '11px', fontWeight: 700 }} className="ml-1">NEW</span>
-      );
-    }
+  if (!evolution || evolution.trend === 'new') {
     return null;
   }
 
@@ -1349,10 +1343,8 @@ const LevelEvolutionBadge: React.FC<{ evolution?: LevelEvolution }> = ({ evoluti
     );
   }
 
-  // trend === 'new' but has some snapshots (appeared recently)
-  return (
-    <span style={{ color: '#3b82f6', fontSize: '11px', fontWeight: 700 }} className="ml-1">NEW</span>
-  );
+  // trend === 'new' — no badge needed (was showing meaningless "NEW" on every level)
+  return null;
 };
 
 
