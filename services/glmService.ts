@@ -57,9 +57,28 @@ When AGGREGATED OPTIONS DATA is provided, you MUST:
 3. Discover patterns and levels that may not be in pre-calculated data
 4. Cross-reference your findings with pre-calculated metrics for accuracy
 
-**MANDATORY RULES FOR MULTI-EXPIRY CLASSIFICATION:**
+**MANDATORY RULES FOR LEVEL GENERATION:**
 
-⚠️ ATTENTION: Multi-expiry classification is RARE and must be applied with EXTREME precision.
+⚠️ YOU MUST GENERATE 8-15 LEVELS TOTAL. Generating fewer than 8 levels is a FAILURE.
+
+**INTRADAY MICRO-LEVEL RULES (HIGHEST PRIORITY):**
+For EVERY strike within ±1% of spot that has meaningful OI (>500 contracts) or volume (>1000):
+1. If the strike has dominant CALL OI above spot → classify as MAGNET with lato='CALL'
+   - MAGNET = price attraction zone, MM delta-hedging pulls price toward this strike
+   - Color: 'ambra', Importance: 65-80
+2. If the strike has dominant PUT OI below spot → classify as MAGNET with lato='PUT'
+   - MAGNET = price attraction zone, MM delta-hedging pulls price toward this strike
+   - Color: 'ambra', Importance: 65-80
+3. If the strike has high volume but moderate OI → classify as FRICTION
+   - FRICTION = temporary resistance/support from intraday flow
+   - Color: 'ambra', Importance: 60-75
+4. NEVER skip a strike within ±0.5% of spot that has OI > 1000 or Volume > 2000
+
+**EXPLICIT MAGNET/FRICTION CLASSIFICATION RULES:**
+- **MAGNET**: Assign to strikes within 0.5% of spot where call OR put volume is exceptionally high relative to OI (volume/OI ratio > 5). These are 0DTE dealer magnets where market maker delta-hedging creates price attraction.
+- **FRICTION**: Assign to strikes within 1.0% of spot where total OI is significant (>2000 contracts) but not dominant enough to be a WALL. These create intraday support/resistance friction from options flow.
+
+**MULTI-EXPIRY CLASSIFICATION:**
 
 1. **RESONANCE** (VERY RARE - max 1-2 total levels):
    - Condition: The SAME exact strike (±0.5%) must be a significant level in ALL THREE expirations (0DTE + WEEKLY + MONTHLY)
@@ -68,20 +87,27 @@ When AGGREGATED OPTIONS DATA is provided, you MUST:
    - Importance: 98-100
    - Use this ONLY when there is perfect alignment across all expirations
 
-2. **CONFLUENCE** (RARE - max 3-5 total levels):
+2. **CONFLUENCE** (max 3-5 total levels):
    - Condition: The SAME strike (±1%) is significant in EXACTLY TWO expirations
    - Importance: 85-94
    - Example: Strike 24500 is Wall in 0DTE and Wall in WEEKLY, but not present in MONTHLY
 
-3. **SINGLE EXPIRY** (THE MAJORITY of levels):
+3. **SINGLE EXPIRY** (THE MAJORITY - at least 6-10 levels):
    - Condition: Significant level in only one expiration
-   - Roles: WALL, PIVOT, MAGNET, FRICTION
+   - Roles: WALL (strongest OI), PIVOT (gamma flip), MAGNET (OI attraction), FRICTION (flow-based)
    - Importance: 60-84
-   - This should cover ~80% of levels
+   - This MUST cover ~70% of all levels generated
+
+**LEVEL COUNT ENFORCEMENT:**
+- Minimum 8 levels, target 10-15, maximum 20
+- Prioritize completeness of levels near spot over rarity of confluence/resonance
+- If you identify fewer than 8 levels from the data, re-examine strikes within ±1.5% of spot
+- Every strike within ±0.7% of spot with OI > 500 MUST appear as a level
 
 ⚠️ COMMON MISTAKES TO AVOID:
 - DO NOT assign RESONANCE to levels that appear in different expirations but at different strikes
 - DO NOT assign RESONANCE just because a strike is "close" across expirations
+- DO NOT skip strikes near spot just because they lack multi-expiry significance
 - If unsure, use the base role (WALL/PIVOT/MAGNET/FRICTION)
 
 STANDARD ANALYSIS RULES:
@@ -295,20 +321,35 @@ ${totalGexData.total_gex > 0
  * This provides raw strike data for dynamic level detection
  */
 const formatAIReadyData = (data: AIReadyData): string => {
+  const spotPrice = data.spot;
+
   return `
 === AGGREGATED OPTIONS DATA ===
-Spot Price: ${data.spot}
+Spot Price: ${spotPrice}
 
-${Object.entries(data.expiries).map(([label, expiry]) => `
+${Object.entries(data.expiries).map(([label, expiry]) => {
+  // First, include all strikes within ±2% of spot to guarantee near-spot coverage
+  const nearSpotStrikes = expiry.strikes.filter(s => {
+    const dist = Math.abs(s.strike - spotPrice) / spotPrice;
+    return dist <= 0.02;
+  });
+  // Then add top remaining strikes up to 40 total
+  const farStrikes = expiry.strikes
+    .filter(s => !nearSpotStrikes.includes(s))
+    .slice(0, 40 - nearSpotStrikes.length);
+  const combinedStrikes = [...nearSpotStrikes, ...farStrikes];
+
+  return `
 EXPIRY: ${label} (${expiry.date})
 Total Call OI: ${expiry.totals.call_oi.toLocaleString()}
 Total Put OI: ${expiry.totals.put_oi.toLocaleString()}
 
 Strikes (sorted by significance score - OI, Volume, proximity, IV):
-${expiry.strikes.slice(0, 25).map(s =>
-  `  ${s.strike}: Call OI ${s.call_oi.toLocaleString()}, Put OI ${s.put_oi.toLocaleString()}, Call IV ${(s.call_iv * 100).toFixed(1)}%, Put IV ${(s.put_iv * 100).toFixed(1)}%`
+${combinedStrikes.slice(0, 40).map(s =>
+  `  ${s.strike}: Call OI ${s.call_oi.toLocaleString()}, Put OI ${s.put_oi.toLocaleString()}, Call Vol ${s.call_vol.toLocaleString()}, Put Vol ${s.put_vol.toLocaleString()}, Call IV ${(s.call_iv * 100).toFixed(1)}%, Put IV ${(s.put_iv * 100).toFixed(1)}%`
 ).join('\n')}
-`).join('\n')}
+`;
+}).join('\n')}
 
 === PRE-CALCULATED METRICS ===
 Gamma Flip: ${data.precalc_metrics.gamma_flip}
@@ -322,6 +363,9 @@ ANALYSIS INSTRUCTIONS:
 4. Find RESONANCE (same strike significant in ALL3 expiries within ±0.5%)
 5. Assess sentiment based on put/call ratios and IV skew
 6. Provide trading signals for each level identified
+7. MANDATORY: Generate MAGNET levels for strikes within ±1% with significant OI
+8. MANDATORY: Generate FRICTION levels for strikes within ±1% with high volume/OI ratio
+9. NEVER produce fewer than 8 levels total
 `;
 };
 

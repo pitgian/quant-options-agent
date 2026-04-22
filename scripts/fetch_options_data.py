@@ -2165,23 +2165,29 @@ def calculate_significance_score(strike_data: Dict, spot: float,
                                   data_quality: str = 'good') -> float:
     """
     Calculate significance score for a strike.
-    Score = 35% OI + 20% Vol + 20% Vol/OI Ratio + 15% Proximity + 10% IV
+    Score = 20% OI + 20% Vol + 20% Vol/OI Ratio + 30% Proximity + 10% IV
+    
+    Intraday-optimized: proximity is weighted at 30% (up from 15%) to prefer
+    near-spot levels. OI weight reduced from 35% to 20% to compensate.
+    Gaussian decay sigma tightened from 0.03 to 0.02 so strikes further from
+    spot score significantly lower — critical for intraday level relevance.
     
     When data_quality is 'degraded' or 'stale', proximity weight increases
-    from 15% to 25% (and OI weight decreases from 35% to 25%) to prefer
-    near-spot levels when OI data is unreliable.
+    further to 35% (and OI weight decreases to 15%) to prefer near-spot
+    levels when OI data is unreliable.
     """
     total_oi = strike_data['call_oi'] + strike_data['put_oi']
     total_vol = strike_data['call_vol'] + strike_data['put_vol']
     avg_strike_iv = (strike_data['call_iv'] + strike_data['put_iv']) / 2
     
     # Adjust weights based on data quality
+    # Intraday: proximity boosted to 30% (normal) / 35% (degraded) for near-spot relevance
     if data_quality in ('degraded', 'stale'):
-        oi_weight = 25       # Reduced from 35 — OI is unreliable
-        proximity_weight = 25  # Boosted from 15 — prefer near-spot levels
+        oi_weight = 15       # Reduced from 20 — OI is unreliable
+        proximity_weight = 35  # Boosted from 30 — prefer near-spot levels
     else:
-        oi_weight = 35
-        proximity_weight = 15
+        oi_weight = 20       # Reduced from 35 — proximity is more important for intraday
+        proximity_weight = 30  # Boosted from 15 — intraday levels must be near spot
     
     # 1. OI Score: Normalized by max OI
     oi_score = (total_oi / max_oi) * oi_weight if max_oi > 0 else 0
@@ -2193,9 +2199,9 @@ def calculate_significance_score(strike_data: Dict, spot: float,
     vol_oi_ratio = total_vol / total_oi if total_oi > 0 else 0
     vol_oi_score = min(vol_oi_ratio, 2) * 10  # Cap at 2x ratio
     
-    # 4. Proximity Score: Gaussian decay from spot
+    # 4. Proximity Score: Gaussian decay from spot (tighter sigma for intraday)
     distance_pct = abs(strike_data['strike'] - spot) / spot if spot > 0 else 0
-    proximity_score = math.exp(-((distance_pct / 0.03) ** 2)) * proximity_weight
+    proximity_score = math.exp(-((distance_pct / 0.02) ** 2)) * proximity_weight
     
     # 5. IV Extremity Score (0-10): Deviation from average IV
     iv_deviation = abs(avg_strike_iv - avg_iv) / avg_iv if avg_iv > 0 else 0
@@ -2632,6 +2638,17 @@ def find_confluence_levels_enhanced(expiries: List[Dict], spot: float, tolerance
         if len(exp_list) == 2
     }
     
+    # --- Intraday proximity filter: prefer confluence levels near spot ---
+    max_conf_dist = spot * 0.03  # ±3% distance cap for intraday relevance
+    nearby_strikes = {s: exp_list for s, exp_list in confluence_strikes.items()
+                      if abs(s - spot) <= max_conf_dist}
+    # Fallback: if ±3% filters out ALL candidates, relax to ±5%
+    if not nearby_strikes and confluence_strikes:
+        max_conf_dist = spot * 0.05
+        nearby_strikes = {s: exp_list for s, exp_list in confluence_strikes.items()
+                          if abs(s - spot) <= max_conf_dist}
+    confluence_strikes = nearby_strikes
+    
     # Sort by distance from spot
     sorted_strikes = sorted(confluence_strikes.keys(), key=lambda s: abs(s - spot))
     
@@ -2869,15 +2886,20 @@ def find_resonance_levels_enhanced(expiries: List[Dict], spot: float, tolerance_
     return results
 
 
-def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3) -> Dict[str, List[Dict]]:
+def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3,
+                           max_distance_pct: float = 5.0) -> Dict[str, List[Dict]]:
     """
-    Seleziona le Call Walls e Put Walls per ogni expiry.
-    Top N per Open Interest.
+    Select Call/Put Walls per expiry using proximity-weighted scoring.
+    
+    Intraday-optimized: instead of pure OI ranking, uses a composite score:
+      50% OI weight + 50% proximity weight
+    Walls beyond max_distance_pct from spot are excluded entirely.
     
     Args:
         expiries: Lista di expiry data con options
         spot: Prezzo spot corrente
         top_n: Numero di walls da selezionare per tipo (default 3)
+        max_distance_pct: Maximum distance from spot as percentage (default 5%)
     
     Returns:
         {
@@ -2885,6 +2907,7 @@ def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3) ->
             "put_walls": [{"strike": float, "oi": int, "expiry": str}, ...]
         }
     """
+    MAX_DISTANCE_PCT = max_distance_pct  # ±5% cap for intraday relevance
     call_walls = []
     put_walls = []
     
@@ -2897,21 +2920,36 @@ def select_walls_by_expiry(expiries: List[Dict], spot: float, top_n: int = 3) ->
         puts = [(opt['strike'], opt['oi']) for opt in expiry.get('options', [])
                 if opt['side'] == 'PUT' and opt['oi'] > 0]
         
-        # Ordina per OI decrescente
-        calls.sort(key=lambda x: x[1], reverse=True)
-        puts.sort(key=lambda x: x[1], reverse=True)
+        # --- Intraday: filter by side of spot AND distance cap, then score ---
+        max_dist = spot * MAX_DISTANCE_PCT / 100.0
         
-        # Filter to above spot FIRST, then take top N by OI
-        calls_above = [(s, o) for s, o in calls if s > spot and o > 0]
-        calls_above.sort(key=lambda x: x[1], reverse=True)
-        for strike, oi in calls_above[:top_n]:
-            call_walls.append({"strike": round(strike, 2), "oi": oi, "expiry": expiry_label})
+        # Call walls: above spot, within distance cap
+        calls_above = [(s, o) for s, o in calls
+                       if s > spot and o > 0 and (s - spot) <= max_dist]
+        if calls_above:
+            max_oi = max(o for _, o in calls_above)
+            # Composite score: 50% normalized OI + 50% proximity (closer = higher)
+            calls_above_scored = [
+                (s, o, 0.5 * (o / max_oi) + 0.5 * (1 - (s - spot) / max_dist))
+                for s, o in calls_above
+            ]
+            calls_above_scored.sort(key=lambda x: x[2], reverse=True)
+            for strike, oi, score in calls_above_scored[:top_n]:
+                call_walls.append({"strike": round(strike, 2), "oi": oi, "expiry": expiry_label})
         
-        # Filter to below spot FIRST, then take top N by OI
-        puts_below = [(s, o) for s, o in puts if s < spot and o > 0]
-        puts_below.sort(key=lambda x: x[1], reverse=True)
-        for strike, oi in puts_below[:top_n]:
-            put_walls.append({"strike": round(strike, 2), "oi": oi, "expiry": expiry_label})
+        # Put walls: below spot, within distance cap
+        puts_below = [(s, o) for s, o in puts
+                      if s < spot and o > 0 and (spot - s) <= max_dist]
+        if puts_below:
+            max_oi = max(o for _, o in puts_below)
+            # Composite score: 50% normalized OI + 50% proximity (closer = higher)
+            puts_below_scored = [
+                (s, o, 0.5 * (o / max_oi) + 0.5 * (1 - (spot - s) / max_dist))
+                for s, o in puts_below
+            ]
+            puts_below_scored.sort(key=lambda x: x[2], reverse=True)
+            for strike, oi, score in puts_below_scored[:top_n]:
+                put_walls.append({"strike": round(strike, 2), "oi": oi, "expiry": expiry_label})
     
     # Ordina per OI decrescente e limita a top N globali
     call_walls.sort(key=lambda x: x['oi'], reverse=True)

@@ -813,8 +813,9 @@ function calculateWeightedConfluenceScore(
 
 /**
  * Calculate multi-factor score for a level (unified 5-component scoring).
- * Matches Python calculate_significance_score:
- *   OI 35% + Volume 20% + Vol/OI Ratio 20% + Proximity 15% (Gaussian) + IV 10%
+ * Updated: Proximity boosted to 25% for intraday relevance, Vol/OI reduced to 10%.
+ * Normal mode:  OI 35% + Volume 20% + Vol/OI 10% + Proximity 25% (Gaussian) + IV 10%
+ * Closed mode:  Volume 25% + OI 10% + Proximity 25% (Gaussian) + IV 10%  (→70 max, normalized)
  */
 function calculateLevelScore(
   oi: number,
@@ -827,21 +828,21 @@ function calculateLevelScore(
 ): number {
   if (useVolumePrimary) {
     // Market-closed mode: Volume is primary, OI is secondary
-    // 1. Volume Score (0–35): Normalized by max volume (promoted from 20)
-    const volScore = maxVolume > 0 ? (volume / maxVolume) * 35 : 0;
+    // 1. Volume Score (0–25): Normalized by max volume (reduced from 35 to make room for proximity)
+    const volScore = maxVolume > 0 ? (volume / maxVolume) * 25 : 0;
 
     // 2. OI Score (0–10): Reduced weight since OI is unreliable when market is closed
     const oiScore = (maxOi > 0 && oi > 0) ? (oi / maxOi) * 10 : 0;
 
     // 3. Vol/OI Ratio: Skip (set to 0) since OI is unreliable when market is closed
 
-    // 4. Proximity Score (0–15): Gaussian decay from spot (unchanged)
-    const proximityScore = Math.exp(-Math.pow(distanceFromSpot / 3, 2)) * 15;
+    // 4. Proximity Score (0–25): Gaussian decay from spot (boosted from 15 for intraday relevance)
+    const proximityScore = Math.exp(-Math.pow(distanceFromSpot / 3, 2)) * 25;
 
     // 5. IV Score (0–10): IV extremity (unchanged)
     const ivScore = Math.min(iv * 100, 1.0) * 10;
 
-    // Total: 35 + 10 + 0 + 15 + 10 = 70 max, normalize to 100
+    // Total: 25 + 10 + 0 + 25 + 10 = 70 max, normalize to 100
     const rawTotal = volScore + oiScore + proximityScore + ivScore;
     return (rawTotal / 70) * 100;
   }
@@ -853,14 +854,15 @@ function calculateLevelScore(
   // 2. Volume Score (0–20): Normalized by max volume
   const volScore = maxVolume > 0 ? (volume / maxVolume) * 20 : 0;
 
-  // 3. Vol/OI Ratio Score (0–20): Unusual activity detection, capped at ratio of 2
+  // 3. Vol/OI Ratio Score (0–10): Unusual activity detection, capped at ratio of 2
+  //    (reduced from 20 to 10 to make room for proximity boost)
   const volOiRatio = oi > 0 ? volume / oi : 0;
-  const volOiScore = (Math.min(volOiRatio, 2) / 2) * 20;
+  const volOiScore = (Math.min(volOiRatio, 2) / 2) * 10;
 
-  // 4. Proximity Score (0–15): Gaussian decay from spot
+  // 4. Proximity Score (0–25): Gaussian decay from spot (boosted from 15 for intraday relevance)
   //    distanceFromSpot is in % (e.g. 3 for 3%); Python uses ratio (0.03),
   //    so we divide by 3 instead of 0.03 to get the same result.
-  const proximityScore = Math.exp(-Math.pow(distanceFromSpot / 3, 2)) * 15;
+  const proximityScore = Math.exp(-Math.pow(distanceFromSpot / 3, 2)) * 25;
 
   // 5. IV Score (0–10): IV extremity
   const ivScore = Math.min(iv * 100, 1.0) * 10;
@@ -3693,13 +3695,16 @@ export function VercelView(): ReactElement {
       }
     }
 
-    // 3. Add Call Walls - ONLY DOMINANT walls (more selective fallback)
+    // 3. Add Call Walls - DOMINANT walls + MODERATE walls near spot (intraday relevance)
     // Use enhanced wall calculation to get wall types
     const enhancedWalls = calculateWallsEnhanced(quantAnalysis.allOptions, spot, 5, marketClosed);
     
     for (const wall of enhancedWalls.callWalls) {
-      // Only include DOMINANT walls (score >= 70 effectively)
-      if (wall.wallType === 'DOMINANT' && !isStrikeUsed(wall.strike)) {
+      // Include DOMINANT walls always, plus MODERATE walls within ±1.5% of spot
+      const distPct = spot > 0 ? Math.abs(wall.strike - spot) / spot * 100 : 0;
+      const isIntradayRelevant = wall.wallType === 'DOMINANT' ||
+        (wall.wallType === 'MODERATE' && distPct <= 1.5);
+      if (isIntradayRelevant && !isStrikeUsed(wall.strike)) {
         levels.push({
           level: wall.strike,
           type: 'CALL_WALL',
@@ -3711,10 +3716,13 @@ export function VercelView(): ReactElement {
       }
     }
 
-    // 4. Add Put Walls - ONLY DOMINANT walls (more selective fallback)
+    // 4. Add Put Walls - DOMINANT walls + MODERATE walls near spot (intraday relevance)
     for (const wall of enhancedWalls.putWalls) {
-      // Only include DOMINANT walls
-      if (wall.wallType === 'DOMINANT' && !isStrikeUsed(wall.strike)) {
+      // Include DOMINANT walls always, plus MODERATE walls within ±1.5% of spot
+      const distPct = spot > 0 ? Math.abs(wall.strike - spot) / spot * 100 : 0;
+      const isIntradayRelevant = wall.wallType === 'DOMINANT' ||
+        (wall.wallType === 'MODERATE' && distPct <= 1.5);
+      if (isIntradayRelevant && !isStrikeUsed(wall.strike)) {
         levels.push({
           level: wall.strike,
           type: 'PUT_WALL',
