@@ -104,12 +104,12 @@ let cachedData: CachedData | null = null;
  * }
  * ```
  */
-export async function fetchVercelOptionsData(): Promise<VercelOptionsData | null> {
+export async function fetchVercelOptionsData(forceRefresh: boolean = false): Promise<VercelOptionsData | null> {
   const now = Date.now();
   
-  // Return cached data if still fresh
-  if (cachedData && (now - cachedData.timestamp) < CACHE_DURATION_MS) {
-    console.log('[vercelDataService] Returning cached data (age:', 
+  // Return cached data if still fresh (unless forceRefresh is true)
+  if (!forceRefresh && cachedData && (now - cachedData.timestamp) < CACHE_DURATION_MS) {
+    console.log('[vercelDataService] Returning cached data (age:',
       Math.round((now - cachedData.timestamp) / 1000 / 60), 'minutes)');
     return cachedData.data;
   }

@@ -27,6 +27,33 @@ import {
 } from '../types';
 
 // ============================================================================
+// MARKET HOURS UTILITY
+// ============================================================================
+
+/**
+ * Determines if the US market (NYSE/NASDAQ) is currently open.
+ * Uses Eastern Time zone for accurate market-hours detection.
+ * Market hours: 9:30 AM - 4:00 PM ET, Monday-Friday.
+ */
+function isUSMarketOpen(): boolean {
+  const now = new Date();
+  const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = etNow.getDay();
+  const hours = etNow.getHours();
+  const minutes = etNow.getMinutes();
+  const timeInMinutes = hours * 60 + minutes;
+  
+  // Weekend check
+  if (day === 0 || day === 6) return false;
+  
+  // Market hours: 9:30 AM - 4:00 PM ET
+  const marketOpen = 9 * 60 + 30;   // 9:30 AM
+  const marketClose = 16 * 60;       // 4:00 PM
+  
+  return timeInMinutes >= marketOpen && timeInMinutes < marketClose;
+}
+
+// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -795,8 +822,31 @@ function calculateLevelScore(
   iv: number,
   distanceFromSpot: number,
   maxOi: number,
-  maxVolume: number
+  maxVolume: number,
+  useVolumePrimary: boolean = false
 ): number {
+  if (useVolumePrimary) {
+    // Market-closed mode: Volume is primary, OI is secondary
+    // 1. Volume Score (0–35): Normalized by max volume (promoted from 20)
+    const volScore = maxVolume > 0 ? (volume / maxVolume) * 35 : 0;
+
+    // 2. OI Score (0–10): Reduced weight since OI is unreliable when market is closed
+    const oiScore = (maxOi > 0 && oi > 0) ? (oi / maxOi) * 10 : 0;
+
+    // 3. Vol/OI Ratio: Skip (set to 0) since OI is unreliable when market is closed
+
+    // 4. Proximity Score (0–15): Gaussian decay from spot (unchanged)
+    const proximityScore = Math.exp(-Math.pow(distanceFromSpot / 3, 2)) * 15;
+
+    // 5. IV Score (0–10): IV extremity (unchanged)
+    const ivScore = Math.min(iv * 100, 1.0) * 10;
+
+    // Total: 35 + 10 + 0 + 15 + 10 = 70 max, normalize to 100
+    const rawTotal = volScore + oiScore + proximityScore + ivScore;
+    return (rawTotal / 70) * 100;
+  }
+
+  // Normal mode (market open): OI is primary
   // 1. OI Score (0–35): Normalized by max OI
   const oiScore = maxOi > 0 ? (oi / maxOi) * 35 : 0;
 
@@ -847,14 +897,19 @@ function classifyWallType(oi: number, volume: number, avgOi: number, avgVolume: 
 function calculateWallsEnhanced(
   options: OptionData[],
   spot: number,
-  topN: number = 3
+  topN: number = 3,
+  useVolumePrimary: boolean = false
 ): {
   callWalls: ScoredLevel[];
   putWalls: ScoredLevel[];
 } {
-  // Filter valid options
-  const callOptions = options.filter(opt => opt.side === 'CALL' && opt.strike > spot && opt.oi > 0);
-  const putOptions = options.filter(opt => opt.side === 'PUT' && opt.strike < spot && opt.oi > 0);
+  // Filter valid options — when useVolumePrimary, filter by vol > 0 instead of oi > 0
+  const callOptions = options.filter(opt =>
+    opt.side === 'CALL' && opt.strike > spot && (useVolumePrimary ? opt.vol > 0 : opt.oi > 0)
+  );
+  const putOptions = options.filter(opt =>
+    opt.side === 'PUT' && opt.strike < spot && (useVolumePrimary ? opt.vol > 0 : opt.oi > 0)
+  );
   
   // Calculate max values for normalization
   const maxCallOi = Math.max(...callOptions.map(o => o.oi), 1);
@@ -871,38 +926,43 @@ function calculateWallsEnhanced(
   // Score and sort call walls
   const scoredCalls: ScoredLevel[] = callOptions.map(opt => {
     const distancePct = spot > 0 ? ((opt.strike - spot) / spot) * 100 : 0;
-    const score = calculateLevelScore(opt.oi, opt.vol, opt.iv, distancePct, maxCallOi, maxCallVol);
+    const score = calculateLevelScore(opt.oi, opt.vol, opt.iv, distancePct, maxCallOi, maxCallVol, useVolumePrimary);
     const wallType = classifyWallType(opt.oi, opt.vol, avgCallOi, avgCallVol);
     return {
       strike: opt.strike,
       score,
       wallType,
-      oi: opt.oi,
+      oi: useVolumePrimary && opt.oi === 0 ? opt.vol : opt.oi, // Use vol as fallback OI for downstream rendering
       volume: opt.vol,
       iv: opt.iv,
       distancePct,
       side: 'CALL' as const
     };
-  }).sort((a, b) => b.score - a.score)
-    .slice(0, topN);
+  }).sort((a, b) => {
+    // When useVolumePrimary, sort by volume descending; otherwise by score
+    if (useVolumePrimary) return b.volume - a.volume;
+    return b.score - a.score;
+  }).slice(0, topN);
   
   // Score and sort put walls
   const scoredPuts: ScoredLevel[] = putOptions.map(opt => {
     const distancePct = spot > 0 ? ((opt.strike - spot) / spot) * 100 : 0;
-    const score = calculateLevelScore(opt.oi, opt.vol, opt.iv, distancePct, maxPutOi, maxPutVol);
+    const score = calculateLevelScore(opt.oi, opt.vol, opt.iv, distancePct, maxPutOi, maxPutVol, useVolumePrimary);
     const wallType = classifyWallType(opt.oi, opt.vol, avgPutOi, avgPutVol);
     return {
       strike: opt.strike,
       score,
       wallType,
-      oi: opt.oi,
+      oi: useVolumePrimary && opt.oi === 0 ? opt.vol : opt.oi, // Use vol as fallback OI for downstream rendering
       volume: opt.vol,
       iv: opt.iv,
       distancePct,
       side: 'PUT' as const
     };
-  }).sort((a, b) => b.score - a.score)
-    .slice(0, topN);
+  }).sort((a, b) => {
+    if (useVolumePrimary) return b.volume - a.volume;
+    return b.score - a.score;
+  }).slice(0, topN);
   
   return { callWalls: scoredCalls, putWalls: scoredPuts };
 }
@@ -1023,7 +1083,8 @@ function getClusterRepresentative(
 function findConfluenceLevelsEnhanced(
   expiries: ExpiryData[],
   spot: number,
-  tolerancePct?: number
+  tolerancePct?: number,
+  useVolumePrimary: boolean = false
 ): LocalConfluenceScore[] {
   if (expiries.length < 2) return [];
 
@@ -1088,7 +1149,7 @@ function findConfluenceLevelsEnhanced(
     const avgOi = originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length;
     const avgVol = originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length;
     const distancePct = spot > 0 ? Math.abs((representative - spot) / spot) * 100 : 0;
-    const rawScore = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
+    const rawScore = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol, useVolumePrimary);
 
     candidates.push({
       strike: representative,
@@ -1128,7 +1189,8 @@ function findConfluenceLevels(expiries: ExpiryData[], spot: number): Map<number,
 function findResonanceLevelsEnhanced(
   expiries: ExpiryData[],
   spot: number,
-  tolerancePct?: number
+  tolerancePct?: number,
+  useVolumePrimary: boolean = false
 ): LocalConfluenceScore[] {
   if (expiries.length < 2) return [];
 
@@ -1187,7 +1249,7 @@ function findResonanceLevelsEnhanced(
     const avgOi = originalData.oi.reduce((a, b) => a + b, 0) / originalData.oi.length;
     const avgVol = originalData.vol.reduce((a, b) => a + b, 0) / originalData.vol.length;
     const distancePct = spot > 0 ? Math.abs((representative - spot) / spot) * 100 : 0;
-    const rawScore = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol);
+    const rawScore = calculateLevelScore(avgOi, avgVol, 0.3, distancePct, maxOi, maxVol, useVolumePrimary);
 
     candidates.push({
       strike: representative,
@@ -1466,7 +1528,8 @@ const MetricLabel: React.FC<{
 const ZeroDTEMetricsDisplay: React.FC<{
   metrics: QuantMetrics;
   spot: number;
-}> = ({ metrics, spot }) => {
+  marketClosed?: boolean;
+}> = ({ metrics, spot, marketClosed = false }) => {
   const getGexColor = (gex: number) =>
     gex >= 0 ? 'text-green-400' : 'text-red-400';
 
@@ -1483,56 +1546,88 @@ const ZeroDTEMetricsDisplay: React.FC<{
         <span className="text-xl">📅</span>
         <h3 className="text-base font-black text-white uppercase tracking-wider">0DTE Metrics (Today)</h3>
         <span className="text-xs text-blue-300 ml-2">First Expiry Only</span>
+        {marketClosed && (
+          <span className="text-[10px] font-bold text-purple-400 bg-purple-500/20 px-2 py-0.5 rounded-full border border-purple-500/30 ml-2">
+            🕐 Market Closed
+          </span>
+        )}
       </div>
 
       {/* Key 0DTE Metrics Row */}
       <div className="grid grid-cols-3 gap-3 mb-4">
         {/* GEX 0DTE */}
-        <div className="bg-black/40 p-3 rounded-lg border border-blue-800/50">
+        <div className={`bg-black/40 p-3 rounded-lg border ${marketClosed ? 'border-purple-800/50' : 'border-blue-800/50'} ${marketClosed ? 'opacity-60' : ''}`}>
           <MetricLabel
             label="GEX 0DTE"
             tooltip={DETAILED_TOOLTIPS.gex0dte}
             className="text-xs font-bold text-blue-300 uppercase block mb-1 tracking-widest"
           />
-          <span className={`text-xl font-black font-mono block mt-1 ${getGexColor(metrics.total_gex)}`}>
-            {formatGEX(metrics.total_gex)}
-          </span>
-          {metrics.total_gex < 0 && (
-            <span className="text-[10px] text-red-400/70 block">(volatility regime)</span>
+          {marketClosed ? (
+            <>
+              <span className="text-xl font-black text-gray-500 font-mono block mt-1">—</span>
+              <span className="text-[10px] text-purple-400/70 block">Market Closed</span>
+            </>
+          ) : (
+            <>
+              <span className={`text-xl font-black font-mono block mt-1 ${getGexColor(metrics.total_gex)}`}>
+                {formatGEX(metrics.total_gex)}
+              </span>
+              {metrics.total_gex < 0 && (
+                <span className="text-[10px] text-red-400/70 block">(volatility regime)</span>
+              )}
+            </>
           )}
         </div>
 
         {/* Gamma Flip 0DTE */}
-        <div className="bg-black/40 p-3 rounded-lg border border-blue-800/50">
+        <div className={`bg-black/40 p-3 rounded-lg border ${marketClosed ? 'border-purple-800/50' : 'border-blue-800/50'} ${marketClosed ? 'opacity-60' : ''}`}>
           <MetricLabel
             label="Gamma Flip 0DTE"
             tooltip={DETAILED_TOOLTIPS.gammaFlip0dte}
             className="text-xs font-bold text-blue-300 uppercase block mb-1 tracking-widest"
           />
-          <span className="text-xl font-black text-indigo-400 font-mono block mt-1">
-            ${metrics.gamma_flip?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
-          </span>
-          {metrics.gamma_flip && spot > 0 && (
-            <span className={`text-[10px] ${spot > metrics.gamma_flip ? 'text-green-400/70' : 'text-red-400/70'} block`}>
-              {spot > metrics.gamma_flip ? 'Above flip (stable)' : 'Below flip (volatile)'}
-            </span>
+          {marketClosed ? (
+            <>
+              <span className="text-xl font-black text-gray-500 font-mono block mt-1">—</span>
+              <span className="text-[10px] text-purple-400/70 block">Market Closed</span>
+            </>
+          ) : (
+            <>
+              <span className="text-xl font-black text-indigo-400 font-mono block mt-1">
+                ${metrics.gamma_flip?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+              </span>
+              {metrics.gamma_flip && spot > 0 && (
+                <span className={`text-[10px] ${spot > metrics.gamma_flip ? 'text-green-400/70' : 'text-red-400/70'} block`}>
+                  {spot > metrics.gamma_flip ? 'Above flip (stable)' : 'Below flip (volatile)'}
+                </span>
+              )}
+            </>
           )}
         </div>
 
         {/* Max Pain 0DTE */}
-        <div className="bg-black/40 p-3 rounded-lg border border-blue-800/50">
+        <div className={`bg-black/40 p-3 rounded-lg border ${marketClosed ? 'border-purple-800/50' : 'border-blue-800/50'} ${marketClosed ? 'opacity-60' : ''}`}>
           <MetricLabel
             label="Max Pain 0DTE"
             tooltip={DETAILED_TOOLTIPS.maxPain}
             className="text-xs font-bold text-blue-300 uppercase block mb-1 tracking-widest"
           />
-          <span className="text-xl font-black text-amber-400 font-mono block mt-1">
-            ${metrics.max_pain?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
-          </span>
-          {metrics.max_pain && spot > 0 && (
-            <span className="text-[10px] text-amber-400/70 block">
-              {metrics.max_pain != null && spot != null ? ((Math.abs(spot - metrics.max_pain) / spot) * 100).toFixed(2) : 'N/A'}% from spot
-            </span>
+          {marketClosed ? (
+            <>
+              <span className="text-xl font-black text-gray-500 font-mono block mt-1">—</span>
+              <span className="text-[10px] text-purple-400/70 block">Market Closed</span>
+            </>
+          ) : (
+            <>
+              <span className="text-xl font-black text-amber-400 font-mono block mt-1">
+                ${metrics.max_pain?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+              </span>
+              {metrics.max_pain && spot > 0 && (
+                <span className="text-[10px] text-amber-400/70 block">
+                  {metrics.max_pain != null && spot != null ? ((Math.abs(spot - metrics.max_pain) / spot) * 100).toFixed(2) : 'N/A'}% from spot
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1545,28 +1640,30 @@ const ZeroDTEMetricsDisplay: React.FC<{
           className="text-xs font-bold text-blue-300 uppercase block mb-3 tracking-widest"
         />
         <div className="grid grid-cols-4 gap-3">
-          <div className="text-center">
+          <div className={`text-center ${marketClosed ? 'opacity-40' : ''}`}>
             <span className="text-[11px] text-gray-400 block">OI-Based</span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.oi_based ?? 0)}`}>
-              {metrics.put_call_ratios?.oi_based?.toFixed(2) ?? 'N/A'}
+              {marketClosed ? '—' : (metrics.put_call_ratios?.oi_based?.toFixed(2) ?? 'N/A')}
             </span>
           </div>
-          <div className="text-center">
-            <span className="text-[11px] text-gray-400 block">Volume</span>
+          <div className={`text-center ${marketClosed ? 'ring-1 ring-purple-500/30 rounded-lg p-1 -m-1' : ''}`}>
+            <span className={`text-[11px] ${marketClosed ? 'text-purple-400 font-bold' : 'text-gray-400'} block`}>
+              Volume {marketClosed ? '★' : ''}
+            </span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.volume_based ?? 0)}`}>
               {metrics.put_call_ratios?.volume_based?.toFixed(2) ?? 'N/A'}
             </span>
           </div>
-          <div className="text-center">
+          <div className={`text-center ${marketClosed ? 'opacity-40' : ''}`}>
             <span className="text-[11px] text-gray-400 block">Weighted</span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.weighted ?? 0)}`}>
-              {metrics.put_call_ratios?.weighted?.toFixed(2) ?? 'N/A'}
+              {marketClosed ? '—' : (metrics.put_call_ratios?.weighted?.toFixed(2) ?? 'N/A')}
             </span>
           </div>
-          <div className="text-center">
+          <div className={`text-center ${marketClosed ? 'opacity-40' : ''}`}>
             <span className="text-[11px] text-gray-400 block">Delta-Adj</span>
             <span className={`text-base font-bold font-mono block mt-1 ${getPcrColor(metrics.put_call_ratios?.delta_adjusted ?? 0)}`}>
-              {metrics.put_call_ratios?.delta_adjusted?.toFixed(2) ?? 'N/A'}
+              {marketClosed ? '—' : (metrics.put_call_ratios?.delta_adjusted?.toFixed(2) ?? 'N/A')}
             </span>
           </div>
         </div>
@@ -1784,7 +1881,8 @@ const LevelRow: React.FC<{
   wallType?: WallType;
   enhancedData?: ConfluenceLevel | ResonanceLevel | LegacyConfluenceLevel | LegacyResonanceLevel;
   evolution?: LevelEvolution;
-}> = ({ level, type, spot, expiries = [], oi, isMatch = false, wallType, enhancedData, evolution }) => {
+  marketClosed?: boolean;
+}> = ({ level, type, spot, expiries = [], oi, isMatch = false, wallType, enhancedData, evolution, marketClosed = false }) => {
   const distancePct = spot > 0 ? ((level - spot) / spot) * 100 : 0;
   const isVeryClose = Math.abs(distancePct) <= 0.6;
 
@@ -1978,17 +2076,18 @@ const LevelRow: React.FC<{
         {/* Enhanced metrics display for CONFLUENCE/RESONANCE */}
         {enhanced && (type === 'CONFLUENCE' || type === 'RESONANCE') && (
           <div className="mt-2 space-y-1.5">
-            {/* OI Row */}
-            <div className="flex items-center gap-4 text-[11px]">
+            {/* OI Row — when marketClosed, show Vol as primary */}
+            <div className={`flex items-center gap-4 text-[11px] ${marketClosed ? 'opacity-40' : ''}`}>
               <span className="text-gray-500">📊</span>
               <span className="text-green-400 font-mono">
-                Call OI: <span className="font-bold">{enhanced.total_call_oi?.toLocaleString() || 'N/A'}</span>
+                Call {marketClosed ? 'Vol' : 'OI'}: <span className="font-bold">{marketClosed ? (enhanced.total_call_vol?.toLocaleString() || 'N/A') : (enhanced.total_call_oi?.toLocaleString() || 'N/A')}</span>
               </span>
               <span className="text-red-400 font-mono">
-                Put OI: <span className="font-bold">{enhanced.total_put_oi?.toLocaleString() || 'N/A'}</span>
+                Put {marketClosed ? 'Vol' : 'OI'}: <span className="font-bold">{marketClosed ? (enhanced.total_put_vol?.toLocaleString() || 'N/A') : (enhanced.total_put_oi?.toLocaleString() || 'N/A')}</span>
               </span>
             </div>
-            {/* Volume Row */}
+            {/* Volume Row — when marketClosed, this becomes the primary row */}
+            {!marketClosed && (
             <div className="flex items-center gap-4 text-[11px]">
               <span className="text-gray-500">📈</span>
               <span className="text-green-400 font-mono">
@@ -1998,6 +2097,7 @@ const LevelRow: React.FC<{
                 Put Vol: <span className="font-bold">{enhanced.total_put_vol?.toLocaleString() || 'N/A'}</span>
               </span>
             </div>
+            )}
             {/* PCR Row */}
             {enhanced.put_call_ratio !== undefined && enhanced.put_call_ratio > 0 && (
               <div className="flex items-center gap-2 text-[11px]">
@@ -2675,13 +2775,15 @@ function UnifiedOptionsChart({
   spot,
   gammaFlip,
   maxPain,
-  topStrikesCount = 8
+  topStrikesCount = 8,
+  marketClosed = false
 }: {
   expiries: ExpiryData[];
   spot: number;
   gammaFlip?: number;
   maxPain?: number;
   topStrikesCount?: number;
+  marketClosed?: boolean;
 }): ReactElement {
   const [hoveredBar, setHoveredBar] = useState<{
     type: 'CALL' | 'PUT';
@@ -2983,23 +3085,31 @@ function UnifiedOptionsChart({
                   className="relative flex items-center justify-end"
                   style={{ height: `${barHeight + barGap}px`, width: '100%' }}
                 >
-                  {/* OI Bar */}
+                  {/* OI Bar — primary when market open, secondary when closed */}
                   <div
-                    className="absolute h-3 rounded-l-sm bg-gradient-to-l from-green-500 to-green-400 cursor-pointer transition-all hover:from-green-400 hover:to-green-300"
+                    className={`absolute rounded-l-sm cursor-pointer transition-all ${
+                      marketClosed
+                        ? 'h-2 bg-green-300/40 hover:bg-green-300/60'
+                        : 'h-3 bg-gradient-to-l from-green-500 to-green-400 hover:from-green-400 hover:to-green-300'
+                    }`}
                     style={{
                       right: '0',
                       width: `${Math.max(oiWidth, 2)}px`,
-                      top: '2px'
+                      top: marketClosed ? '12px' : '2px'
                     }}
                     onMouseEnter={(e) => handleMouseEnter('CALL', strikeData, e)}
                   />
-                  {/* Volume Bar (overlaid, semi-transparent) */}
+                  {/* Volume Bar — secondary when market open, primary when closed */}
                   <div
-                    className="absolute h-2 rounded-l-sm bg-green-300/40 cursor-pointer transition-all hover:bg-green-300/60"
+                    className={`absolute rounded-l-sm cursor-pointer transition-all ${
+                      marketClosed
+                        ? 'h-3 bg-gradient-to-l from-green-500 to-green-400 hover:from-green-400 hover:to-green-300'
+                        : 'h-2 bg-green-300/40 hover:bg-green-300/60'
+                    }`}
                     style={{
                       right: '0',
                       width: `${Math.max(volWidth, 2)}px`,
-                      top: '12px'
+                      top: marketClosed ? '2px' : '12px'
                     }}
                     onMouseEnter={(e) => handleMouseEnter('CALL', strikeData, e)}
                   />
@@ -3039,23 +3149,31 @@ function UnifiedOptionsChart({
                   className="relative flex items-center"
                   style={{ height: `${barHeight + barGap}px`, width: '100%' }}
                 >
-                  {/* OI Bar */}
+                  {/* OI Bar — primary when market open, secondary when closed */}
                   <div
-                    className="absolute h-3 rounded-r-sm bg-gradient-to-r from-red-400 to-red-500 cursor-pointer transition-all hover:from-red-300 hover:to-red-400"
+                    className={`absolute rounded-r-sm cursor-pointer transition-all ${
+                      marketClosed
+                        ? 'h-2 bg-red-300/40 hover:bg-red-300/60'
+                        : 'h-3 bg-gradient-to-r from-red-400 to-red-500 hover:from-red-300 hover:to-red-400'
+                    }`}
                     style={{
                       left: '0',
                       width: `${Math.max(oiWidth, 2)}px`,
-                      top: '2px'
+                      top: marketClosed ? '12px' : '2px'
                     }}
                     onMouseEnter={(e) => handleMouseEnter('PUT', strikeData, e)}
                   />
-                  {/* Volume Bar (overlaid, semi-transparent) */}
+                  {/* Volume Bar — secondary when market open, primary when closed */}
                   <div
-                    className="absolute h-2 rounded-r-sm bg-red-300/40 cursor-pointer transition-all hover:bg-red-300/60"
+                    className={`absolute rounded-r-sm cursor-pointer transition-all ${
+                      marketClosed
+                        ? 'h-3 bg-gradient-to-r from-red-400 to-red-500 hover:from-red-300 hover:to-red-400'
+                        : 'h-2 bg-red-300/40 hover:bg-red-300/60'
+                    }`}
                     style={{
                       left: '0',
                       width: `${Math.max(volWidth, 2)}px`,
-                      top: '12px'
+                      top: marketClosed ? '2px' : '12px'
                     }}
                     onMouseEnter={(e) => handleMouseEnter('PUT', strikeData, e)}
                   />
@@ -3146,6 +3264,7 @@ export function VercelView(): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0); // Timer tick to force age recalculation
   const [levelHistory, setLevelHistory] = useState<LevelHistory | null>(null);
+  const [marketClosed, setMarketClosed] = useState(!isUSMarketOpen());
 
   // Fetch data on mount
   useEffect(() => {
@@ -3190,13 +3309,63 @@ export function VercelView(): ReactElement {
     };
   }, []);
 
-  // Timer to update age display every minute
+  // Periodic data re-fetch with market-hours awareness + age display tick
   useEffect(() => {
-    const interval = setInterval(() => {
-      setTick(t => t + 1);
-    }, 60000); // Update every minute
+    let isMounted = true;
+    let refreshIntervalId: ReturnType<typeof setInterval> | null = null;
+    let tickIntervalId: ReturnType<typeof setInterval> | null = null;
+    let lastRefreshTime = 0;
 
-    return () => clearInterval(interval);
+    const REFRESH_INTERVAL_MARKET_OPEN = 2 * 60 * 1000;   // 2 minutes
+    const REFRESH_INTERVAL_MARKET_CLOSED = 15 * 60 * 1000; // 15 minutes
+
+    async function refreshData() {
+      try {
+        const result = await fetchVercelOptionsData(true);
+        if (isMounted && result) {
+          setData(result);
+        }
+      } catch {
+        // Silently ignore background refresh errors - keep existing data
+      }
+    }
+
+    function getRefreshInterval() {
+      return isUSMarketOpen() ? REFRESH_INTERVAL_MARKET_OPEN : REFRESH_INTERVAL_MARKET_CLOSED;
+    }
+
+    function startRefreshInterval() {
+      if (refreshIntervalId) clearInterval(refreshIntervalId);
+      refreshIntervalId = setInterval(() => {
+        const now = Date.now();
+        if (now - lastRefreshTime >= getRefreshInterval()) {
+          lastRefreshTime = now;
+          refreshData();
+        }
+      }, 60000); // Check every minute if it's time to refresh
+    }
+
+    // Tick timer for age badge
+    tickIntervalId = setInterval(() => {
+      setTick(t => t + 1);
+      setMarketClosed(!isUSMarketOpen());
+    }, 60000);
+
+    // Initial refresh interval
+    lastRefreshTime = Date.now();
+    startRefreshInterval();
+
+    // Re-evaluate interval every 5 minutes in case market status changed
+    const marketStatusCheck = setInterval(() => {
+      startRefreshInterval();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      isMounted = false;
+      if (refreshIntervalId) clearInterval(refreshIntervalId);
+      if (tickIntervalId) clearInterval(tickIntervalId);
+      clearInterval(marketStatusCheck);
+    };
   }, []);
 
   // Memoized values
@@ -3343,7 +3512,7 @@ export function VercelView(): ReactElement {
       walls = calculateWalls(allOptions, spot);
 
       // Use enhanced functions to get weighted scores + dominant expiry (with dynamic tolerances)
-      const confEnhanced = findConfluenceLevelsEnhanced(expiries, spot, tolerances.confluence);
+      const confEnhanced = findConfluenceLevelsEnhanced(expiries, spot, tolerances.confluence, marketClosed);
       confluenceLevels = new Map();
       for (const level of confEnhanced) {
         confluenceLevels.set(level.strike, level.expiries);
@@ -3363,7 +3532,7 @@ export function VercelView(): ReactElement {
         });
       }
 
-      const resEnhanced = findResonanceLevelsEnhanced(expiries, spot, tolerances.resonance);
+      const resEnhanced = findResonanceLevelsEnhanced(expiries, spot, tolerances.resonance, marketClosed);
       resonanceLevels = resEnhanced.map(l => l.strike);
       for (const level of resEnhanced) {
         enhancedResonanceData.set(level.strike, {
@@ -3416,7 +3585,7 @@ export function VercelView(): ReactElement {
       enhancedConfluenceData, // Enhanced confluence data with metrics
       enhancedResonanceData // Enhanced resonance data with metrics
     };
-  }, [activeSymbolData]);
+  }, [activeSymbolData, marketClosed]);
 
   // Build AI levels array for display (when ai_analysis is available)
   const aiDisplayLevels = useMemo(() => {
@@ -3526,7 +3695,7 @@ export function VercelView(): ReactElement {
 
     // 3. Add Call Walls - ONLY DOMINANT walls (more selective fallback)
     // Use enhanced wall calculation to get wall types
-    const enhancedWalls = calculateWallsEnhanced(quantAnalysis.allOptions, spot, 5);
+    const enhancedWalls = calculateWallsEnhanced(quantAnalysis.allOptions, spot, 5, marketClosed);
     
     for (const wall of enhancedWalls.callWalls) {
       // Only include DOMINANT walls (score >= 70 effectively)
@@ -3571,7 +3740,7 @@ export function VercelView(): ReactElement {
       return distA - distB;
     });
     return sorted;
-  }, [quantAnalysis]);
+  }, [quantAnalysis, marketClosed]);
 
   // Render loading state
   if (loading) {
@@ -3611,7 +3780,12 @@ export function VercelView(): ReactElement {
               </p>
             </div>
             <div className="flex flex-col items-start md:items-end gap-2">
-              <DataAgeBadge ageMinutes={dataAgeMinutes} />
+              <div className="flex items-center gap-2">
+                <DataAgeBadge ageMinutes={dataAgeMinutes} />
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${marketClosed ? 'bg-purple-500/20 text-purple-400' : 'bg-green-500/20 text-green-400'}`}>
+                  {marketClosed ? '🟣 Market Closed' : '🟢 Market Open'}
+                </span>
+              </div>
               <span className="text-xs text-gray-500">
                 Last Update: {lastUpdateTime}
               </span>
@@ -3694,6 +3868,28 @@ export function VercelView(): ReactElement {
                     sentiment={quantAnalysis.sentiment}
                     gammaFlipCluster={quantAnalysis.aggregatedMetrics.gamma_flip}
                   />
+                )}
+
+                {/* Market Closed Banner */}
+                {marketClosed && (
+                  <div style={{
+                    background: 'rgba(139, 92, 246, 0.15)',
+                    border: '1px solid rgba(139, 92, 246, 0.3)',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <span style={{ fontSize: '18px' }}>🕐</span>
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#a78bfa' }}>Mercato Chiuso</div>
+                      <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                        I livelli sono basati sui volumi — gli Open Interest non sono disponibili fuori dall'orario di mercato
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {/* Pre-market / Stale data warning for levels */}
@@ -3837,6 +4033,7 @@ export function VercelView(): ReactElement {
                                       wallType={l.wallType}
                                       enhancedData={l.enhancedData}
                                       evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
+                                      marketClosed={marketClosed}
                                     />
                                   ))}
                                 </>
@@ -3870,6 +4067,7 @@ export function VercelView(): ReactElement {
                                       wallType={l.wallType}
                                       enhancedData={l.enhancedData}
                                       evolution={getLevelEvolution(l.level, activeTab, levelHistory)}
+                                      marketClosed={marketClosed}
                                     />
                                   ))}
                                 </>
@@ -3911,6 +4109,7 @@ export function VercelView(): ReactElement {
                   <ZeroDTEMetricsDisplay
                     metrics={quantAnalysis.expiryMetrics[0].calculatedMetrics}
                     spot={activeSymbolData.spot}
+                    marketClosed={marketClosed}
                   />
                 )}
 
@@ -3963,6 +4162,7 @@ export function VercelView(): ReactElement {
                       gammaFlip={zeroDteGammaFlip}
                       maxPain={zeroDteMaxPain}
                       topStrikesCount={12}
+                      marketClosed={marketClosed}
                     />
                   </div>
                 </div>
@@ -3992,6 +4192,7 @@ export function VercelView(): ReactElement {
                       gammaFlip={weeklyGammaFlip}
                       maxPain={weeklyMaxPain}
                       topStrikesCount={12}
+                      marketClosed={marketClosed}
                     />
                   </div>
                 </div>
@@ -4021,6 +4222,7 @@ export function VercelView(): ReactElement {
                       gammaFlip={monthlyGammaFlip}
                       maxPain={monthlyMaxPain}
                       topStrikesCount={12}
+                      marketClosed={marketClosed}
                     />
                   </div>
                 </div>
