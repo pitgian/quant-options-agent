@@ -3920,20 +3920,16 @@ export function VercelView(): ReactElement {
                     <div className="flex flex-col gap-2">
                       {(() => {
                         const spot = quantAnalysis.spot;
-                        // Semantic classification: CALL = resistance, PUT = support by definition
-                        // Only use price position for ambiguous types (GAMMA_FLIP, BOTH)
-                        const isResistance = (l: any): boolean => {
-                          if (l.lato === 'CALL') return true;    // CALL = always resistance
-                          if (l.lato === 'PUT') return false;     // PUT = always support
-                          if (l.lato === 'GAMMA_FLIP') return l.prezzo >= spot; // pivot: use price
-                          return l.prezzo >= spot; // BOTH or undefined: use price position
-                        };
+                        // Classification based on price position relative to spot
+                        const MAX_DISTANCE_PCT = 3; // Maximum distance from spot (%)
                         const resistances = aiDisplayLevels
-                          .filter(l => isResistance(l))
-                          .sort((a, b) => a.prezzo - b.prezzo); // ascending (closest to spot first)
+                          .filter(l => l.prezzo >= spot)
+                          .filter(l => Math.abs((l.prezzo - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                          .sort((a, b) => Math.abs(a.prezzo - spot) - Math.abs(b.prezzo - spot)); // closest to spot first
                         const supports = aiDisplayLevels
-                          .filter(l => !isResistance(l))
-                          .sort((a, b) => b.prezzo - a.prezzo); // descending (closest to spot first)
+                          .filter(l => l.prezzo < spot)
+                          .filter(l => Math.abs((l.prezzo - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                          .sort((a, b) => Math.abs(a.prezzo - spot) - Math.abs(b.prezzo - spot)); // closest to spot first
 
                         return (
                           <>
@@ -4004,13 +4000,16 @@ export function VercelView(): ReactElement {
                       <div className="flex flex-col gap-2">
                         {(() => {
                           const spot = quantAnalysis.spot;
-                          // Split levels by position relative to spot
+                          // Split levels by position relative to spot, filter by max distance, sort closest first
+                          const MAX_DISTANCE_PCT = 3; // Maximum distance from spot (%)
                           const resistances = displayLevels
                             .filter(l => l.level >= spot)
-                            .sort((a, b) => b.level - a.level); // descending (highest first)
+                            .filter(l => Math.abs((l.level - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                            .sort((a, b) => Math.abs(a.level - spot) - Math.abs(b.level - spot)); // closest to spot first
                           const supports = displayLevels
-                              .filter(l => l.level < spot)
-                              .sort((a, b) => b.level - a.level); // descending (highest/closest to spot first)
+                            .filter(l => l.level < spot)
+                            .filter(l => Math.abs((l.level - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                            .sort((a, b) => Math.abs(a.level - spot) - Math.abs(b.level - spot)); // closest to spot first
 
                           return (
                             <>
