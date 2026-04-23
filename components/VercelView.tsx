@@ -3598,7 +3598,13 @@ export function VercelView(): ReactElement {
 
     // Filter out levels more than 5% from spot
     const MAX_AI_DISPLAY_DISTANCE_PCT = 5.0;
-    const nearbyAiLevels = aiLevels.filter(l => {
+    // Normalize prezzo to number — GLM API may return strings instead of numbers
+    const normalizedLevels = aiLevels.map(l => ({
+      ...l,
+      prezzo: Number(l.prezzo) || 0,
+      importanza: Number(l.importanza) || 0,
+    }));
+    const nearbyAiLevels = normalizedLevels.filter(l => {
       const dist = spot > 0 ? Math.abs((l.prezzo - spot) / spot) * 100 : 0;
       return dist <= MAX_AI_DISPLAY_DISTANCE_PCT;
     });
@@ -3931,13 +3937,13 @@ export function VercelView(): ReactElement {
                         // Classification based on price position relative to spot
                         const MAX_DISTANCE_PCT = 3; // Maximum distance from spot (%)
                         const resistances = aiDisplayLevels
-                          .filter(l => l.prezzo >= spot)
-                          .filter(l => Math.abs((l.prezzo - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                          .sort((a, b) => a.prezzo - b.prezzo); // ascending by strike price (lowest resistance first)
+                          .filter(l => Number(l.prezzo) >= spot)
+                          .filter(l => Math.abs((Number(l.prezzo) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                          .sort((a, b) => Number(a.prezzo) - Number(b.prezzo)); // ascending by strike price (lowest resistance first)
                         const supports = aiDisplayLevels
-                          .filter(l => l.prezzo < spot)
-                          .filter(l => Math.abs((l.prezzo - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                          .sort((a, b) => Math.abs(a.prezzo - spot) - Math.abs(b.prezzo - spot)); // closest to spot first
+                          .filter(l => Number(l.prezzo) < spot)
+                          .filter(l => Math.abs((Number(l.prezzo) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                          .sort((a, b) => Math.abs(Number(a.prezzo) - spot) - Math.abs(Number(b.prezzo) - spot)); // closest to spot first
 
                         return (
                           <>
@@ -4011,13 +4017,13 @@ export function VercelView(): ReactElement {
                           // Split levels by position relative to spot, filter by max distance, sort closest first
                           const MAX_DISTANCE_PCT = 3; // Maximum distance from spot (%)
                           const resistances = displayLevels
-                            .filter(l => l.level >= spot)
-                            .filter(l => Math.abs((l.level - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                            .sort((a, b) => a.level - b.level); // ascending by strike price (lowest resistance first)
+                            .filter(l => Number(l.level) >= spot)
+                            .filter(l => Math.abs((Number(l.level) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                            .sort((a, b) => Number(a.level) - Number(b.level)); // ascending by strike price (lowest resistance first)
                           const supports = displayLevels
-                            .filter(l => l.level < spot)
-                            .filter(l => Math.abs((l.level - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                            .sort((a, b) => Math.abs(a.level - spot) - Math.abs(b.level - spot)); // closest to spot first
+                            .filter(l => Number(l.level) < spot)
+                            .filter(l => Math.abs((Number(l.level) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
+                            .sort((a, b) => Math.abs(Number(a.level) - spot) - Math.abs(Number(b.level) - spot)); // closest to spot first
 
                           return (
                             <>
