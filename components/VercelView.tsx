@@ -3892,9 +3892,9 @@ export function VercelView(): ReactElement {
                   }}>
                     <span style={{ fontSize: '18px' }}>🕐</span>
                     <div>
-                      <div style={{ fontWeight: 600, color: '#a78bfa' }}>Mercato Chiuso</div>
+                      <div style={{ fontWeight: 600, color: '#a78bfa' }}>Market Closed</div>
                       <div style={{ fontSize: '12px', color: '#9ca3af' }}>
-                        I livelli sono basati sui volumi — gli Open Interest non sono disponibili fuori dall'orario di mercato
+                        Levels are based on volumes — Open Interest is not available outside market hours
                       </div>
                     </div>
                   </div>
@@ -3933,7 +3933,7 @@ export function VercelView(): ReactElement {
                         const resistances = aiDisplayLevels
                           .filter(l => l.prezzo >= spot)
                           .filter(l => Math.abs((l.prezzo - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                          .sort((a, b) => Math.abs(a.prezzo - spot) - Math.abs(b.prezzo - spot)); // closest to spot first
+                          .sort((a, b) => a.prezzo - b.prezzo); // ascending by strike price (lowest resistance first)
                         const supports = aiDisplayLevels
                           .filter(l => l.prezzo < spot)
                           .filter(l => Math.abs((l.prezzo - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
@@ -4013,7 +4013,7 @@ export function VercelView(): ReactElement {
                           const resistances = displayLevels
                             .filter(l => l.level >= spot)
                             .filter(l => Math.abs((l.level - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                            .sort((a, b) => Math.abs(a.level - spot) - Math.abs(b.level - spot)); // closest to spot first
+                            .sort((a, b) => a.level - b.level); // ascending by strike price (lowest resistance first)
                           const supports = displayLevels
                             .filter(l => l.level < spot)
                             .filter(l => Math.abs((l.level - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
