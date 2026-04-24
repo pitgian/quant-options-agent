@@ -91,7 +91,7 @@ jobs:
           fi
           
           # Commit
-          git commit -m "chore: update options data [skip ci]"
+          git commit -m "chore: update options data"
           
           # Fetch latest from remote first
           git fetch origin master
@@ -106,7 +106,7 @@ jobs:
             git reset --hard origin/master
             # Ri-aggiungi il file generato
             git add data/options_data.json
-            git commit -m "chore: update options data [skip ci]" || true
+            git commit -m "chore: update options data" || true
           }
           
           # Push con retry e force-with-lease per sicurezza
@@ -121,7 +121,7 @@ jobs:
               git rebase --abort 2>/dev/null || true
               git reset --hard origin/master
               git add data/options_data.json
-              git commit -m "chore: update options data [skip ci]" || true
+              git commit -m "chore: update options data" || true
             }
           done
           

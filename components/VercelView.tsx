@@ -3939,11 +3939,7 @@ export function VercelView(): ReactElement {
                         const resistances = aiDisplayLevels
                           .filter(l => Number(l.prezzo) >= spot)
                           .filter(l => Math.abs((Number(l.prezzo) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                          .sort((a, b) => Number(a.prezzo) - Number(b.prezzo)); // ascending by strike price (lowest resistance first)
-                        // Safety: guarantee ascending order (lowest/closest to spot first)
-                        if (resistances.length > 1 && Number(resistances[0].prezzo) > Number(resistances[resistances.length - 1].prezzo)) {
-                          resistances.reverse();
-                        }
+                          .sort((a, b) => Number(b.prezzo) - Number(a.prezzo)); // descending — highest resistance at TOP
                         const supports = aiDisplayLevels
                           .filter(l => Number(l.prezzo) < spot)
                           .filter(l => Math.abs((Number(l.prezzo) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
@@ -4023,11 +4019,7 @@ export function VercelView(): ReactElement {
                           const resistances = displayLevels
                             .filter(l => Number(l.level) >= spot)
                             .filter(l => Math.abs((Number(l.level) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
-                            .sort((a, b) => Number(a.level) - Number(b.level)); // ascending by strike price (lowest resistance first)
-                          // Safety: guarantee ascending order (lowest/closest to spot first)
-                          if (resistances.length > 1 && Number(resistances[0].level) > Number(resistances[resistances.length - 1].level)) {
-                            resistances.reverse();
-                          }
+                            .sort((a, b) => Number(b.level) - Number(a.level)); // descending — highest resistance at TOP
                           const supports = displayLevels
                             .filter(l => Number(l.level) < spot)
                             .filter(l => Math.abs((Number(l.level) - spot) / spot) * 100 <= MAX_DISTANCE_PCT)
