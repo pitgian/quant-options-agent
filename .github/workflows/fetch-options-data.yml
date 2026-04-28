@@ -15,14 +15,10 @@ on:
           - 'false'
           - 'true'
 
-# Opt into Node.js 24 for JavaScript actions to resolve deprecation warning
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 # Previene esecuzioni simultanee - accoda le nuove esecuzioni
 concurrency:
   group: fetch-options-data
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   fetch-data:
@@ -66,7 +62,7 @@ jobs:
           echo "🤖 Scheduled run — AI analysis ENABLED"
 
       - name: Fetch options data
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
         env:

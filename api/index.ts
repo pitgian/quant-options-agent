@@ -47,24 +47,15 @@ async function getYahooFinance(): Promise<any> {
   
   try {
     console.log('Dynamically importing yahoo-finance2...');
-    const yahooFinance = await import('yahoo-finance2');
+    const yahooFinanceModule = await import('yahoo-finance2');
     
-    // Debug: log what we got from the module
-    console.log('yahoo-finance2 module type:', typeof yahooFinance);
-    console.log('yahoo-finance2 keys:', Object.keys(yahooFinance || {}));
-    console.log('yahoo-finance2.default type:', typeof yahooFinance?.default);
-    
-    // Handle various module export patterns
-    // yahoo-finance2 exports a class constructor, not an instance
-    // We must instantiate it to access instance methods (quote, options, etc.)
-    // Use type assertion to handle the union type from ESM/CommonJS interop
-    const YahooFinanceClass = yahooFinance.default || yahooFinance;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const yf = new (YahooFinanceClass as any)();
+    // yahoo-finance2 exports a singleton instance directly (not a class).
+    // Use .default for ESM interop, otherwise the module itself.
+    const yf = yahooFinanceModule.default || yahooFinanceModule;
     
     // Verify the module has the required methods
     if (typeof yf.quote !== 'function') {
-      console.error('yf.quote is not a function. Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(yf)));
+      console.error('yf.quote is not a function. Available keys:', Object.keys(yf || {}));
       throw new Error('yahoo-finance2 module does not have quote method');
     }
     
