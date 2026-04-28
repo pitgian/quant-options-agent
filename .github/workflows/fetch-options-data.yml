@@ -3,7 +3,8 @@ name: Fetch Options Data
 on:
   schedule:
     # Every 15 minutes during market hours (12:00-21:45 UTC covers 8:30 AM - 4:00 PM ET for both EDT/EST)
-    - cron: '*/15 12-21 * * 1-5'
+    # Staggered to off-peak minutes to avoid GitHub Actions scheduling delays
+    - cron: '7,22,37,52 12-21 * * 1-5'
   workflow_dispatch: # Manual trigger
     inputs:
       skip_ai_analysis:
@@ -18,7 +19,7 @@ on:
 # Previene esecuzioni simultanee - accoda le nuove esecuzioni
 concurrency:
   group: fetch-options-data
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   fetch-data:
