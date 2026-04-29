@@ -16,6 +16,9 @@ on:
           - 'false'
           - 'true'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Previene esecuzioni simultanee - accoda le nuove esecuzioni
 concurrency:
   group: fetch-options-data
@@ -63,7 +66,7 @@ jobs:
           echo "🤖 Scheduled run — AI analysis ENABLED"
 
       - name: Fetch options data
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: |
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
         env:

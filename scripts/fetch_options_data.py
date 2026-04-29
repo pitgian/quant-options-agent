@@ -313,7 +313,7 @@ def format_options_for_ai(expiries: List[Dict], spot: float) -> str:
     return '\n\n---\n\n'.join(sections)
 
 
-def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3, num_expiries: int = 3) -> Optional[str]:
+def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 2, num_expiries: int = 3) -> Optional[str]:
     """
     Call GLM-5.1 API with adaptive timeout and enhanced retry logic.
     
@@ -333,8 +333,8 @@ def call_ai_api(messages: List[Dict[str, str]], max_retries: int = 3, num_expiri
         logger.warning("⚠️ AI_API_KEY not set. AI analysis skipped.")
         return None
     
-    # Adaptive timeout: base 90s + 30s per expiry
-    timeout = 90 + (num_expiries * 30)
+    # Adaptive timeout: base 60s + 15s per expiry (reduced from 90+30 for faster execution)
+    timeout = 60 + (num_expiries * 15)
     logger.info(f"🤖 AI API timeout set to {timeout}s (based on {num_expiries} expiries)")
     
     # Retry delays with jitter: 2s, 4s, 8s + random(0, 1)
@@ -739,6 +739,22 @@ def select_expirations(expirations: List[str]) -> List[tuple]:
     return select_expirations_enhanced(expirations)
 
 
+# ============================================================================
+# Option chain cache — eliminates duplicate yfinance calls across functions
+# ============================================================================
+_option_chain_cache: Dict[str, Any] = {}
+
+def get_cached_option_chain(ticker_obj: yf.Ticker, expiry: str):
+    """
+    Cache option chain fetches to avoid redundant yfinance API calls.
+    The same chain is often needed in multiple functions (GEX calc, gamma flip, etc.)
+    """
+    key = f"{ticker_obj.ticker}_{expiry}"
+    if key not in _option_chain_cache:
+        _option_chain_cache[key] = ticker_obj.option_chain(expiry)
+    return _option_chain_cache[key]
+
+
 def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expirations: List[str]) -> float:
     """
     Calculate gamma flip point across ALL expirations.
@@ -757,7 +773,7 @@ def calculate_gamma_flip_all_expiries(ticker: yf.Ticker, spot: float, all_expira
     # Limit to first 12 expirations to avoid timeout
     for expiry_date in all_expirations[:12]:
         try:
-            chain = ticker.option_chain(expiry_date)
+            chain = get_cached_option_chain(ticker, expiry_date)
             T = calculate_time_to_expiry(expiry_date)
             
             # Process calls
@@ -881,7 +897,7 @@ def calculate_total_gex_all_expiries(ticker: yf.Ticker, spot: float, all_expirat
     # Limit to first 12 expirations to avoid timeout (covers ~3 months)
     for expiry_date in all_expirations[:12]:
         try:
-            chain = ticker.option_chain(expiry_date)
+            chain = get_cached_option_chain(ticker, expiry_date)
             T = calculate_time_to_expiry(expiry_date)
             
             expiry_gamma = 0
@@ -945,7 +961,7 @@ def fetch_options_chain(ticker: yf.Ticker, expiry_date: str, label: str) -> Opti
     """
     try:
         logger.info(f"  -> Scaricando {label} ({expiry_date})...")
-        chain = ticker.option_chain(expiry_date)
+        chain = get_cached_option_chain(ticker, expiry_date)
         
         options = []
         
@@ -1028,6 +1044,9 @@ def fetch_symbol_data(symbol: str) -> Optional[OptionsDataset]:
     Args:
         symbol: Simbolo normalizzato (SPY, QQQ, SPX, NDX)
     """
+    # Clear option chain cache between symbols to avoid stale data
+    _option_chain_cache.clear()
+    
     # Converte il simbolo nel formato yfinance
     yf_symbol = SYMBOL_MAP.get(symbol.upper(), symbol.upper())
     
@@ -4240,7 +4259,7 @@ def main():
     # =========================================================================
     # PHASE 2: Execute AI calls sequentially (rate limit protection)
     # =========================================================================
-    AI_CALL_DELAY = 15  # seconds between AI calls to avoid rate limiting
+    AI_CALL_DELAY = 5  # seconds between AI calls to avoid rate limiting (reduced from 15)
     
     # Check if AI analysis should be skipped via environment variable
     skip_ai = os.environ.get('SKIP_AI_ANALYSIS', 'false').lower() in ('true', '1', 'yes')
