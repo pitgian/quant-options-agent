@@ -2,19 +2,11 @@ name: Fetch Options Data
 
 on:
   schedule:
-    # Every 15 minutes during market hours (12:00-21:45 UTC covers 8:30 AM - 4:00 PM ET for both EDT/EST)
-    # Staggered to off-peak minutes to avoid GitHub Actions scheduling delays
-    - cron: '7,22,37,52 12-21 * * 1-5'
-  workflow_dispatch: # Manual trigger
-    inputs:
-      skip_ai_analysis:
-        description: 'Skip AI analysis (true/false)'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
+    # Every 5 minutes during pre-market + market hours (8:00-21:00 UTC = ~4AM-5PM ET)
+    - cron: '*/5 8-20 * * 1-5'
+    # Every 15 minutes outside market hours (before 8AM and after 9PM UTC)
+    - cron: '*/15 0-7,21-23 * * 1-5'
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -48,23 +40,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r scripts/requirements.txt
           
-      - name: Determine AI analysis setting
-        id: ai_config
-        run: |
-          # For manual triggers, respect the user's choice
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "skip_ai=${{ github.event.inputs.skip_ai_analysis || 'false' }}" >> $GITHUB_OUTPUT
-            echo "📋 Manual trigger — skip_ai=${{ github.event.inputs.skip_ai_analysis || 'false' }}"
-            exit 0
-          fi
-
-          # For scheduled runs, always enable AI analysis.
-          # The Python script has built-in rate limiting (15s delay between calls).
-          # Previous time-based restriction prevented AI from ever running on
-          # off-hours cron schedules (0,2,4,...22 UTC).
-          echo "skip_ai=false" >> $GITHUB_OUTPUT
-          echo "🤖 Scheduled run — AI analysis ENABLED"
-
       - name: Fetch options data
         timeout-minutes: 20
         run: |
@@ -74,7 +49,6 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
-          SKIP_AI_ANALYSIS: ${{ steps.ai_config.outputs.skip_ai }}
           
       - name: Commit and push changes
         run: |
