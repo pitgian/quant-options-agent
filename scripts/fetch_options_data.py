@@ -211,35 +211,60 @@ def calculate_walls(
                 "vol": vol,
             }
 
+    # ── Expiration weighting by contract count (per side) ──
+    # Calculate total OI per expiration, per side
+    expiry_totals_put: Dict[str, int] = {}
+    expiry_totals_call: Dict[str, int] = {}
+    for strike, sides in strike_data.items():
+        for exp_date, data in sides.get("put", {}).items():
+            expiry_totals_put[exp_date] = expiry_totals_put.get(exp_date, 0) + data["oi"]
+        for exp_date, data in sides.get("call", {}).items():
+            expiry_totals_call[exp_date] = expiry_totals_call.get(exp_date, 0) + data["oi"]
+
+    # Weight = expiry_total / max_expiry_total (per side)
+    max_put = max(expiry_totals_put.values()) if expiry_totals_put else 1
+    max_call = max(expiry_totals_call.values()) if expiry_totals_call else 1
+
+    expiry_weights_put = {exp: tot / max_put for exp, tot in expiry_totals_put.items()}
+    expiry_weights_call = {exp: tot / max_call for exp, tot in expiry_totals_call.items()}
+
     # Build candidate lists for puts and calls
     put_candidates = []
     call_candidates = []
 
     for strike, sides in strike_data.items():
-        # --- PUT side ---
-        put_total_oi = sum(e["oi"] for e in sides["put"].values())
-        put_total_vol = sum(e["vol"] for e in sides["put"].values())
+        # --- PUT side (weighted) ---
+        put_total_oi = sum(e["oi"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides["put"].items())
+        put_total_vol = sum(e["vol"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides["put"].items())
         if put_total_oi + put_total_vol >= MIN_COMBINED_OI_VOL and strike < spot:
+            put_expiry_breakdown = {
+                exp: {**data, "weight": round(expiry_weights_put.get(exp, 1.0), 3)}
+                for exp, data in sides["put"].items()
+            }
             put_candidates.append(
                 {
                     "strike": strike,
                     "total_oi": put_total_oi,
                     "total_vol": put_total_vol,
-                    "expiry_breakdown": sides["put"],
+                    "expiry_breakdown": put_expiry_breakdown,
                     "type": "put",
                 }
             )
 
-        # --- CALL side ---
-        call_total_oi = sum(e["oi"] for e in sides["call"].values())
-        call_total_vol = sum(e["vol"] for e in sides["call"].values())
+        # --- Call side (weighted) ---
+        call_total_oi = sum(e["oi"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides["call"].items())
+        call_total_vol = sum(e["vol"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides["call"].items())
         if call_total_oi + call_total_vol >= MIN_COMBINED_OI_VOL and strike > spot:
+            call_expiry_breakdown = {
+                exp: {**data, "weight": round(expiry_weights_call.get(exp, 1.0), 3)}
+                for exp, data in sides["call"].items()
+            }
             call_candidates.append(
                 {
                     "strike": strike,
                     "total_oi": call_total_oi,
                     "total_vol": call_total_vol,
-                    "expiry_breakdown": sides["call"],
+                    "expiry_breakdown": call_expiry_breakdown,
                     "type": "call",
                 }
             )
@@ -362,6 +387,16 @@ def fetch_symbol_data(symbol: str) -> Optional[Dict[str, Any]]:
             "score": round(w["score"] * 100, 1),
             "contributing_expiries": w["contributing_expiries"],
             "distance_pct": w["distance_pct"],
+            "expirations": [
+                {
+                    "expiration_date": exp_date,
+                    "days_to_expiry": days_to_expiry(exp_date),
+                    "oi": data["oi"],
+                    "volume": data["vol"],
+                    "weight": data.get("weight", 1.0),
+                }
+                for exp_date, data in w["expiry_breakdown"].items()
+            ],
         }
         for w in put_walls_raw
     ]
@@ -375,6 +410,16 @@ def fetch_symbol_data(symbol: str) -> Optional[Dict[str, Any]]:
             "score": round(w["score"] * 100, 1),
             "contributing_expiries": w["contributing_expiries"],
             "distance_pct": w["distance_pct"],
+            "expirations": [
+                {
+                    "expiration_date": exp_date,
+                    "days_to_expiry": days_to_expiry(exp_date),
+                    "oi": data["oi"],
+                    "volume": data["vol"],
+                    "weight": data.get("weight", 1.0),
+                }
+                for exp_date, data in w["expiry_breakdown"].items()
+            ],
         }
         for w in call_walls_raw
     ]

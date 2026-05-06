@@ -53,6 +53,14 @@ interface RawOption {
   vol: number;
 }
 
+interface RawExpirationDetail {
+  expiration_date: string;
+  days_to_expiry: number;
+  oi: number;
+  volume: number;
+  weight: number;
+}
+
 interface RawWall {
   strike: number;
   type: string;
@@ -61,6 +69,7 @@ interface RawWall {
   score: number;
   contributing_expiries: string[];
   distance_pct: number;
+  expirations?: RawExpirationDetail[];
 }
 
 /** Internal cache entry */
@@ -167,6 +176,7 @@ function buildExpirationDetails(
         daysToExpiry,
         oi: match.oi,
         volume: match.vol,
+        weight: 1.0,
       });
     }
   }
@@ -190,7 +200,15 @@ function mapWalls(
     totalVolume: w.total_vol,
     score: w.score,
     type: wallType,
-    expirations: buildExpirationDetails(w.strike, wallType, expiries),
+    expirations: w.expirations && w.expirations.length > 0
+      ? w.expirations.map(e => ({
+          expirationDate: e.expiration_date,
+          daysToExpiry: e.days_to_expiry,
+          oi: e.oi,
+          volume: e.volume,
+          weight: e.weight ?? 1.0,
+        }))
+      : buildExpirationDetails(w.strike, wallType, expiries),
   }));
 }
 
@@ -262,7 +280,10 @@ function computeWallsFromExpiries(
       totalVolume: vol,
       score,
       type: wallType,
-      expirations: buildExpirationDetails(strike, wallType, expiries),
+      expirations: buildExpirationDetails(strike, wallType, expiries).map(e => ({
+        ...e,
+        weight: 1.0,
+      })),
     }));
   }
 

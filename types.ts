@@ -14,6 +14,7 @@ export interface ExpirationDetail {
   daysToExpiry: number;
   oi: number;
   volume: number;
+  weight: number;           // 0.0 to 1.0, based on contract count relative to most liquid expiration
 }
 
 export interface OptionsData {

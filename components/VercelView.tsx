@@ -54,15 +54,18 @@ function formatTimestamp(ts: string): string {
 
 // ---------- Expandable Row ----------
 
-const ExpirationRow: React.FC<{ detail: ExpirationDetail }> = ({ detail }) => (
-  <tr className="bg-gray-800/50 text-xs text-gray-400">
-    <td className="px-4 py-1.5 pl-10">{detail.expirationDate}</td>
-    <td className="px-4 py-1.5 text-right">{detail.daysToExpiry}d</td>
-    <td className="px-4 py-1.5 text-right">{formatCompact(detail.oi)}</td>
-    <td className="px-4 py-1.5 text-right">{formatCompact(detail.volume)}</td>
-    <td className="px-4 py-1.5"></td>
-  </tr>
-);
+const ExpirationRow: React.FC<{ detail: ExpirationDetail }> = ({ detail }) => {
+  const weight = detail.weight ?? 1.0;
+  return (
+    <tr className="bg-gray-800/50 text-xs text-gray-400">
+      <td className="px-4 py-1.5 pl-10">{detail.expirationDate}</td>
+      <td className="px-4 py-1.5 text-right">{detail.daysToExpiry}d</td>
+      <td className="px-4 py-1.5 text-right">{formatCompact(detail.oi)}</td>
+      <td className="px-4 py-1.5 text-right">{formatCompact(detail.volume)}</td>
+      <td className="px-4 py-1.5 text-right text-gray-500">{(weight * 100).toFixed(0)}%</td>
+    </tr>
+  );
+};
 
 const WallRow: React.FC<{
   wall: WallLevel;
@@ -414,6 +417,18 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
                 <div>Score: {w.score.toFixed(2)}</div>
                 <div>Distance: {dist > 0 ? '+' : ''}{dist.toFixed(2)}%</div>
                 <div>Expirations: {w.expirations.length}</div>
+                {w.expirations.length > 0 && (
+                  <div className="mt-1 pt-1 border-t border-gray-700 space-y-0.5">
+                    {w.expirations.map((exp, ei) => {
+                      const expWeight = exp.weight ?? 1.0;
+                      return (
+                        <div key={ei} className="text-gray-400">
+                          {exp.expirationDate}: OI: {exp.oi.toLocaleString()} | Vol: {exp.volume.toLocaleString()} | Weight: {(expWeight * 100).toFixed(0)}%
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -524,6 +539,10 @@ export function VercelView() {
   const [timeSinceUpdate, setTimeSinceUpdate] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [showUpdatedFlash, setShowUpdatedFlash] = useState(false);
+  const [isBackgroundRefreshing, setIsBackgroundRefreshing] = useState(false);
+  const prevTimestampRef = useRef<string | null>(null);
 
   // ---- Data fetching ----
 
@@ -535,6 +554,8 @@ export function VercelView() {
 
     if (result.success && result.data) {
       setData(result.data);
+      prevTimestampRef.current = result.data.timestamp;
+      setLastRefreshed(new Date());
       setError(null);
     } else {
       setError(result.error || 'Unknown error');
@@ -549,17 +570,55 @@ export function VercelView() {
     setTimeSinceUpdate(ts);
   }, [symbol]);
 
+  // Silent background refresh — does NOT show the full-page loading spinner
+  const silentRefresh = useCallback(async () => {
+    setIsBackgroundRefreshing(true);
+    try {
+      const result: FetchResult = await fetchOptionsData(symbol, false);
+      if (result.success && result.data) {
+        const prevTimestamp = prevTimestampRef.current;
+        setData(result.data);
+        prevTimestampRef.current = result.data.timestamp;
+        setLastRefreshed(new Date());
+        // Flash indicator only when data actually changed
+        if (prevTimestamp !== result.data.timestamp) {
+          setShowUpdatedFlash(true);
+          setTimeout(() => setShowUpdatedFlash(false), 3000);
+        }
+      } else if (result.data) {
+        setData(result.data);
+      }
+      const ts = await getTimeSinceUpdate(symbol);
+      setTimeSinceUpdate(ts);
+    } finally {
+      setIsBackgroundRefreshing(false);
+    }
+  }, [symbol]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Auto-refresh every 5 minutes
+  // Auto-refresh: 60s during US market hours (13:30-20:00 UTC), 5 min otherwise
   useEffect(() => {
-    const interval = setInterval(() => {
-      loadData(false);
-    }, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const scheduleNext = () => {
+      const now = new Date();
+      const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+      // US market open: 9:30 AM - 4:00 PM ET = 13:30 - 20:00 UTC
+      const isMarket = utcMinutes >= 13 * 60 + 30 && utcMinutes <= 20 * 60;
+      const delay = isMarket ? 60 * 1000 : 5 * 60 * 1000;
+
+      timeoutId = setTimeout(() => {
+        silentRefresh();
+        scheduleNext();
+      }, delay);
+    };
+
+    scheduleNext();
+    return () => clearTimeout(timeoutId);
+  }, [silentRefresh]);
 
   // ---- Handlers ----
 
@@ -597,19 +656,27 @@ export function VercelView() {
 
           {/* Right: Controls */}
           <div className="flex items-center gap-3">
-            {/* Timestamp */}
+            {/* Timestamp + auto-refresh indicator */}
             {data && (
-              <div className="hidden sm:block text-right">
-                <p className="text-xs text-gray-500">
+              <div className="hidden sm:block text-right relative">
+                <p className="text-xs text-gray-500 flex items-center gap-1.5 justify-end">
+                  {isBackgroundRefreshing && (
+                    <IconRefresh className="h-3 w-3 animate-spin text-blue-400 flex-shrink-0" />
+                  )}
                   Updated {timeSinceUpdate || formatTimestamp(data.timestamp)}
                 </p>
+                {showUpdatedFlash && (
+                  <span className="absolute -top-2 -right-2 text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-medium animate-pulse pointer-events-none">
+                    New data!
+                  </span>
+                )}
               </div>
             )}
 
             {/* Refresh */}
             <button
               onClick={handleRefresh}
-              disabled={refreshing || loading}
+              disabled={refreshing || loading || isBackgroundRefreshing}
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
               title="Refresh data"
             >
