@@ -1,42 +1,88 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { IconClose } from './Icons';
+import { clearAllCaches, getLastUpdateTime, getAvailableSymbols } from '../services/dataService';
 
 interface SettingsPanelProps {
-  onClose?: () => void;
+  onClose: () => void;
+  onSymbolChange?: (symbol: string) => void;
+  currentSymbol?: string;
 }
 
-export function SettingsPanel({ onClose }: SettingsPanelProps) {
+export function SettingsPanel({ onClose, onSymbolChange, currentSymbol = 'SPY' }: SettingsPanelProps) {
+  const [lastUpdate, setLastUpdate] = useState<string>('Loading...');
+  const [symbols, setSymbols] = useState<string[]>([]);
+  const [cleared, setCleared] = useState(false);
+
+  useEffect(() => {
+    getLastUpdateTime(currentSymbol).then(setLastUpdate);
+    getAvailableSymbols().then(setSymbols);
+  }, [currentSymbol]);
+
+  const handleClearCache = () => {
+    clearAllCaches();
+    setCleared(true);
+    setTimeout(() => setCleared(false), 2000);
+  };
+
   return (
-    <div className="settings-panel">
-      <div className="settings-header">
-        <h2>API Configuration</h2>
-        {onClose && (
-          <button className="close-button" onClick={onClose}>
-            ×
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-lg font-semibold text-white">Settings</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white transition-colors"
+          >
+            <IconClose />
           </button>
+        </div>
+
+        {/* Symbol Selection */}
+        {symbols.length > 0 && onSymbolChange && (
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Symbol
+            </label>
+            <select
+              value={currentSymbol}
+              onChange={(e) => onSymbolChange(e.target.value)}
+              className="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {symbols.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
         )}
-      </div>
-      
-      <p className="settings-description">
-        Configure your API keys using environment variables.
-      </p>
-      
-      <div className="api-keys-list">
-        <div className="api-key-info">
-          <h3>Available Environment Variables:</h3>
-          <ul>
-            <li><code>GEMINI_API_KEY</code> - Google Gemini AI API key</li>
-            <li><code>GLM_API_KEY</code> - GLM/Zhipu AI API key</li>
-          </ul>
-          <p className="info-message">
-            Create a <code>.env.local</code> file in the project root to set these variables.
+
+        {/* Last Update */}
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-gray-300 mb-1">
+            Last Data Update
+          </label>
+          <p className="text-sm text-gray-400">{lastUpdate}</p>
+        </div>
+
+        {/* Cache */}
+        <div className="mb-5">
+          <button
+            onClick={handleClearCache}
+            className="w-full bg-gray-700 hover:bg-gray-600 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+          >
+            {cleared ? '✓ Cache Cleared' : 'Clear Cache'}
+          </button>
+          <p className="text-xs text-gray-500 mt-1">
+            Clears local and in-memory data cache
           </p>
         </div>
-      </div>
-      
-      <div className="settings-footer">
-        <p className="security-note">
-          🔒 API keys are loaded from environment variables and are never exposed in client-side code.
-        </p>
+
+        {/* Footer */}
+        <div className="pt-4 border-t border-gray-700">
+          <p className="text-xs text-gray-500 text-center">
+            Options Wall Analyzer • Data from Yahoo Finance via GitHub Actions
+          </p>
+        </div>
       </div>
     </div>
   );
