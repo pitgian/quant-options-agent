@@ -1,21 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { IconClose } from './Icons';
-import { clearAllCaches, getLastUpdateTime, getAvailableSymbols } from '../services/dataService';
+import { clearAllCaches, getLastUpdateTime } from '../services/dataService';
 
 interface SettingsPanelProps {
   onClose: () => void;
-  onSymbolChange?: (symbol: string) => void;
   currentSymbol?: string;
 }
 
-export function SettingsPanel({ onClose, onSymbolChange, currentSymbol = 'SPY' }: SettingsPanelProps) {
+export function SettingsPanel({ onClose, currentSymbol = 'SPY' }: SettingsPanelProps) {
   const [lastUpdate, setLastUpdate] = useState<string>('Loading...');
-  const [symbols, setSymbols] = useState<string[]>([]);
   const [cleared, setCleared] = useState(false);
 
   useEffect(() => {
     getLastUpdateTime(currentSymbol).then(setLastUpdate);
-    getAvailableSymbols().then(setSymbols);
   }, [currentSymbol]);
 
   const handleClearCache = () => {
@@ -37,24 +34,6 @@ export function SettingsPanel({ onClose, onSymbolChange, currentSymbol = 'SPY' }
             <IconClose />
           </button>
         </div>
-
-        {/* Symbol Selection */}
-        {symbols.length > 0 && onSymbolChange && (
-          <div className="mb-5">
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Symbol
-            </label>
-            <select
-              value={currentSymbol}
-              onChange={(e) => onSymbolChange(e.target.value)}
-              className="w-full bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {symbols.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-        )}
 
         {/* Last Update */}
         <div className="mb-5">

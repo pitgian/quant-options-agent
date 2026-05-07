@@ -628,9 +628,10 @@ export function VercelView() {
     setRefreshing(false);
   };
 
+  const SYMBOLS = ['SPY', 'QQQ', 'SPX', 'NDX'] as const;
+
   const handleSymbolChange = (newSymbol: string) => {
     setSymbol(newSymbol);
-    setShowSettings(false);
   };
 
   // ---- Render ----
@@ -695,6 +696,39 @@ export function VercelView() {
         </div>
       </header>
 
+      {/* ===== ASSET TAB CARDS ===== */}
+      <div className="bg-gray-900/95 backdrop-blur-sm border-b border-gray-800">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex gap-2 overflow-x-auto py-2 scrollbar-hide">
+            {SYMBOLS.map((s) => {
+              const isActive = s === symbol;
+              return (
+                <button
+                  key={s}
+                  onClick={() => handleSymbolChange(s)}
+                  className={`
+                    flex-shrink-0 px-4 py-2 rounded-lg text-sm font-semibold
+                    transition-all duration-200 ease-in-out border
+                    ${
+                      isActive
+                        ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-500/20'
+                        : 'bg-slate-800 border-slate-700 text-gray-400 hover:bg-slate-700 hover:text-gray-200 hover:border-slate-600'
+                    }
+                  `}
+                >
+                  <span className="block leading-tight">{s}</span>
+                  {data && data.symbol === s && (
+                    <span className={`block text-[10px] leading-tight mt-0.5 ${isActive ? 'text-blue-200' : 'text-gray-500'}`}>
+                      ${formatStrike(data.spotPrice)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
       {/* ===== MAIN CONTENT ===== */}
       <main className="max-w-7xl mx-auto px-4 py-6">
         {loading && !data ? (
@@ -748,7 +782,6 @@ export function VercelView() {
       {showSettings && (
         <SettingsPanel
           onClose={() => setShowSettings(false)}
-          onSymbolChange={handleSymbolChange}
           currentSymbol={symbol}
         />
       )}
