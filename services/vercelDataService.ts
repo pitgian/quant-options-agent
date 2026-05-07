@@ -107,9 +107,10 @@ async function fetchRawData(forceRefresh: boolean = false): Promise<RawJson | nu
   try {
     console.log('[vercelDataService] Fetching fresh data from GitHub Raw...');
 
-    const response = await fetch(DATA_URL, {
+    const response = await fetch(`${DATA_URL}?t=${Date.now()}`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
+      cache: 'no-cache',
     });
 
     if (!response.ok) {
