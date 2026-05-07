@@ -7,8 +7,8 @@ on:
     - cron: '*/5 13-20 * * 1-5'
     # Every 15 minutes outside market hours (before 1 PM and after 9 PM UTC)
     - cron: '*/15 0-12,21-23 * * 1-5'
-    # Every 6 hours on weekends (market closed, just keep data fresh)
-    - cron: '0 */6 * * 0,6'
+    # Every 15 minutes on weekends (market closed, keep data fresh)
+    - cron: '*/15 * * * 0,6'
   workflow_dispatch:
 
 env:
