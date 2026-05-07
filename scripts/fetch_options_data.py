@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_SYMBOL = "SPY"
 DEFAULT_OUTPUT = "data/options_data.json"
 DATA_VERSION = "3.0"
-MAX_EXPIRATIONS = 12
+MAX_EXPIRATIONS_TO_PROCESS = 25  # Max expirations to process, selected by highest contract count
+CHAIN_FETCH_DELAY = 0.3  # seconds between individual chain fetches to avoid rate limiting
 TOP_N_WALLS = 12
 MIN_COMBINED_OI_VOL = 100  # filter out strikes with very low activity
 SCORE_OI_WEIGHT = 0.6
@@ -222,8 +223,8 @@ def calculate_walls(
             expiry_totals_call[exp_date] = expiry_totals_call.get(exp_date, 0) + data["oi"]
 
     # Weight = expiry_total / max_expiry_total (per side)
-    max_put = max(expiry_totals_put.values()) if expiry_totals_put else 1
-    max_call = max(expiry_totals_call.values()) if expiry_totals_call else 1
+    max_put = max(expiry_totals_put.values()) if expiry_totals_put and max(expiry_totals_put.values()) > 0 else 1
+    max_call = max(expiry_totals_call.values()) if expiry_totals_call and max(expiry_totals_call.values()) > 0 else 1
 
     expiry_weights_put = {exp: tot / max_put for exp, tot in expiry_totals_put.items()}
     expiry_weights_call = {exp: tot / max_call for exp, tot in expiry_totals_call.items()}
@@ -306,12 +307,14 @@ def _score_and_rank(
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def fetch_symbol_data(symbol: str) -> Optional[Dict[str, Any]]:
+def fetch_symbol_data(
+    symbol: str, max_expirations: int = MAX_EXPIRATIONS_TO_PROCESS
+) -> Optional[Dict[str, Any]]:
     """
     Full pipeline for a single symbol:
       1. Resolve yfinance ticker symbol
       2. Fetch spot price
-      3. Fetch option chains for all available expirations (up to MAX_EXPIRATIONS)
+      3. Scan ALL expirations for contract count, select top-N by volume
       4. Aggregate and score walls
       5. Return RawSymbolData-compatible dict
     """
@@ -338,21 +341,68 @@ def fetch_symbol_data(symbol: str) -> Optional[Dict[str, Any]]:
         logger.error(f"❌ No expirations available for {symbol}")
         return None
 
-    selected_expirations = list(expirations[:MAX_EXPIRATIONS])
+    # 3. Scan ALL expirations: fetch chains, count contracts, cache data
     logger.info(
-        f"📅 Using {len(selected_expirations)} of {len(expirations)} available expirations"
+        f"🔍 Scanning all {len(expirations)} expirations to rank by contract count..."
     )
 
-    # 3. Fetch each chain and build both raw expiry data and aggregated options
+    # Stores: expiry_date -> {"calls": DataFrame, "puts": DataFrame, "contract_count": int}
+    fetched_chains: Dict[str, Dict[str, Any]] = {}
+    expiry_contract_counts: List[Tuple[str, int]] = []
+    failed_expirations: List[str] = []
+
+    for idx, exp_date in enumerate(expirations):
+        try:
+            chain = fetch_options_chain(ticker, exp_date)
+            if chain is None:
+                failed_expirations.append(exp_date)
+                continue
+
+            contract_count = len(chain["calls"]) + len(chain["puts"])
+            fetched_chains[exp_date] = chain
+            expiry_contract_counts.append((exp_date, contract_count))
+            logger.info(
+                f"  📋 [{idx + 1}/{len(expirations)}] {exp_date}: "
+                f"{contract_count} contracts"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Skipping {exp_date} (unexpected error: {e})")
+            failed_expirations.append(exp_date)
+
+        # Small delay between chain fetches to avoid rate limiting
+        if CHAIN_FETCH_DELAY > 0 and idx < len(expirations) - 1:
+            time.sleep(CHAIN_FETCH_DELAY)
+
+    if failed_expirations:
+        logger.warning(
+            f"⚠️ {len(failed_expirations)} expirations failed: "
+            f"{', '.join(failed_expirations[:5])}"
+            f"{'...' if len(failed_expirations) > 5 else ''}"
+        )
+
+    if not expiry_contract_counts:
+        logger.error(f"❌ No option chains could be fetched for {symbol}")
+        return None
+
+    # Sort by contract count descending (most contracts first)
+    expiry_contract_counts.sort(key=lambda x: x[1], reverse=True)
+
+    # Select top N by contract count
+    selected_counts = expiry_contract_counts[:max_expirations]
+
+    logger.info(
+        f"📅 Selected top {len(selected_counts)} of {len(expirations)} expirations "
+        f"by contract count (max_expirations={max_expirations}):"
+    )
+    for rank, (exp_date, count) in enumerate(selected_counts, 1):
+        logger.info(f"  #{rank:2d}  {exp_date}: {count} contracts")
+
+    # 4. Build raw expiry data and aggregated options from cached chains
     raw_expiries: List[Dict[str, Any]] = []
     all_options_by_expiry: List[Dict[str, Any]] = []
 
-    for exp_date in selected_expirations:
-        chain = fetch_options_chain(ticker, exp_date)
-        if chain is None:
-            logger.warning(f"⚠️ Skipping {exp_date} (fetch failed)")
-            continue
-
+    for exp_date, contract_count in selected_counts:
+        chain = fetched_chains[exp_date]
         calls = parse_chain_side(chain["calls"], "CALL")
         puts = parse_chain_side(chain["puts"], "PUT")
         all_options = calls + puts
@@ -368,16 +418,16 @@ def fetch_symbol_data(symbol: str) -> Optional[Dict[str, Any]]:
 
         # Aggregated for wall calculation
         all_options_by_expiry.append({"date": exp_date, "options": all_options})
-        logger.info(f"  ✅ {exp_date}: {len(all_options)} contracts")
+        logger.info(f"  ✅ {exp_date}: {len(all_options)} contracts (cached)")
 
     if not all_options_by_expiry:
         logger.error(f"❌ No option data fetched for {symbol}")
         return None
 
-    # 4. Calculate walls
+    # 5. Calculate walls
     put_walls_raw, call_walls_raw = calculate_walls(all_options_by_expiry, spot)
 
-    # 5. Build wall structures (snake_case to match RawWall interface in vercelDataService.ts)
+    # 6. Build wall structures (snake_case to match RawWall interface in vercelDataService.ts)
     put_walls = [
         {
             "strike": w["strike"],
@@ -424,7 +474,7 @@ def fetch_symbol_data(symbol: str) -> Optional[Dict[str, Any]]:
         for w in call_walls_raw
     ]
 
-    # 6. Assemble per-symbol output (matches RawSymbolData interface)
+    # 7. Assemble per-symbol output (matches RawSymbolData interface)
     now_iso = datetime.now(timezone.utc).isoformat()
 
     result = {
@@ -468,6 +518,15 @@ def main() -> None:
         default=DEFAULT_OUTPUT,
         help=f"Output JSON path (default: {DEFAULT_OUTPUT})",
     )
+    parser.add_argument(
+        "--max-expirations",
+        type=int,
+        default=MAX_EXPIRATIONS_TO_PROCESS,
+        help=(
+            f"Maximum number of expirations to process per symbol, "
+            f"selected by highest contract count (default: {MAX_EXPIRATIONS_TO_PROCESS})"
+        ),
+    )
     args = parser.parse_args()
 
     symbols = resolve_symbols(args.symbol)
@@ -481,7 +540,7 @@ def main() -> None:
 
     for i, symbol in enumerate(symbols):
         try:
-            data = fetch_symbol_data(symbol)
+            data = fetch_symbol_data(symbol, max_expirations=args.max_expirations)
             if data is None:
                 logger.error(f"❌ Failed to fetch data for {symbol}")
                 failed_symbols.append(symbol)
