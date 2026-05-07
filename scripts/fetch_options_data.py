@@ -107,6 +107,49 @@ def format_expiry_label(date_str: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# OI Fallback from previous data
+# ---------------------------------------------------------------------------
+
+def load_previous_oi_lookup(
+    file_path: str = DEFAULT_OUTPUT,
+) -> Dict[Tuple[str, float, str, str], int]:
+    """
+    Load the previous options_data.json and build a lookup dictionary
+    keyed by (symbol, strike, side, expiry_date) → oi value.
+    Only includes entries where oi > 0.
+    Returns an empty dict if the file doesn't exist or is invalid.
+    """
+    path = Path(file_path)
+    if not path.exists():
+        logger.info("📄 No previous options_data.json found — OI fallback disabled")
+        return {}
+
+    try:
+        with open(path, "r") as f:
+            prev_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"⚠️ Could not load previous data for OI fallback: {e}")
+        return {}
+
+    lookup: Dict[Tuple[str, float, str, str], int] = {}
+    symbols = prev_data.get("symbols", {})
+    for symbol, sym_data in symbols.items():
+        for expiry in sym_data.get("expiries", []):
+            expiry_date = expiry.get("date", "")
+            for opt in expiry.get("options", []):
+                oi = opt.get("oi", 0)
+                if oi > 0:
+                    key = (symbol, opt["strike"], opt["side"], expiry_date)
+                    lookup[key] = oi
+
+    logger.info(
+        f"📄 Loaded previous OI lookup: {len(lookup)} non-zero OI entries "
+        f"from {len(symbols)} symbols"
+    )
+    return lookup
+
+
+# ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
 
@@ -159,21 +202,52 @@ def fetch_options_chain(
         return None
 
 
-def parse_chain_side(df: pd.DataFrame, side: str) -> List[Dict[str, Any]]:
-    """Extract strike, oi, volume from a single side (calls/puts) DataFrame."""
+def parse_chain_side(
+    df: pd.DataFrame,
+    side: str,
+    symbol: str = "",
+    expiry_date: str = "",
+    oi_lookup: Optional[Dict[Tuple[str, float, str, str], int]] = None,
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """
+    Extract strike, oi, volume from a single side (calls/puts) DataFrame.
+
+    If *oi_lookup* is provided and a row has oi == 0, attempts to fall back
+    to the last known non-zero OI from the lookup using the key
+    (symbol, strike, side, expiry_date).
+
+    Returns:
+        (rows, zero_oi_count, fallback_count)
+        - zero_oi_count: how many rows originally had OI == 0
+        - fallback_count: how many of those were replaced with fallback data
+    """
+    lookup = oi_lookup or {}
+    fallback_count = 0
+    zero_oi_count = 0
     rows = []
     for _, row in df.iterrows():
         oi = int(row["openInterest"]) if pd.notna(row["openInterest"]) else 0
         vol = int(row["volume"]) if pd.notna(row["volume"]) else 0
+        strike = round(float(row["strike"]), 2)
+
+        if oi == 0:
+            zero_oi_count += 1
+            if lookup:
+                key = (symbol, strike, side, expiry_date)
+                fallback_oi = lookup.get(key)
+                if fallback_oi is not None:
+                    oi = fallback_oi
+                    fallback_count += 1
+
         rows.append(
             {
-                "strike": round(float(row["strike"]), 2),
+                "strike": strike,
                 "side": side,
                 "oi": oi,
                 "vol": vol,
             }
         )
-    return rows
+    return rows, zero_oi_count, fallback_count
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +382,9 @@ def _score_and_rank(
 # ---------------------------------------------------------------------------
 
 def fetch_symbol_data(
-    symbol: str, max_expirations: int = MAX_EXPIRATIONS_TO_PROCESS
+    symbol: str,
+    max_expirations: int = MAX_EXPIRATIONS_TO_PROCESS,
+    oi_lookup: Optional[Dict[Tuple[str, float, str, str], int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Full pipeline for a single symbol:
@@ -400,11 +476,19 @@ def fetch_symbol_data(
     # 4. Build raw expiry data and aggregated options from cached chains
     raw_expiries: List[Dict[str, Any]] = []
     all_options_by_expiry: List[Dict[str, Any]] = []
+    total_zero_oi = 0
+    total_fallbacks = 0
 
     for exp_date, contract_count in selected_counts:
         chain = fetched_chains[exp_date]
-        calls = parse_chain_side(chain["calls"], "CALL")
-        puts = parse_chain_side(chain["puts"], "PUT")
+        calls, call_zeros, call_fbs = parse_chain_side(
+            chain["calls"], "CALL", symbol, exp_date, oi_lookup
+        )
+        puts, put_zeros, put_fbs = parse_chain_side(
+            chain["puts"], "PUT", symbol, exp_date, oi_lookup
+        )
+        total_zero_oi += call_zeros + put_zeros
+        total_fallbacks += call_fbs + put_fbs
         all_options = calls + puts
 
         # Raw expiry for the JSON (consumed by vercelDataService.ts)
@@ -474,12 +558,23 @@ def fetch_symbol_data(
         for w in call_walls_raw
     ]
 
-    # 7. Assemble per-symbol output (matches RawSymbolData interface)
+    # 7. OI fallback logging
+    oi_fallback_used = total_fallbacks > 0
+    if total_zero_oi > 0:
+        logger.info(
+            f"🔄 [{symbol}] OI fallback: replaced {total_fallbacks} of "
+            f"{total_zero_oi} zero-OI values with last known data"
+        )
+    else:
+        logger.info(f"🔄 [{symbol}] OI fallback: no zero-OI values detected")
+
+    # 8. Assemble per-symbol output (matches RawSymbolData interface)
     now_iso = datetime.now(timezone.utc).isoformat()
 
     result = {
         "spot": spot,
         "generated": now_iso,
+        "oi_fallback_used": oi_fallback_used,
         "expiries": raw_expiries,
         "walls": {
             "put_walls": put_walls,
@@ -538,9 +633,14 @@ def main() -> None:
     symbols_data: Dict[str, Any] = {}
     failed_symbols: List[str] = []
 
+    # Load previous data for OI fallback
+    oi_lookup = load_previous_oi_lookup(args.output)
+
     for i, symbol in enumerate(symbols):
         try:
-            data = fetch_symbol_data(symbol, max_expirations=args.max_expirations)
+            data = fetch_symbol_data(
+                symbol, max_expirations=args.max_expirations, oi_lookup=oi_lookup
+            )
             if data is None:
                 logger.error(f"❌ Failed to fetch data for {symbol}")
                 failed_symbols.append(symbol)
