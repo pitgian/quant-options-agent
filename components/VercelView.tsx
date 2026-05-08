@@ -70,14 +70,15 @@ const ExpirationRow: React.FC<{ detail: ExpirationDetail }> = ({ detail }) => {
 const WallRow: React.FC<{
   wall: WallLevel;
   spotPrice: number;
-  maxScore: number;
+  maxOI: number;
+  maxVol: number;
   isPut: boolean;
   isExpanded: boolean;
   onToggle: () => void;
-}> = ({ wall, spotPrice, maxScore, isPut, isExpanded, onToggle }) => {
+}> = ({ wall, spotPrice, maxOI, maxVol, isPut, isExpanded, onToggle }) => {
   const dist = distancePct(wall.strike, spotPrice);
-  const scorePct = maxScore > 0 ? (wall.score / maxScore) * 100 : 0;
-  const barColor = isPut ? 'bg-emerald-500' : 'bg-red-500';
+  const oiPct = maxOI > 0 ? (wall.totalOI / maxOI) * 100 : 0;
+  const volPct = maxVol > 0 ? (wall.totalVolume / maxVol) * 100 : 0;
   const textColor = isPut ? 'text-emerald-400' : 'text-red-400';
 
   return (
@@ -95,11 +96,27 @@ const WallRow: React.FC<{
         <td className="px-4 py-2.5 text-right text-gray-300">{formatCompact(wall.totalOI)}</td>
         <td className="px-4 py-2.5 text-right text-gray-300">{formatCompact(wall.totalVolume)}</td>
         <td className="px-4 py-2.5 text-right">
-          <div className="flex items-center justify-end gap-2">
-            <div className="w-16 bg-gray-700 rounded-full h-1.5 overflow-hidden">
-              <div className={`h-full rounded-full ${barColor}`} style={{ width: `${scorePct}%` }} />
+          <div className="flex flex-col gap-1 w-20 ml-auto">
+            {/* OI progress bar */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-400 w-4">OI</span>
+              <div className="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                <div className="h-full rounded-full" style={{
+                  width: `${oiPct}%`,
+                  backgroundColor: wall.type === 'put' ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)'
+                }} />
+              </div>
             </div>
-            <span className={`text-xs font-medium ${textColor}`}>{wall.score.toFixed(2)}</span>
+            {/* Volume progress bar */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-400 w-4">Vol</span>
+              <div className="flex-1 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                <div className="h-full rounded-full" style={{
+                  width: `${volPct}%`,
+                  backgroundColor: wall.type === 'put' ? 'rgba(52, 211, 153, 0.45)' : 'rgba(248, 113, 113, 0.45)'
+                }} />
+              </div>
+            </div>
           </div>
         </td>
         <td className={`px-4 py-2.5 text-right text-xs ${textColor}`}>
@@ -126,7 +143,8 @@ const WallTable: React.FC<{
   accentColor: string;
 }> = ({ title, walls, spotPrice, isPut, accentColor }) => {
   const [expandedStrike, setExpandedStrike] = useState<number | null>(null);
-  const maxScore = walls.length > 0 ? Math.max(...walls.map(w => w.score)) : 1;
+  const maxOI = walls.length > 0 ? Math.max(...walls.map(w => w.totalOI)) : 1;
+  const maxVol = walls.length > 0 ? Math.max(...walls.map(w => w.totalVolume)) : 1;
 
   const toggle = (strike: number) => {
     setExpandedStrike(prev => prev === strike ? null : strike);
@@ -161,7 +179,7 @@ const WallTable: React.FC<{
               <th className="px-4 py-2 text-left">Strike</th>
               <th className="px-4 py-2 text-right">Total OI</th>
               <th className="px-4 py-2 text-right">Total Vol</th>
-              <th className="px-4 py-2 text-right">Score</th>
+              <th className="px-4 py-2 text-right">OI / Vol</th>
               <th className="px-4 py-2 text-right">Detail</th>
             </tr>
           </thead>
@@ -171,7 +189,8 @@ const WallTable: React.FC<{
                 key={wall.strike}
                 wall={wall}
                 spotPrice={spotPrice}
-                maxScore={maxScore}
+                maxOI={maxOI}
+                maxVol={maxVol}
                 isPut={isPut}
                 isExpanded={expandedStrike === wall.strike}
                 onToggle={() => toggle(wall.strike)}
@@ -214,11 +233,14 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
   /** Convert a price value to a percentage position within the chart */
   const pct = (val: number) => ((val - rangeMin) / range) * 100;
 
-  // ── Histogram bar heights (proportional to score) ──
+  // ── Histogram bar heights (separate OI and Volume) ──
   const allWalls = [...putWalls, ...callWalls];
-  const maxScore = allWalls.length > 0 ? Math.max(...allWalls.map(w => w.score)) : 1;
-  /** Returns height % for a wall bar (min 15 %, max 100 %) */
-  const wallHeightPct = (score: number) => Math.max(15, (score / maxScore) * 100);
+  const maxOI = allWalls.length > 0 ? Math.max(...allWalls.map(w => w.totalOI)) : 1;
+  const maxVol = allWalls.length > 0 ? Math.max(...allWalls.map(w => w.totalVolume)) : 1;
+  /** Returns height % for an OI bar (min 8 %, max 100 %) */
+  const oiHeightPct = (oi: number) => Math.max(8, (oi / maxOI) * 100);
+  /** Returns height % for a Volume bar (min 8 %, max 100 %) */
+  const volHeightPct = (vol: number) => Math.max(8, (vol / maxVol) * 100);
 
   // ── Build price scale ticks ──
   const tickCount = 9;
@@ -331,62 +353,82 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
           Calls ▶
         </div>
 
-        {/* Put wall histogram bars — height proportional to score */}
+        {/* Put wall dual bars — OI (solid) + Volume (lighter) */}
         {putWalls.map((w, i) => {
-          const h = wallHeightPct(w.score);
+          const oiH = oiHeightPct(w.totalOI);
+          const volH = volHeightPct(w.totalVolume);
           return (
             <div
               key={`put-${i}`}
               className="absolute bottom-0"
               style={{
                 left: `${pct(w.strike)}%`,
-                width: '20px',
-                height: `${h}%`,
+                width: '28px',
+                height: '100%',
                 transform: 'translateX(-50%)',
+                display: 'flex',
+                justifyContent: 'center',
+                gap: '2px',
+                alignItems: 'flex-end',
                 cursor: 'pointer',
               }}
               onMouseEnter={() => setHoveredWall({ wall: w, isPut: true, leftPct: pct(w.strike) })}
               onMouseLeave={() => setHoveredWall(null)}
             >
-              <div
-                style={{
-                  width: '4px',
-                  height: '100%',
-                  backgroundColor: 'rgba(16, 185, 129, 0.55)',
-                  borderRadius: '2px 2px 0 0',
-                  margin: '0 auto',
-                }}
-              />
+              {/* OI Bar */}
+              <div style={{
+                width: '6px',
+                height: `${oiH}%`,
+                backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                borderRadius: '2px 2px 0 0',
+              }} />
+              {/* Volume Bar */}
+              <div style={{
+                width: '6px',
+                height: `${volH}%`,
+                backgroundColor: 'rgba(52, 211, 153, 0.45)',
+                borderRadius: '2px 2px 0 0',
+              }} />
             </div>
           );
         })}
 
-        {/* Call wall histogram bars — height proportional to score */}
+        {/* Call wall dual bars — OI (solid) + Volume (lighter) */}
         {callWalls.map((w, i) => {
-          const h = wallHeightPct(w.score);
+          const oiH = oiHeightPct(w.totalOI);
+          const volH = volHeightPct(w.totalVolume);
           return (
             <div
               key={`call-${i}`}
               className="absolute bottom-0"
               style={{
                 left: `${pct(w.strike)}%`,
-                width: '20px',
-                height: `${h}%`,
+                width: '28px',
+                height: '100%',
                 transform: 'translateX(-50%)',
+                display: 'flex',
+                justifyContent: 'center',
+                gap: '2px',
+                alignItems: 'flex-end',
                 cursor: 'pointer',
               }}
               onMouseEnter={() => setHoveredWall({ wall: w, isPut: false, leftPct: pct(w.strike) })}
               onMouseLeave={() => setHoveredWall(null)}
             >
-              <div
-                style={{
-                  width: '4px',
-                  height: '100%',
-                  backgroundColor: 'rgba(239, 68, 68, 0.55)',
-                  borderRadius: '2px 2px 0 0',
-                  margin: '0 auto',
-                }}
-              />
+              {/* OI Bar */}
+              <div style={{
+                width: '6px',
+                height: `${oiH}%`,
+                backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                borderRadius: '2px 2px 0 0',
+              }} />
+              {/* Volume Bar */}
+              <div style={{
+                width: '6px',
+                height: `${volH}%`,
+                backgroundColor: 'rgba(248, 113, 113, 0.45)',
+                borderRadius: '2px 2px 0 0',
+              }} />
             </div>
           );
         })}
@@ -412,9 +454,14 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
                 <div className={hoveredWall.isPut ? 'text-emerald-400' : 'text-red-400'}>
                   Type: {hoveredWall.isPut ? 'PUT' : 'CALL'}
                 </div>
-                <div>Total OI: {w.totalOI.toLocaleString()}</div>
-                <div>Total Volume: {w.totalVolume.toLocaleString()}</div>
-                <div>Score: {w.score.toFixed(2)}</div>
+                <div className="flex items-center gap-1.5">
+                  <div style={{ width: '8px', height: '8px', backgroundColor: hoveredWall.isPut ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)', borderRadius: '2px' }} />
+                  OI: {w.totalOI.toLocaleString()}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div style={{ width: '8px', height: '8px', backgroundColor: hoveredWall.isPut ? 'rgba(52, 211, 153, 0.45)' : 'rgba(248, 113, 113, 0.45)', borderRadius: '2px' }} />
+                  Volume: {w.totalVolume.toLocaleString()}
+                </div>
                 <div>Distance: {dist > 0 ? '+' : ''}{dist.toFixed(2)}%</div>
                 <div>Expirations: {w.expirations.length}</div>
                 {w.expirations.length > 0 && (
@@ -465,6 +512,18 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
             }}
           />
         )}
+      </div>
+
+      {/* ── Legend for dual bars ── */}
+      <div className="flex items-center gap-4 justify-center py-1 bg-gray-800/30 border-t border-gray-700/50">
+        <div className="flex items-center gap-1">
+          <div style={{ width: '12px', height: '8px', backgroundColor: 'rgba(16, 185, 129, 0.8)', borderRadius: '2px' }} />
+          <span className="text-[10px] text-gray-400">OI</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div style={{ width: '12px', height: '8px', backgroundColor: 'rgba(52, 211, 153, 0.45)', borderRadius: '2px' }} />
+          <span className="text-[10px] text-gray-400">Volume</span>
+        </div>
       </div>
 
       {/* ── Price scale at the bottom ── */}
@@ -865,13 +924,13 @@ export function VercelView() {
             {/* Footer note */}
             <p className="text-center text-xs text-gray-600 pt-4 pb-8">
               {expirationFilter === 'all'
-                ? 'Options data aggregated across all expirations • Score = normalized OI×0.6 + Vol×0.4'
+                ? 'Options data aggregated across all expirations • Solid bars = OI | Light bars = Volume'
                 : `Expiration filter: ${({
                     '0dte': '0 DTE',
                     '1-7dte': '1-7 DTE',
                     '8-30dte': '8-30 DTE',
                     '30+dte': '30+ DTE',
-                  }[expirationFilter])} • Score = normalized OI×0.6 + Vol×0.4`
+                  }[expirationFilter])} • Solid bars = OI | Light bars = Volume`
               }
             </p>
           </div>
