@@ -25,3 +25,5 @@ export interface OptionsData {
   callWalls: WallLevel[];   // top call walls (resistances), sorted by score desc
   allExpirations: string[]; // list of all expiration dates analyzed
 }
+
+export type ExpirationFilterPreset = 'all' | '0dte' | '1-7dte' | '8-30dte' | '30+dte';

@@ -7,8 +7,8 @@
  * @module components/VercelView
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { OptionsData, WallLevel, ExpirationDetail } from '../types';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { OptionsData, WallLevel, ExpirationDetail, ExpirationFilterPreset } from '../types';
 import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/dataService';
 import { IconRefresh, IconSettings, IconLoader, IconChevronDown, IconChevronUp } from './Icons';
 import { SettingsPanel } from './SettingsPanel';
@@ -543,6 +543,47 @@ export function VercelView() {
   const [showUpdatedFlash, setShowUpdatedFlash] = useState(false);
   const [isBackgroundRefreshing, setIsBackgroundRefreshing] = useState(false);
   const prevTimestampRef = useRef<string | null>(null);
+  const [expirationFilter, setExpirationFilter] = useState<ExpirationFilterPreset>('all');
+
+  // ---- Filtered data (client-side only) ----
+
+  const filteredData = useMemo(() => {
+    if (!data || expirationFilter === 'all') return data;
+
+    const filterFn = (exp: ExpirationDetail) => {
+      switch (expirationFilter) {
+        case '0dte': return exp.daysToExpiry === 0;
+        case '1-7dte': return exp.daysToExpiry >= 1 && exp.daysToExpiry <= 7;
+        case '8-30dte': return exp.daysToExpiry >= 8 && exp.daysToExpiry <= 30;
+        case '30+dte': return exp.daysToExpiry > 30;
+        default: return true;
+      }
+    };
+
+    const filterWalls = (walls: WallLevel[]): WallLevel[] => {
+      return walls
+        .map(wall => {
+          const filteredExps = wall.expirations.filter(filterFn);
+          const totalOI = filteredExps.reduce((sum, e) => sum + e.oi, 0);
+          const totalVolume = filteredExps.reduce((sum, e) => sum + e.volume, 0);
+          const scoreRatio = totalOI > 0 ? totalOI / wall.totalOI : 0;
+          return {
+            ...wall,
+            totalOI,
+            totalVolume,
+            score: wall.score * scoreRatio,
+            expirations: filteredExps,
+          };
+        })
+        .filter(wall => wall.totalOI > 0);
+    };
+
+    return {
+      ...data,
+      putWalls: filterWalls(data.putWalls),
+      callWalls: filterWalls(data.callWalls),
+    };
+  }, [data, expirationFilter]);
 
   // ---- Data fetching ----
 
@@ -632,6 +673,7 @@ export function VercelView() {
 
   const handleSymbolChange = (newSymbol: string) => {
     setSymbol(newSymbol);
+    setExpirationFilter('all');
   };
 
   // ---- Render ----
@@ -729,6 +771,45 @@ export function VercelView() {
         </div>
       </div>
 
+      {/* ===== EXPIRATION FILTER BAR ===== */}
+      {data && (
+        <div className="bg-gray-900/95 backdrop-blur-sm border-b border-gray-800">
+          <div className="max-w-7xl mx-auto px-4">
+            <div className="flex items-center gap-2 overflow-x-auto py-2 scrollbar-hide">
+              <span className="text-[11px] text-gray-500 font-medium uppercase tracking-wider flex-shrink-0 mr-1">
+                Expiry
+              </span>
+              {([
+                { key: 'all' as ExpirationFilterPreset, label: 'All' },
+                { key: '0dte' as ExpirationFilterPreset, label: '0 DTE' },
+                { key: '1-7dte' as ExpirationFilterPreset, label: '1-7 DTE' },
+                { key: '8-30dte' as ExpirationFilterPreset, label: '8-30 DTE' },
+                { key: '30+dte' as ExpirationFilterPreset, label: '30+ DTE' },
+              ]).map(({ key, label }) => {
+                const isActive = expirationFilter === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setExpirationFilter(key)}
+                    className={`
+                      flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-semibold
+                      transition-all duration-200 ease-in-out border
+                      ${
+                        isActive
+                          ? 'bg-cyan-600 border-cyan-500 text-white shadow-lg shadow-cyan-500/20'
+                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-gray-200 hover:border-gray-600'
+                      }
+                    `}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===== MAIN CONTENT ===== */}
       <main className="max-w-7xl mx-auto px-4 py-6">
         {loading && !data ? (
@@ -738,13 +819,24 @@ export function VercelView() {
         ) : data ? (
           <div className="space-y-6">
             {/* Price Position Bar */}
-            <PricePositionBar data={data} />
+            <PricePositionBar data={filteredData!} />
 
             {/* Info bar */}
             <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
-              <span>{data.allExpirations.length} expiration dates analyzed</span>
+              {expirationFilter === 'all' ? (
+                <span>{data.allExpirations.length} expiration dates analyzed</span>
+              ) : (
+                <span>
+                  Active filter: {({
+                    '0dte': '0 DTE',
+                    '1-7dte': '1-7 DTE',
+                    '8-30dte': '8-30 DTE',
+                    '30+dte': '30+ DTE',
+                  }[expirationFilter])} — {filteredData!.putWalls.length + filteredData!.callWalls.length} of {data.putWalls.length + data.callWalls.length} levels shown
+                </span>
+              )}
               <span>•</span>
-              <span>{data.putWalls.length} put walls, {data.callWalls.length} call walls</span>
+              <span>{filteredData!.putWalls.length} put walls, {filteredData!.callWalls.length} call walls</span>
               <span>•</span>
               <span>Data: {formatTimestamp(data.timestamp)}</span>
             </div>
@@ -754,7 +846,7 @@ export function VercelView() {
               {/* PUT WALLS (Supports) — sorted by strike DESC (closest to spot first) */}
               <WallTable
                 title="Put Walls (Supports)"
-                walls={[...data.putWalls].sort((a, b) => b.strike - a.strike)}
+                walls={[...filteredData!.putWalls].sort((a, b) => b.strike - a.strike)}
                 spotPrice={data.spotPrice}
                 isPut={true}
                 accentColor="text-emerald-400"
@@ -763,7 +855,7 @@ export function VercelView() {
               {/* CALL WALLS (Resistances) — sorted by strike ASC (closest to spot first) */}
               <WallTable
                 title="Call Walls (Resistances)"
-                walls={[...data.callWalls].sort((a, b) => a.strike - b.strike)}
+                walls={[...filteredData!.callWalls].sort((a, b) => a.strike - b.strike)}
                 spotPrice={data.spotPrice}
                 isPut={false}
                 accentColor="text-red-400"
@@ -772,7 +864,15 @@ export function VercelView() {
 
             {/* Footer note */}
             <p className="text-center text-xs text-gray-600 pt-4 pb-8">
-              Options data aggregated across all expirations • Score = normalized OI×0.6 + Vol×0.4
+              {expirationFilter === 'all'
+                ? 'Options data aggregated across all expirations • Score = normalized OI×0.6 + Vol×0.4'
+                : `Expiration filter: ${({
+                    '0dte': '0 DTE',
+                    '1-7dte': '1-7 DTE',
+                    '8-30dte': '8-30 DTE',
+                    '30+dte': '30+ DTE',
+                  }[expirationFilter])} • Score = normalized OI×0.6 + Vol×0.4`
+              }
             </p>
           </div>
         ) : null}
