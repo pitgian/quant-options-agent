@@ -271,9 +271,9 @@ function computeWallsFromExpiries(
       return { strike, oi: data.oi, vol: data.vol, score };
     });
 
-    // Sort by score descending, take top 12
+    // Sort by score descending, include all walls
     scored.sort((a, b) => b.score - a.score);
-    const top = scored.slice(0, 12);
+    const top = scored;
 
     return top.map(({ strike, oi, vol, score }) => ({
       strike,
@@ -288,10 +288,10 @@ function computeWallsFromExpiries(
     }));
   }
 
-  // Put walls: strikes below spot price
-  const putWalls = computeTopWalls(putMap, 'put', (strike) => strike < spotPrice);
-  // Call walls: strikes above spot price
-  const callWalls = computeTopWalls(callMap, 'call', (strike) => strike > spotPrice);
+  // Put walls: strikes at or below spot price (include ATM)
+  const putWalls = computeTopWalls(putMap, 'put', (strike) => strike <= spotPrice);
+  // Call walls: strikes at or above spot price (include ATM)
+  const callWalls = computeTopWalls(callMap, 'call', (strike) => strike >= spotPrice);
 
   return { putWalls, callWalls };
 }

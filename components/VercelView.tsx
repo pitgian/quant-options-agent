@@ -217,13 +217,19 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
   // ── Tooltip state ──
   const [hoveredWall, setHoveredWall] = useState<{ wall: WallLevel; isPut: boolean; leftPct: number } | null>(null);
 
-  // ── Compute full (unzoomed) range ──
+  // ── Compute ranges ──
+  // Default view: ±5% around spot price
+  const defaultSpan = spotPrice * 0.05;
+  const fullRangeMin = spotPrice - defaultSpan;
+  const fullRangeMax = spotPrice + defaultSpan;
+
+  // Also keep the full data range for "zoom out to see all" functionality
   const allStrikes = [...putWalls.map(w => w.strike), ...callWalls.map(w => w.strike), spotPrice];
-  const fullMin = Math.min(...allStrikes);
-  const fullMax = Math.max(...allStrikes);
-  const fullPadding = (fullMax - fullMin) * 0.04 || 1;
-  const fullRangeMin = fullMin - fullPadding;
-  const fullRangeMax = fullMax + fullPadding;
+  const dataMin = Math.min(...allStrikes);
+  const dataMax = Math.max(...allStrikes);
+  const dataPadding = (dataMax - dataMin) * 0.04 || 1;
+  const absoluteMin = dataMin - dataPadding;
+  const absoluteMax = dataMax + dataPadding;
 
   // Active range respects zoom
   const rangeMin = zoomRange ? zoomRange[0] : fullRangeMin;
@@ -298,6 +304,46 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
   };
 
   const resetZoom = () => setZoomRange(null);
+  const showAll = () => setZoomRange([absoluteMin, absoluteMax]);
+
+  // ── Mouse wheel zoom (passive:false via ref) ──
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const currentMin = zoomRange ? zoomRange[0] : fullRangeMin;
+      const currentMax = zoomRange ? zoomRange[1] : fullRangeMax;
+      const currentRange = currentMax - currentMin;
+
+      // Zoom factor: scroll up = zoom in, scroll down = zoom out
+      const factor = e.deltaY > 0 ? 1.15 : 0.87;
+      let newRange = currentRange * factor;
+
+      // Clamp: don't zoom out beyond absolute data range
+      const maxRange = absoluteMax - absoluteMin;
+      if (newRange > maxRange) newRange = maxRange;
+
+      // Clamp: don't zoom in too much (minimum ~0.5% of spot)
+      const minRange = spotPrice * 0.005;
+      if (newRange < minRange) newRange = minRange;
+
+      // Zoom centered on mouse position
+      const rect = el.getBoundingClientRect();
+      const mousePct = (e.clientX - rect.left) / rect.width;
+      const mousePrice = currentMin + mousePct * currentRange;
+
+      const newMin = mousePrice - mousePct * newRange;
+      const newMax = mousePrice + (1 - mousePct) * newRange;
+
+      setZoomRange([newMin, newMax]);
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [zoomRange, fullRangeMin, fullRangeMax, absoluteMin, absoluteMax, spotPrice]);
 
   // Selection rectangle geometry
   const dragLeftPct = dragStart !== null && dragCurrent !== null
@@ -320,8 +366,14 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
               ✕ Reset Zoom
             </button>
           )}
+          <button
+            onClick={showAll}
+            className="text-[10px] px-2 py-0.5 rounded bg-gray-700 text-gray-400 hover:text-white hover:bg-gray-600 transition-colors"
+          >
+            ⊞ Show All
+          </button>
           <span className="text-[10px] text-gray-600 hidden sm:inline">
-            Drag to zoom
+            Drag to zoom · Scroll to zoom
           </span>
         </div>
         <span className="text-sm font-mono font-bold text-yellow-400">

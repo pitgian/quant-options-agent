@@ -43,8 +43,8 @@ DEFAULT_OUTPUT = "data/options_data.json"
 DATA_VERSION = "3.0"
 MAX_EXPIRATIONS_TO_PROCESS = 25  # Max expirations to process, selected by highest contract count
 CHAIN_FETCH_DELAY = 0.3  # seconds between individual chain fetches to avoid rate limiting
-TOP_N_WALLS = 12
-MIN_COMBINED_OI_VOL = 100  # filter out strikes with very low activity
+TOP_N_WALLS = 999  # Show all walls, no artificial limit
+MIN_COMBINED_OI_VOL = 1  # Include all strikes with any activity
 SCORE_OI_WEIGHT = 0.6
 SCORE_VOL_WEIGHT = 0.4
 INTER_SYMBOL_DELAY = 2  # seconds between symbols to avoid rate limiting
@@ -311,7 +311,7 @@ def calculate_walls(
         # --- PUT side (weighted) ---
         put_total_oi = sum(e["oi"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides["put"].items())
         put_total_vol = sum(e["vol"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides["put"].items())
-        if put_total_oi + put_total_vol >= MIN_COMBINED_OI_VOL and strike < spot:
+        if put_total_oi + put_total_vol >= MIN_COMBINED_OI_VOL and strike <= spot:
             put_expiry_breakdown = {
                 exp: {**data, "weight": round(expiry_weights_put.get(exp, 1.0), 3)}
                 for exp, data in sides["put"].items()
@@ -329,7 +329,7 @@ def calculate_walls(
         # --- Call side (weighted) ---
         call_total_oi = sum(e["oi"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides["call"].items())
         call_total_vol = sum(e["vol"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides["call"].items())
-        if call_total_oi + call_total_vol >= MIN_COMBINED_OI_VOL and strike > spot:
+        if call_total_oi + call_total_vol >= MIN_COMBINED_OI_VOL and strike >= spot:
             call_expiry_breakdown = {
                 exp: {**data, "weight": round(expiry_weights_call.get(exp, 1.0), 3)}
                 for exp, data in sides["call"].items()
@@ -374,7 +374,7 @@ def _score_and_rank(
         c["contributing_expiries"] = sorted(c["expiry_breakdown"].keys())
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    return candidates[:top_n]
+    return candidates  # Return all candidates, sorted by score
 
 
 # ---------------------------------------------------------------------------
