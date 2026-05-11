@@ -208,15 +208,6 @@ const WallTable: React.FC<{
 const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
   const { spotPrice, putWalls, callWalls } = data;
 
-  // ── Top-N filtering: keep only the most important walls by score ──
-  const topPutWalls = useMemo(() => {
-    return [...putWalls].sort((a, b) => b.score - a.score).slice(0, 15);
-  }, [putWalls]);
-
-  const topCallWalls = useMemo(() => {
-    return [...callWalls].sort((a, b) => b.score - a.score).slice(0, 15);
-  }, [callWalls]);
-
   // ── Zoom state ──
   const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
   const [dragStart, setDragStart] = useState<number | null>(null);
@@ -249,7 +240,7 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
   const pct = (val: number) => ((val - rangeMin) / range) * 100;
 
   // ── Histogram bar heights (separate OI and Volume) ──
-  const allVisibleWalls = [...topPutWalls, ...topCallWalls];
+  const allVisibleWalls = [...putWalls, ...callWalls];
   const maxOI = allVisibleWalls.length > 0 ? Math.max(...allVisibleWalls.map(w => w.totalOI)) : 1;
   const maxVol = allVisibleWalls.length > 0 ? Math.max(...allVisibleWalls.map(w => w.totalVolume)) : 1;
   /** Returns height % for an OI bar (min 8 %, max 100 %) */
@@ -415,7 +406,7 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
         </div>
 
         {/* Put wall dual bars — OI (solid) + Volume (lighter) */}
-        {topPutWalls.map((w, i) => {
+        {putWalls.map((w, i) => {
           const oiH = oiHeightPct(w.totalOI);
           const volH = volHeightPct(w.totalVolume);
           return (
@@ -455,7 +446,7 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
         })}
 
         {/* Call wall dual bars — OI (solid) + Volume (lighter) */}
-        {topCallWalls.map((w, i) => {
+        {callWalls.map((w, i) => {
           const oiH = oiHeightPct(w.totalOI);
           const volH = volHeightPct(w.totalVolume);
           return (
@@ -693,6 +684,16 @@ export function VercelView() {
     };
   }, [data, expirationFilter]);
 
+  // ---- Display data: top-15 walls per side by score ----
+  const displayData = useMemo(() => {
+    if (!filteredData) return null;
+    return {
+      ...filteredData,
+      putWalls: [...filteredData.putWalls].sort((a, b) => b.score - a.score).slice(0, 15),
+      callWalls: [...filteredData.callWalls].sort((a, b) => b.score - a.score).slice(0, 15),
+    };
+  }, [filteredData]);
+
   // ---- Data fetching ----
 
   const loadData = useCallback(async (forceRefresh = false) => {
@@ -927,7 +928,7 @@ export function VercelView() {
         ) : data ? (
           <div className="space-y-6">
             {/* Price Position Bar */}
-            <PricePositionBar data={filteredData!} />
+            <PricePositionBar data={displayData!} />
 
             {/* Info bar */}
             <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
@@ -940,11 +941,11 @@ export function VercelView() {
                     '1-7dte': '1-7 DTE',
                     '8-30dte': '8-30 DTE',
                     '30+dte': '30+ DTE',
-                  }[expirationFilter])} — {filteredData!.putWalls.length + filteredData!.callWalls.length} of {data.putWalls.length + data.callWalls.length} levels shown
+                  }[expirationFilter])} — {displayData!.putWalls.length + displayData!.callWalls.length} of {data.putWalls.length + data.callWalls.length} levels shown
                 </span>
               )}
               <span>•</span>
-              <span>{filteredData!.putWalls.length} put walls, {filteredData!.callWalls.length} call walls</span>
+              <span>{displayData!.putWalls.length} put walls, {displayData!.callWalls.length} call walls</span>
               <span>•</span>
               <span>Data: {formatTimestamp(data.timestamp)}</span>
             </div>
@@ -954,7 +955,7 @@ export function VercelView() {
               {/* PUT WALLS (Supports) — sorted by strike DESC (closest to spot first) */}
               <WallTable
                 title="Put Walls (Supports)"
-                walls={[...filteredData!.putWalls].sort((a, b) => b.strike - a.strike)}
+                walls={[...displayData!.putWalls].sort((a, b) => b.strike - a.strike)}
                 spotPrice={data.spotPrice}
                 isPut={true}
                 accentColor="text-emerald-400"
@@ -963,7 +964,7 @@ export function VercelView() {
               {/* CALL WALLS (Resistances) — sorted by strike ASC (closest to spot first) */}
               <WallTable
                 title="Call Walls (Resistances)"
-                walls={[...filteredData!.callWalls].sort((a, b) => a.strike - b.strike)}
+                walls={[...displayData!.callWalls].sort((a, b) => a.strike - b.strike)}
                 spotPrice={data.spotPrice}
                 isPut={false}
                 accentColor="text-red-400"
