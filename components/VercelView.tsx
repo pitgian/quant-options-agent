@@ -208,6 +208,15 @@ const WallTable: React.FC<{
 const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
   const { spotPrice, putWalls, callWalls } = data;
 
+  // ── Top-N filtering: keep only the most important walls by score ──
+  const topPutWalls = useMemo(() => {
+    return [...putWalls].sort((a, b) => b.score - a.score).slice(0, 15);
+  }, [putWalls]);
+
+  const topCallWalls = useMemo(() => {
+    return [...callWalls].sort((a, b) => b.score - a.score).slice(0, 15);
+  }, [callWalls]);
+
   // ── Zoom state ──
   const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
   const [dragStart, setDragStart] = useState<number | null>(null);
@@ -240,9 +249,9 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
   const pct = (val: number) => ((val - rangeMin) / range) * 100;
 
   // ── Histogram bar heights (separate OI and Volume) ──
-  const allWalls = [...putWalls, ...callWalls];
-  const maxOI = allWalls.length > 0 ? Math.max(...allWalls.map(w => w.totalOI)) : 1;
-  const maxVol = allWalls.length > 0 ? Math.max(...allWalls.map(w => w.totalVolume)) : 1;
+  const allVisibleWalls = [...topPutWalls, ...topCallWalls];
+  const maxOI = allVisibleWalls.length > 0 ? Math.max(...allVisibleWalls.map(w => w.totalOI)) : 1;
+  const maxVol = allVisibleWalls.length > 0 ? Math.max(...allVisibleWalls.map(w => w.totalVolume)) : 1;
   /** Returns height % for an OI bar (min 8 %, max 100 %) */
   const oiHeightPct = (oi: number) => Math.max(8, (oi / maxOI) * 100);
   /** Returns height % for a Volume bar (min 8 %, max 100 %) */
@@ -406,7 +415,7 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
         </div>
 
         {/* Put wall dual bars — OI (solid) + Volume (lighter) */}
-        {putWalls.map((w, i) => {
+        {topPutWalls.map((w, i) => {
           const oiH = oiHeightPct(w.totalOI);
           const volH = volHeightPct(w.totalVolume);
           return (
@@ -446,7 +455,7 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
         })}
 
         {/* Call wall dual bars — OI (solid) + Volume (lighter) */}
-        {callWalls.map((w, i) => {
+        {topCallWalls.map((w, i) => {
           const oiH = oiHeightPct(w.totalOI);
           const volH = volHeightPct(w.totalVolume);
           return (
@@ -492,10 +501,10 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
           const tooltipLeft = Math.max(12, Math.min(88, hoveredWall.leftPct));
           return (
             <div
-              className="absolute z-30 pointer-events-none"
+              className="absolute z-50 pointer-events-none"
               style={{
                 left: `${tooltipLeft}%`,
-                top: '6px',
+                bottom: '8px',
                 transform: 'translateX(-50%)',
               }}
             >
@@ -516,18 +525,6 @@ const PricePositionBar: React.FC<{ data: OptionsData }> = ({ data }) => {
                 </div>
                 <div>Distance: {dist > 0 ? '+' : ''}{dist.toFixed(2)}%</div>
                 <div>Expirations: {w.expirations.length}</div>
-                {w.expirations.length > 0 && (
-                  <div className="mt-1 pt-1 border-t border-gray-700 space-y-0.5">
-                    {w.expirations.map((exp, ei) => {
-                      const expWeight = exp.weight ?? 1.0;
-                      return (
-                        <div key={ei} className="text-gray-400">
-                          {exp.expirationDate}: OI: {exp.oi.toLocaleString()} | Vol: {exp.volume.toLocaleString()} | Weight: {(expWeight * 100).toFixed(0)}%
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             </div>
           );
