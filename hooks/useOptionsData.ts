@@ -239,18 +239,22 @@ export function useOptionsData(): UseOptionsDataReturn {
     setTimeSinceUpdate(ts);
   }, [symbol, expiryFilter]);
 
-  // Silent background refresh — does NOT show the full-page loading spinner
+  // Silent background refresh — does NOT show the full-page loading spinner.
+  // Uses forceRefresh=true to bypass localStorage cache and fetch fresh data
+  // from GitHub (via fetchService). Only updates React state when the data
+  // timestamp actually changes, avoiding unnecessary re-renders.
   const silentRefresh = useCallback(async () => {
     setIsBackgroundRefreshing(true);
     try {
-      const result: FetchResult = await fetchOptionsData(symbol, expiryFilter, false);
+      const result: FetchResult = await fetchOptionsData(symbol, expiryFilter, true);
       if (result.success && result.data) {
         const prevTimestamp = prevTimestampRef.current;
-        setData(result.data);
-        prevTimestampRef.current = result.data.timestamp ?? null;
-        setLastRefreshed(new Date());
-        // Flash indicator only when data actually changed
-        if (prevTimestamp !== result.data.timestamp) {
+        const newTimestamp = result.data.timestamp ?? null;
+        // Only update state when data actually changed (new timestamp)
+        if (prevTimestamp !== newTimestamp) {
+          setData(result.data);
+          prevTimestampRef.current = newTimestamp;
+          setLastRefreshed(new Date());
           setShowUpdatedFlash(true);
           setTimeout(() => setShowUpdatedFlash(false), 3000);
         }
