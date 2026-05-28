@@ -1,42 +1,43 @@
 /**
- * Data Service (Simplified)
+ * Data Service
  *
- * Thin adapter over vercelDataService. Provides a simple interface
- * for the frontend to fetch and cache OptionsData.
+ * Thin adapter over the modular service pipeline. Provides a simple interface
+ * for the frontend to fetch and cache DayTradingData with localStorage caching.
  *
  * @module services/dataService
  */
 
-import { OptionsData } from '../types';
+import { DayTradingData, ExpiryFilter } from '../types';
 import {
-  fetchOptionsData as fetchFromVercel,
-  clearCache as clearVercelCache,
+  fetchOptionsData as fetchFromPipeline,
+  clearCache as clearPipelineCache,
   getDataAgeMinutes,
   getLastUpdateTime,
   getAvailableSymbols,
-} from './vercelDataService';
+} from './index';
 
 // ============================================================================
 // LOCAL STORAGE CACHE
 // ============================================================================
 
-const CACHE_VERSION = '3.0';
+const CACHE_VERSION = '5.0';
 const CACHE_KEY = `options_data_cache_v${CACHE_VERSION}`;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface LocalCacheEntry {
   symbol: string;
-  data: OptionsData;
+  filter: ExpiryFilter;
+  data: DayTradingData;
   timestamp: number;
 }
 
-function getLocalCache(symbol: string): OptionsData | null {
+function getLocalCache(symbol: string, filter: ExpiryFilter): DayTradingData | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
 
     const entry: LocalCacheEntry = JSON.parse(raw);
-    if (entry.symbol !== symbol) return null;
+    if (entry.symbol !== symbol || entry.filter !== filter) return null;
     if (Date.now() - entry.timestamp >= CACHE_TTL_MS) {
       localStorage.removeItem(CACHE_KEY);
       return null;
@@ -48,12 +49,12 @@ function getLocalCache(symbol: string): OptionsData | null {
   }
 }
 
-function setLocalCache(symbol: string, data: OptionsData): void {
+function setLocalCache(symbol: string, filter: ExpiryFilter, data: DayTradingData): void {
   try {
-    const entry: LocalCacheEntry = { symbol, data, timestamp: Date.now() };
+    const entry: LocalCacheEntry = { symbol, filter, data, timestamp: Date.now() };
     localStorage.setItem(CACHE_KEY, JSON.stringify(entry));
-  } catch (e) {
-    console.warn('[dataService] Failed to write local cache:', e);
+  } catch {
+    // Silently ignore storage errors
   }
 }
 
@@ -63,42 +64,42 @@ function setLocalCache(symbol: string, data: OptionsData): void {
 
 export interface FetchResult {
   success: boolean;
-  data: OptionsData | null;
+  data: DayTradingData | null;
   fromCache: boolean;
   error?: string;
 }
 
 /**
- * Fetches OptionsData for a given symbol.
+ * Fetches DayTradingData for a given symbol and expiry filter.
  *
- * Checks localStorage cache first, then falls back to vercelDataService.
+ * Checks localStorage cache first, then falls back to the service pipeline.
  */
 export async function fetchOptionsData(
   symbol: string = 'SPY',
+  expiryFilter: ExpiryFilter = '0dte',
   forceRefresh: boolean = false
 ): Promise<FetchResult> {
   // Check local cache unless force refresh
   if (!forceRefresh) {
-    const cached = getLocalCache(symbol);
+    const cached = getLocalCache(symbol, expiryFilter);
     if (cached) {
       return { success: true, data: cached, fromCache: true };
     }
   }
 
   try {
-    const data = await fetchFromVercel(symbol, forceRefresh);
+    const data = await fetchFromPipeline(symbol, expiryFilter, forceRefresh);
 
     if (!data) {
       return { success: false, data: null, fromCache: false, error: 'No data available' };
     }
 
     // Save to local cache
-    setLocalCache(symbol, data);
+    setLocalCache(symbol, expiryFilter, data);
 
     return { success: true, data, fromCache: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[dataService] Fetch failed:', message);
 
     return { success: false, data: null, fromCache: false, error: message };
   }
@@ -122,11 +123,35 @@ export async function getTimeSinceUpdate(symbol: string = 'SPY'): Promise<string
 }
 
 /**
- * Clears all caches (local + vercel).
+ * Clears all caches (local + pipeline).
  */
 export function clearAllCaches(): void {
   localStorage.removeItem(CACHE_KEY);
-  clearVercelCache();
+  clearPipelineCache();
+}
+
+/**
+ * Gets cache information for debugging.
+ */
+export function getCacheInfo(): { version: string; hasLocalCache: boolean; localCacheSymbol?: string; localCacheAge?: number } {
+  const info: { version: string; hasLocalCache: boolean; localCacheSymbol?: string; localCacheAge?: number } = {
+    version: CACHE_VERSION,
+    hasLocalCache: false,
+  };
+
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (raw) {
+      const entry: LocalCacheEntry = JSON.parse(raw);
+      info.hasLocalCache = true;
+      info.localCacheSymbol = entry.symbol;
+      info.localCacheAge = Math.round((Date.now() - entry.timestamp) / 1000 / 60);
+    }
+  } catch {
+    // ignore
+  }
+
+  return info;
 }
 
 /**

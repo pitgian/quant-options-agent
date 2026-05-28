@@ -45,9 +45,17 @@ MAX_EXPIRATIONS_TO_PROCESS = 25  # Max expirations to process, selected by highe
 CHAIN_FETCH_DELAY = 0.3  # seconds between individual chain fetches to avoid rate limiting
 TOP_N_WALLS = 999  # Show all walls, no artificial limit
 MIN_COMBINED_OI_VOL = 1  # Include all strikes with any activity
-SCORE_OI_WEIGHT = 0.6
-SCORE_VOL_WEIGHT = 0.4
+SCORE_OI_WEIGHT = 0.8
+SCORE_VOL_WEIGHT = 0.2
+CROSS_SIDE_ALPHA = 0.35  # Cross-side penalty factor (dealer hedging impact)
 INTER_SYMBOL_DELAY = 2  # seconds between symbols to avoid rate limiting
+
+# Confluence level settings
+CONFLUENCE_MIN_INTEREST = 50  # Minimum combined put+call activity to qualify
+CONFLUENCE_MIN_RATIO = 0.15  # Minimum balance ratio min(put,call)/max(put,call)
+CONFLUENCE_INTEREST_WEIGHT = 0.5  # Weight for total interest in confluence score
+CONFLUENCE_RATIO_WEIGHT = 0.3  # Weight for balance ratio in confluence score
+CONFLUENCE_DISTANCE_WEIGHT = 0.2  # Weight for proximity to spot in confluence score
 
 # Symbols processed when --symbol ALL is used
 ALL_SYMBOLS = ["SPY", "QQQ", "SPX", "NDX"]
@@ -64,7 +72,21 @@ SYMBOL_YFINANCE_MAP = {
     "NDX": "^NDX",
 }
 
-# Spot price fallback: indices don't trade directly, use futures
+# Primary spot price source: use the same ticker as the options chain source.
+# This is critical — the spot price MUST be in the same price universe as the
+# option strikes.  Using futures (which trade at a premium to the index) causes
+# the gamma flip point and wall distances to be wildly wrong.
+# Example: NDX index ~18,500 vs NQ futures ~22,000 → gamma flip at $22,815!
+SPOT_INDEX_MAP = {
+    "SPY": "SPY",
+    "QQQ": "QQQ",
+    "SPX": "^SPX",    # same as SYMBOL_YFINANCE_MAP
+    "NDX": "^NDX",    # same as SYMBOL_YFINANCE_MAP
+}
+
+# Fallback spot price source: only used when the index ticker fails.
+# Futures trade at a premium/discount to the spot index, so these are a
+# last resort — the resulting gamma flip and distance metrics will be off.
 SPOT_FUTURES_MAP = {
     "SPX": "ES=F",   # S&P 500 E-mini futures
     "NDX": "NQ=F",   # Nasdaq 100 E-mini futures
@@ -157,23 +179,57 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
     """
     Return the last traded price for *symbol*.
 
-    For SPX and NDX, fetch from futures (ES=F, NQ=F) since the index
-    ticker itself may not return reliable pricing.
+    Priority order (spot must match the strike price universe of the options):
+      1. SPOT_INDEX_MAP  – same ticker as the options chain source (primary)
+      2. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
+      3. ticker.history / fast_info – the yfinance ticker object itself
     """
-    # For indices, try futures first
+    # ── 1. Primary: index ticker (same price universe as option strikes) ──
+    index_ticker = SPOT_INDEX_MAP.get(symbol)
+    if index_ticker:
+        try:
+            idx = yf.Ticker(index_ticker)
+            hist = idx.history(period="1d")
+            if hist is not None and not hist.empty:
+                price = float(hist["Close"].iloc[-1])
+                logger.info(f"💰 {symbol} spot from index {index_ticker}: ${price:.2f}")
+                return price
+        except Exception as e:
+            logger.warning(
+                f"⚠️ Could not fetch spot from index {index_ticker}: {e}"
+            )
+
+        # Try fast_info on the index ticker as well
+        try:
+            price = float(yf.Ticker(index_ticker).fast_info.last_price)
+            if price > 0:
+                logger.info(
+                    f"💰 {symbol} spot from index {index_ticker} (fast_info): ${price:.2f}"
+                )
+                return price
+        except Exception:
+            pass
+
+    # ── 2. Fallback: futures ticker ──
     futures_ticker = SPOT_FUTURES_MAP.get(symbol)
     if futures_ticker:
+        logger.info(
+            f"⚠️ {symbol} index spot unavailable, trying futures {futures_ticker}..."
+        )
         try:
             fut = yf.Ticker(futures_ticker)
             hist = fut.history(period="1d")
             if hist is not None and not hist.empty:
                 price = float(hist["Close"].iloc[-1])
-                logger.info(f"💰 {symbol} spot from {futures_ticker}: ${price:.2f}")
+                logger.warning(
+                    f"💰 {symbol} spot from futures {futures_ticker}: ${price:.2f} "
+                    f"(may not match index strike range!)"
+                )
                 return price
         except Exception as e:
             logger.warning(f"Could not fetch spot from {futures_ticker}: {e}")
 
-    # Standard approach: history from the ticker itself
+    # ── 3. Last resort: the passed-in ticker object ──
     try:
         hist = ticker.history(period="1d")
         if hist is not None and not hist.empty:
@@ -181,7 +237,6 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
     except Exception as e:
         logger.warning(f"Could not fetch spot price from history: {e}")
 
-    # Fallback: fast_info
     try:
         return float(ticker.fast_info.last_price)
     except Exception:
@@ -229,6 +284,7 @@ def parse_chain_side(
         oi = int(row["openInterest"]) if pd.notna(row["openInterest"]) else 0
         vol = int(row["volume"]) if pd.notna(row["volume"]) else 0
         strike = round(float(row["strike"]), 2)
+        gamma = float(row["gamma"]) if pd.notna(row.get("gamma")) else 0.0
 
         if oi == 0:
             zero_oi_count += 1
@@ -245,6 +301,7 @@ def parse_chain_side(
                 "side": side,
                 "oi": oi,
                 "vol": vol,
+                "gamma": gamma,
             }
         )
     return rows, zero_oi_count, fallback_count
@@ -258,18 +315,19 @@ def calculate_walls(
     all_options_by_expiry: List[Dict[str, Any]],
     spot: float,
     top_n: int = TOP_N_WALLS,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Aggregate OI and Volume per strike across all expirations, compute a
-    combined score, and return the top put walls and call walls.
+    cross-side penalty score (own_activity - α × cross_activity), and return
+    the top put walls, call walls, and confluence levels.
 
     Each expiry dict: {"date": str, "options": [{"strike", "side", "oi", "vol"}, ...]}
 
     Returns:
-        (put_walls, call_walls) – each a list of wall dicts sorted by score desc.
+        (put_walls, call_walls, confluence_levels) – each a list of wall dicts sorted by score desc.
     """
     # Accumulate per-strike, per-side data with per-expiry breakdown
-    strike_data: Dict[float, Dict[str, Dict[str, Dict[str, int]]]] = {}
+    strike_data: Dict[float, Dict[str, Dict[str, Dict[str, Any]]]] = {}
 
     for expiry_info in all_options_by_expiry:
         expiry_date = expiry_info["date"]
@@ -278,12 +336,14 @@ def calculate_walls(
             side_key = "put" if opt["side"] == "PUT" else "call"
             oi = opt.get("oi", 0)
             vol = opt.get("vol", 0)
+            gamma = opt.get("gamma", 0.0)
 
             if strike not in strike_data:
                 strike_data[strike] = {"put": {}, "call": {}}
             strike_data[strike][side_key][expiry_date] = {
                 "oi": oi,
                 "vol": vol,
+                "gamma": gamma,
             }
 
     # ── Expiration weighting by contract count (per side) ──
@@ -303,14 +363,46 @@ def calculate_walls(
     expiry_weights_put = {exp: tot / max_put for exp, tot in expiry_totals_put.items()}
     expiry_weights_call = {exp: tot / max_call for exp, tot in expiry_totals_call.items()}
 
+    # ── Time-decay weighting: near-term expirations weighted higher ──
+    # Formula: time_weight = 1 / (1 + DTE / 7)
+    all_expiry_dates = set(list(expiry_weights_put.keys()) + list(expiry_weights_call.keys()))
+    time_weights: Dict[str, float] = {}
+    for exp_date in all_expiry_dates:
+        dte = days_to_expiry(exp_date)
+        time_weights[exp_date] = 1.0 / (1.0 + dte / 7.0)
+
+    # Combine contract-count weights with time-decay weights
+    for exp in list(expiry_weights_put.keys()):
+        expiry_weights_put[exp] *= time_weights.get(exp, 1.0)
+    for exp in list(expiry_weights_call.keys()):
+        expiry_weights_call[exp] *= time_weights.get(exp, 1.0)
+
     # Build candidate lists for puts and calls
     put_candidates = []
     call_candidates = []
+
+    # Contract size for GEX calculation
+    CONTRACT_SIZE = 100
 
     for strike, sides in strike_data.items():
         # --- PUT side (weighted) ---
         put_total_oi = sum(e["oi"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides["put"].items())
         put_total_vol = sum(e["vol"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides["put"].items())
+        # Opposite side (call) data at this strike
+        opp_call_oi = sum(e["oi"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides.get("call", {}).items())
+        opp_call_vol = sum(e["vol"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides.get("call", {}).items())
+
+        # GEX computation: GEX = OI × Gamma × ContractSize × Spot² × sign
+        # sign = +1 for calls, -1 for puts
+        put_gex = sum(
+            e["oi"] * e.get("gamma", 0.0) * CONTRACT_SIZE * spot * spot * (-1) * expiry_weights_put.get(exp, 1.0)
+            for exp, e in sides["put"].items()
+        )
+        call_gex_at_strike = sum(
+            e["oi"] * e.get("gamma", 0.0) * CONTRACT_SIZE * spot * spot * (+1) * expiry_weights_call.get(exp, 1.0)
+            for exp, e in sides.get("call", {}).items()
+        )
+
         if put_total_oi + put_total_vol >= MIN_COMBINED_OI_VOL and strike <= spot:
             put_expiry_breakdown = {
                 exp: {**data, "weight": round(expiry_weights_put.get(exp, 1.0), 3)}
@@ -321,6 +413,11 @@ def calculate_walls(
                     "strike": strike,
                     "total_oi": put_total_oi,
                     "total_vol": put_total_vol,
+                    "opp_oi": opp_call_oi,
+                    "opp_vol": opp_call_vol,
+                    "put_gex": put_gex,
+                    "call_gex": call_gex_at_strike,
+                    "net_gex": put_gex + call_gex_at_strike,
                     "expiry_breakdown": put_expiry_breakdown,
                     "type": "put",
                 }
@@ -329,6 +426,20 @@ def calculate_walls(
         # --- Call side (weighted) ---
         call_total_oi = sum(e["oi"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides["call"].items())
         call_total_vol = sum(e["vol"] * expiry_weights_call.get(exp, 1.0) for exp, e in sides["call"].items())
+        # Opposite side (put) data at this strike
+        opp_put_oi = sum(e["oi"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides.get("put", {}).items())
+        opp_put_vol = sum(e["vol"] * expiry_weights_put.get(exp, 1.0) for exp, e in sides.get("put", {}).items())
+
+        # GEX for call candidates (reuse same values computed above)
+        call_gex = call_gex_at_strike if call_gex_at_strike != 0 else sum(
+            e["oi"] * e.get("gamma", 0.0) * CONTRACT_SIZE * spot * spot * (+1) * expiry_weights_call.get(exp, 1.0)
+            for exp, e in sides["call"].items()
+        )
+        put_gex_at_strike = put_gex if put_gex != 0 else sum(
+            e["oi"] * e.get("gamma", 0.0) * CONTRACT_SIZE * spot * spot * (-1) * expiry_weights_put.get(exp, 1.0)
+            for exp, e in sides.get("put", {}).items()
+        )
+
         if call_total_oi + call_total_vol >= MIN_COMBINED_OI_VOL and strike >= spot:
             call_expiry_breakdown = {
                 exp: {**data, "weight": round(expiry_weights_call.get(exp, 1.0), 3)}
@@ -339,42 +450,196 @@ def calculate_walls(
                     "strike": strike,
                     "total_oi": call_total_oi,
                     "total_vol": call_total_vol,
+                    "opp_oi": opp_put_oi,
+                    "opp_vol": opp_put_vol,
+                    "put_gex": put_gex_at_strike,
+                    "call_gex": call_gex,
+                    "net_gex": put_gex_at_strike + call_gex,
                     "expiry_breakdown": call_expiry_breakdown,
                     "type": "call",
                 }
             )
 
-    # Score and rank
+    # Score and rank with cross-side penalty
     put_walls = _score_and_rank(put_candidates, spot, top_n)
     call_walls = _score_and_rank(call_candidates, spot, top_n)
 
-    return put_walls, call_walls
+    # Compute confluence levels from the same strike_data
+    confluence_levels = calculate_confluence_levels(
+        strike_data, spot, expiry_weights_put, expiry_weights_call, time_weights
+    )
+
+    return put_walls, call_walls, confluence_levels
 
 
 def _score_and_rank(
     candidates: List[Dict[str, Any]], spot: float, top_n: int
 ) -> List[Dict[str, Any]]:
-    """Apply min-max normalization + weighted score, return top *top_n*."""
+    """
+    Apply cross-side penalty scoring using absolute values.
+    
+    Formula:
+        own_activity = total_oi * 0.8 + total_vol * 0.2
+        cross_activity = opp_oi * 0.8 + opp_vol * 0.2
+        cross_ratio = cross_activity / (own_activity + cross_activity)  if total > 0
+        score = own_activity * max(0, 1 - α × cross_ratio)
+    
+    This preserves absolute magnitude (a wall with 476K OI always scores
+    much higher than one with 3 OI) while penalizing cross-side dominance.
+    
+    Returns candidates sorted by score descending.
+    """
     if not candidates:
         return []
 
-    oi_values = [c["total_oi"] for c in candidates]
-    vol_values = [c["total_vol"] for c in candidates]
+    for c in candidates:
+        # Own side activity (absolute, weighted)
+        own_activity = c["total_oi"] * SCORE_OI_WEIGHT + c["total_vol"] * SCORE_VOL_WEIGHT
+        # Cross side activity (absolute, weighted)
+        cross_activity = c["opp_oi"] * SCORE_OI_WEIGHT + c["opp_vol"] * SCORE_VOL_WEIGHT
 
-    oi_norm = min_max_normalize(oi_values)
-    vol_norm = min_max_normalize(vol_values)
+        # Cross-side ratio: fraction of total activity that is cross-side
+        total_activity = own_activity + cross_activity
+        cross_ratio = cross_activity / total_activity if total_activity > 0 else 0
 
-    for i, c in enumerate(candidates):
-        c["score"] = round(
-            oi_norm[i] * SCORE_OI_WEIGHT + vol_norm[i] * SCORE_VOL_WEIGHT, 6
-        )
+        # Score: own activity discounted by cross-side dominance
+        # When cross_ratio → 0 (no cross side): score ≈ own_activity
+        # When cross_ratio → 1 (cross dominates): score → own_activity × (1 - α)
+        c["score"] = round(own_activity * max(0, 1 - CROSS_SIDE_ALPHA * cross_ratio), 2)
+
         # Distance from spot as percentage
         c["distance_pct"] = round((c["strike"] - spot) / spot * 100, 2)
         # List of expiry dates that contribute to this wall
         c["contributing_expiries"] = sorted(c["expiry_breakdown"].keys())
 
+    # Filter out zero-score walls
+    valid = [c for c in candidates if c["score"] > 0]
+    valid.sort(key=lambda x: x["score"], reverse=True)
+    return valid
+
+
+def calculate_confluence_levels(
+    strike_data: Dict[float, Dict[str, Dict[str, Dict[str, Any]]]],
+    spot: float,
+    expiry_weights_put: Dict[str, float],
+    expiry_weights_call: Dict[str, float],
+    time_weights: Dict[str, float],
+) -> List[Dict[str, Any]]:
+    """
+    Identify strikes with significant bilateral (put+call) interest.
+
+    Scoring formula:
+        total_interest = weighted_put_activity + weighted_call_activity
+        balance_ratio = min(put_side, call_side) / max(put_side, call_side)
+        proximity = 1 / (1 + |strike - spot| / spot * 20)
+        confluence_score = total_interest × 0.5 + balance_ratio × 0.3 + proximity × 0.2
+
+    All components are min-max normalized before weighting.
+    """
+    candidates: List[Dict[str, Any]] = []
+
+    for strike, sides in strike_data.items():
+        # Compute weighted put activity
+        put_oi_weighted = 0.0
+        put_vol_weighted = 0.0
+        put_expiry_breakdown: Dict[str, Dict[str, Any]] = {}
+
+        for exp_date, data in sides.get("put", {}).items():
+            w = expiry_weights_put.get(exp_date, 1.0) * time_weights.get(exp_date, 1.0)
+            oi_w = data["oi"] * w
+            vol_w = data["vol"] * w
+            put_oi_weighted += oi_w
+            put_vol_weighted += vol_w
+            put_expiry_breakdown[exp_date] = {
+                "oi": data["oi"],
+                "vol": data["vol"],
+                "weight": w,
+                "side": "put",
+            }
+
+        # Compute weighted call activity
+        call_oi_weighted = 0.0
+        call_vol_weighted = 0.0
+        call_expiry_breakdown: Dict[str, Dict[str, Any]] = {}
+
+        for exp_date, data in sides.get("call", {}).items():
+            w = expiry_weights_call.get(exp_date, 1.0) * time_weights.get(exp_date, 1.0)
+            oi_w = data["oi"] * w
+            vol_w = data["vol"] * w
+            call_oi_weighted += oi_w
+            call_vol_weighted += vol_w
+            call_expiry_breakdown[exp_date] = {
+                "oi": data["oi"],
+                "vol": data["vol"],
+                "weight": w,
+                "side": "call",
+            }
+
+        put_activity = put_oi_weighted * SCORE_OI_WEIGHT + put_vol_weighted * SCORE_VOL_WEIGHT
+        call_activity = call_oi_weighted * SCORE_OI_WEIGHT + call_vol_weighted * SCORE_VOL_WEIGHT
+        total_interest = put_activity + call_activity
+
+        # Skip strikes with insufficient bilateral interest
+        if total_interest < CONFLUENCE_MIN_INTEREST:
+            continue
+
+        # Balance ratio: 1.0 = perfectly balanced, 0.0 = one-sided
+        max_side = max(put_activity, call_activity)
+        min_side = min(put_activity, call_activity)
+        balance_ratio = min_side / max_side if max_side > 0 else 0
+
+        # Skip if too one-sided
+        if balance_ratio < CONFLUENCE_MIN_RATIO:
+            continue
+
+        # Merge expiry breakdowns (both put and call)
+        merged_breakdown = {**put_expiry_breakdown, **call_expiry_breakdown}
+
+        candidates.append({
+            "strike": strike,
+            "type": "confluence",
+            "put_oi_weighted": put_oi_weighted,
+            "put_vol_weighted": put_vol_weighted,
+            "call_oi_weighted": call_oi_weighted,
+            "call_vol_weighted": call_vol_weighted,
+            "put_activity": put_activity,
+            "call_activity": call_activity,
+            "total_interest": total_interest,
+            "balance_ratio": balance_ratio,
+            "distance_pct": round((strike - spot) / spot * 100, 2),
+            "expiry_breakdown": merged_breakdown,
+        })
+
+    if not candidates:
+        return []
+
+    # Min-max normalize each scoring component
+    def min_max_normalize(values: List[float]) -> List[float]:
+        mn, mx = min(values), max(values)
+        if mx == mn:
+            return [1.0 if mx > 0 else 0.0] * len(values)
+        return [(v - mn) / (mx - mn) for v in values]
+
+    interests = [c["total_interest"] for c in candidates]
+    ratios = [c["balance_ratio"] for c in candidates]
+    proximities = [1.0 / (1.0 + abs(c["strike"] - spot) / spot * 20) for c in candidates]
+
+    norm_interests = min_max_normalize(interests)
+    norm_ratios = min_max_normalize(ratios)
+    norm_proximities = min_max_normalize(proximities)
+
+    for i, c in enumerate(candidates):
+        c["score"] = round(
+            norm_interests[i] * CONFLUENCE_INTEREST_WEIGHT
+            + norm_ratios[i] * CONFLUENCE_RATIO_WEIGHT
+            + norm_proximities[i] * CONFLUENCE_DISTANCE_WEIGHT,
+            4,
+        )
+        c["contributing_expiries"] = sorted(c["expiry_breakdown"].keys())
+
+    # Sort by score descending
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    return candidates  # Return all candidates, sorted by score
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -508,8 +773,38 @@ def fetch_symbol_data(
         logger.error(f"❌ No option data fetched for {symbol}")
         return None
 
-    # 5. Calculate walls
-    put_walls_raw, call_walls_raw = calculate_walls(all_options_by_expiry, spot)
+    # 5. Calculate walls (with cross-side penalty scoring)
+    put_walls_raw, call_walls_raw, confluence_raw = calculate_walls(all_options_by_expiry, spot)
+
+    # 5b. Compute totalNetGEX and gexFlipPoint across ALL strikes
+    CONTRACT_SIZE = 100
+    total_net_gex = 0.0
+    gex_by_strike: Dict[float, float] = {}
+
+    for expiry_info in all_options_by_expiry:
+        dte = days_to_expiry(expiry_info["date"])
+        time_weight = 1.0 / (1.0 + dte / 7.0)
+        for opt in expiry_info["options"]:
+            gamma = opt.get("gamma", 0.0)
+            if gamma == 0.0:
+                continue
+            oi = opt.get("oi", 0)
+            sign = 1 if opt["side"] == "CALL" else -1
+            gex = oi * gamma * CONTRACT_SIZE * spot * spot * sign * time_weight
+            total_net_gex += gex
+            strike = opt["strike"]
+            gex_by_strike[strike] = gex_by_strike.get(strike, 0.0) + gex
+
+    # Find GEX flip point: strike where net GEX crosses from positive to negative
+    gex_flip_point: Optional[float] = None
+    sorted_gex_strikes = sorted(gex_by_strike.keys())
+    for i in range(len(sorted_gex_strikes) - 1):
+        s1, s2 = sorted_gex_strikes[i], sorted_gex_strikes[i + 1]
+        g1, g2 = gex_by_strike[s1], gex_by_strike[s2]
+        if g1 > 0 and g2 < 0:
+            # Linear interpolation to find exact zero crossing
+            gex_flip_point = round(s1 + (0 - g1) * (s2 - s1) / (g2 - g1), 2)
+            break
 
     # 6. Build wall structures (snake_case to match RawWall interface in vercelDataService.ts)
     put_walls = [
@@ -518,7 +813,14 @@ def fetch_symbol_data(
             "type": w["type"],
             "total_oi": w["total_oi"],
             "total_vol": w["total_vol"],
-            "score": round(w["score"] * 100, 1),
+            "put_oi": w["total_oi"],
+            "put_vol": w["total_vol"],
+            "call_oi": w.get("opp_oi", 0),
+            "call_vol": w.get("opp_vol", 0),
+            "call_gex": round(w.get("call_gex", 0.0), 2),
+            "put_gex": round(w.get("put_gex", 0.0), 2),
+            "net_gex": round(w.get("net_gex", 0.0), 2),
+            "score": round(w["score"], 2),
             "contributing_expiries": w["contributing_expiries"],
             "distance_pct": w["distance_pct"],
             "expirations": [
@@ -541,7 +843,14 @@ def fetch_symbol_data(
             "type": w["type"],
             "total_oi": w["total_oi"],
             "total_vol": w["total_vol"],
-            "score": round(w["score"] * 100, 1),
+            "put_oi": w.get("opp_oi", 0),
+            "put_vol": w.get("opp_vol", 0),
+            "call_oi": w["total_oi"],
+            "call_vol": w["total_vol"],
+            "call_gex": round(w.get("call_gex", 0.0), 2),
+            "put_gex": round(w.get("put_gex", 0.0), 2),
+            "net_gex": round(w.get("net_gex", 0.0), 2),
+            "score": round(w["score"], 2),
             "contributing_expiries": w["contributing_expiries"],
             "distance_pct": w["distance_pct"],
             "expirations": [
@@ -556,6 +865,39 @@ def fetch_symbol_data(
             ],
         }
         for w in call_walls_raw
+    ]
+
+    # 6b. Build confluence wall structures
+    confluence_levels = [
+        {
+            "strike": c["strike"],
+            "type": "confluence",
+            "total_oi": c["total_interest"],
+            "total_vol": 0,
+            "put_oi": round(c["put_activity"], 2),
+            "put_vol": 0,
+            "call_oi": round(c["call_activity"], 2),
+            "call_vol": 0,
+            "call_gex": round(c.get("call_gex", 0.0), 2),
+            "put_gex": round(c.get("put_gex", 0.0), 2),
+            "net_gex": round(c.get("net_gex", 0.0), 2),
+            "score": round(c["score"], 2),
+            "contributing_expiries": c["contributing_expiries"],
+            "distance_pct": c["distance_pct"],
+            "total_interest": round(c["total_interest"], 2),
+            "confluence_ratio": round(c["balance_ratio"], 4),
+            "expirations": [
+                {
+                    "expiration_date": exp_date,
+                    "days_to_expiry": days_to_expiry(exp_date),
+                    "oi": data["oi"],
+                    "volume": data["vol"],
+                    "weight": data.get("weight", 1.0),
+                }
+                for exp_date, data in c["expiry_breakdown"].items()
+            ],
+        }
+        for c in confluence_raw
     ]
 
     # 7. OI fallback logging
@@ -575,15 +917,20 @@ def fetch_symbol_data(
         "spot": spot,
         "generated": now_iso,
         "oi_fallback_used": oi_fallback_used,
+        "total_net_gex": round(total_net_gex, 2),
+        "gex_flip_point": gex_flip_point,
         "expiries": raw_expiries,
         "walls": {
             "put_walls": put_walls,
             "call_walls": call_walls,
+            "confluence_levels": confluence_levels,
         },
     }
 
     logger.info(
-        f"✅ {symbol}: {len(put_walls)} put walls, {len(call_walls)} call walls identified"
+        f"✅ {symbol}: {len(put_walls)} put walls, {len(call_walls)} call walls, "
+        f"{len(confluence_levels)} confluence levels identified "
+        f"(cross-side α={CROSS_SIDE_ALPHA})"
     )
     return result
 
@@ -689,10 +1036,15 @@ def main() -> None:
         len(symbols_data[s].get("walls", {}).get("call_walls", []))
         for s in symbols_data
     )
+    total_confluence = sum(
+        len(symbols_data[s].get("walls", {}).get("confluence_levels", []))
+        for s in symbols_data
+    )
     logger.info(f"💾 Data saved to {output_path}")
     logger.info(
         f"📊 Summary: {len(symbols_data)} symbols, "
-        f"{total_put} total put walls, {total_call} total call walls"
+        f"{total_put} total put walls, {total_call} total call walls, "
+        f"{total_confluence} total confluence levels"
     )
 
 

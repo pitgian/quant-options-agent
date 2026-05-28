@@ -1,9 +1,6 @@
-
 import React from 'react';
-import { VercelView } from './components/VercelView';
+import { DayTradingView } from './components/DayTradingView';
 
-const App: React.FC = () => {
-  return <VercelView />;
-};
-
-export default App;
+export default function App() {
+  return <DayTradingView />;
+}
