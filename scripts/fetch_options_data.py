@@ -64,7 +64,6 @@ ALL_SYMBOLS = ["SPY", "QQQ", "SPX", "NDX"]
 # Symbol mapping
 # ---------------------------------------------------------------------------
 # Maps our canonical symbol name to the yfinance ticker used for options chains.
-# For indices (SPX, NDX) the spot price is fetched from futures instead.
 SYMBOL_YFINANCE_MAP = {
     "SPY": "SPY",
     "QQQ": "QQQ",
@@ -72,19 +71,25 @@ SYMBOL_YFINANCE_MAP = {
     "NDX": "^NDX",
 }
 
-# Primary spot price source: use the same ticker as the options chain source.
-# This is critical — the spot price MUST be in the same price universe as the
-# option strikes.  Using futures (which trade at a premium to the index) causes
-# the gamma flip point and wall distances to be wildly wrong.
-# Example: NDX index ~18,500 vs NQ futures ~22,000 → gamma flip at $22,815!
+# ETF-based spot price derivation for indices.
+# ETFs (SPY, QQQ) trade with real-time prices on exchanges, while index tickers
+# (^SPX, ^NDX) may return 15-minute delayed data during market hours.
+# We derive the index spot from the real-time ETF price using a ratio computed
+# from recent historical closes of both the ETF and the index.
+SPOT_ETF_MAP = {
+    "SPX": "SPY",    # SPY × ratio ≈ SPX
+    "NDX": "QQQ",    # QQQ × ratio ≈ NDX
+}
+
+# Index tickers used to compute the ETF→index ratio and as a direct fallback.
 SPOT_INDEX_MAP = {
     "SPY": "SPY",
     "QQQ": "QQQ",
-    "SPX": "^SPX",    # same as SYMBOL_YFINANCE_MAP
-    "NDX": "^NDX",    # same as SYMBOL_YFINANCE_MAP
+    "SPX": "^SPX",
+    "NDX": "^NDX",
 }
 
-# Fallback spot price source: only used when the index ticker fails.
+# Fallback spot price source: only used when both ETF-derivation and index fail.
 # Futures trade at a premium/discount to the spot index, so these are a
 # last resort — the resulting gamma flip and distance metrics will be off.
 SPOT_FUTURES_MAP = {
@@ -175,16 +180,92 @@ def load_previous_oi_lookup(
 # Data fetching
 # ---------------------------------------------------------------------------
 
+def _compute_etf_index_ratio(etf_ticker: str, index_ticker: str) -> Optional[float]:
+    """
+    Compute the index/ETF price ratio from recent historical data.
+
+    Returns the ratio such that:  index_spot ≈ etf_price × ratio
+    Uses the last common trading day's close for both tickers.
+    """
+    try:
+        etf_hist = yf.Ticker(etf_ticker).history(period="5d")
+        idx_hist = yf.Ticker(index_ticker).history(period="5d")
+        if etf_hist.empty or idx_hist.empty:
+            return None
+
+        # Find common dates (handle timezone-aware indices)
+        common = etf_hist.index.intersection(idx_hist.index)
+        if len(common) == 0:
+            # Fallback: normalize to dates only
+            etf_dates = etf_hist.index.normalize()
+            idx_dates = idx_hist.index.normalize()
+            common_dates = set(etf_dates) & set(idx_dates)
+            if not common_dates:
+                return None
+            last_date = max(common_dates)
+            etf_close = float(
+                etf_hist.loc[etf_hist.index.normalize() == last_date, "Close"].iloc[-1]
+            )
+            idx_close = float(
+                idx_hist.loc[idx_hist.index.normalize() == last_date, "Close"].iloc[-1]
+            )
+        else:
+            last = common[-1]
+            etf_close = float(etf_hist.loc[last, "Close"])
+            idx_close = float(idx_hist.loc[last, "Close"])
+
+        if etf_close <= 0:
+            return None
+        ratio = idx_close / etf_close
+        logger.info(
+            f"📐 Ratio {index_ticker}/{etf_ticker} = {ratio:.4f} "
+            f"(from historical close)"
+        )
+        return ratio
+    except Exception as e:
+        logger.warning(f"⚠️ Could not compute {index_ticker}/{etf_ticker} ratio: {e}")
+        return None
+
+
 def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
     """
     Return the last traded price for *symbol*.
 
     Priority order (spot must match the strike price universe of the options):
-      1. SPOT_INDEX_MAP  – same ticker as the options chain source (primary)
-      2. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
-      3. ticker.history / fast_info – the yfinance ticker object itself
+      1. ETF derivation – real-time ETF price × dynamic ratio (primary for indices)
+      2. SPOT_INDEX_MAP  – index ticker directly (fallback)
+      3. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
+      4. ticker.history / fast_info – the yfinance ticker object itself
     """
-    # ── 1. Primary: index ticker (same price universe as option strikes) ──
+    # ── 0. For ETFs (SPY, QQQ), just use the ticker directly ──
+    etf_ticker = SPOT_ETF_MAP.get(symbol)
+
+    # ── 1. Primary: derive from ETF (real-time price × ratio) ──
+    # ETFs trade with real-time prices; index tickers (^SPX, ^NDX) may be
+    # 15-minute delayed during market hours.  We compute the index/ETF ratio
+    # from recent historical closes and apply it to the live ETF price.
+    if etf_ticker:
+        index_ticker = SPOT_INDEX_MAP.get(symbol)
+        if index_ticker:
+            try:
+                ratio = _compute_etf_index_ratio(etf_ticker, index_ticker)
+                if ratio is not None:
+                    etf = yf.Ticker(etf_ticker)
+                    etf_hist = etf.history(period="1d")
+                    if etf_hist is not None and not etf_hist.empty:
+                        etf_price = float(etf_hist["Close"].iloc[-1])
+                        spot = etf_price * ratio
+                        logger.info(
+                            f"💰 {symbol} spot from ETF {etf_ticker} "
+                            f"(${etf_price:.2f}) × {ratio:.4f} = ${spot:.2f}"
+                        )
+                        return spot
+            except Exception as e:
+                logger.warning(
+                    f"⚠️ Could not derive {symbol} spot from ETF {etf_ticker}: {e}"
+                )
+
+    # ── 2. Fallback: index ticker directly ──
     index_ticker = SPOT_INDEX_MAP.get(symbol)
     if index_ticker:
         try:
@@ -192,7 +273,9 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
             hist = idx.history(period="1d")
             if hist is not None and not hist.empty:
                 price = float(hist["Close"].iloc[-1])
-                logger.info(f"💰 {symbol} spot from index {index_ticker}: ${price:.2f}")
+                logger.info(
+                    f"💰 {symbol} spot from index {index_ticker} (fallback): ${price:.2f}"
+                )
                 return price
         except Exception as e:
             logger.warning(
@@ -210,7 +293,7 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
         except Exception:
             pass
 
-    # ── 2. Fallback: futures ticker ──
+    # ── 3. Fallback: futures ticker ──
     futures_ticker = SPOT_FUTURES_MAP.get(symbol)
     if futures_ticker:
         logger.info(
@@ -229,7 +312,7 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
         except Exception as e:
             logger.warning(f"Could not fetch spot from {futures_ticker}: {e}")
 
-    # ── 3. Last resort: the passed-in ticker object ──
+    # ── 4. Last resort: the passed-in ticker object ──
     try:
         hist = ticker.history(period="1d")
         if hist is not None and not hist.empty:
