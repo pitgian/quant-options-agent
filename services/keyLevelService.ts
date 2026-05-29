@@ -65,8 +65,8 @@ export function buildDayTradingData(
   const crossResistance = crossLevels.filter(l => l.type === 'resistance');
 
   // Insert cross-symbol levels into the appropriate arrays
-  const mergedSupport = mergeLevels(support, crossSupport);
-  const mergedResistance = mergeLevels(resistance, crossResistance);
+  const mergedSupport = mergeLevels(support, crossSupport, spot);
+  const mergedResistance = mergeLevels(resistance, crossResistance, spot);
 
   return {
     symbol,
@@ -113,30 +113,40 @@ function extractCrossSymbolLevels(
   const pair = confluence[mapping.pairKey as keyof CrossSymbolConfluence];
   if (!pair) return [];
 
-  return pair.levels.map((level: CrossSymbolLevel): DayTradingLevel => {
-    const isEtfSide = mapping.side === 'etf';
-    const primary = isEtfSide ? level.etf : level.index;
-    const paired = isEtfSide ? level.index : level.etf;
+  const upperSymbol = symbol.toUpperCase();
 
-    return {
-      strike: primary.strike,
-      type: level.type,
-      strength: level.cross_score,
-      totalOI: primary.total_oi,
-      totalVolume: primary.total_vol,
-      distance: primary.distance_pct,
-      label: `Cross-Symbol ${level.type === 'support' ? 'Support' : 'Resistance'}`,
-      isCrossSymbol: true,
-      crossScore: level.cross_score,
-      pairedSymbol: paired.symbol,
-      pairedStrike: paired.strike,
-      pairedScore: paired.score,
-      pairedWallType: paired.wall_type,
-      combinedOI: level.combined_oi,
-      combinedVol: level.combined_vol,
-      combinedActivity: level.combined_activity,
-    };
-  });
+  return pair.levels
+    .map((level: CrossSymbolLevel): DayTradingLevel | null => {
+      // Dynamically determine which side is primary by checking the symbol field
+      const etfIsPrimary = level.etf.symbol.toUpperCase() === upperSymbol;
+      const indexIsPrimary = level.index.symbol.toUpperCase() === upperSymbol;
+
+      // Skip levels where neither side matches the requested symbol
+      if (!etfIsPrimary && !indexIsPrimary) return null;
+
+      const primary = etfIsPrimary ? level.etf : level.index;
+      const paired = etfIsPrimary ? level.index : level.etf;
+
+      return {
+        strike: primary.strike,
+        type: level.type,
+        strength: level.cross_score,
+        totalOI: primary.total_oi,
+        totalVolume: primary.total_vol,
+        distance: primary.distance_pct,
+        label: `Cross-Symbol ${level.type === 'support' ? 'Support' : 'Resistance'}`,
+        isCrossSymbol: true,
+        crossScore: level.cross_score,
+        pairedSymbol: paired.symbol,
+        pairedStrike: paired.strike,
+        pairedScore: paired.score,
+        pairedWallType: paired.wall_type,
+        combinedOI: level.combined_oi,
+        combinedVol: level.combined_vol,
+        combinedActivity: level.combined_activity,
+      };
+    })
+    .filter((level): level is DayTradingLevel => level !== null);
 }
 
 /**
@@ -146,12 +156,21 @@ function extractCrossSymbolLevels(
  */
 function mergeLevels(
   regular: DayTradingLevel[],
-  cross: DayTradingLevel[]
+  cross: DayTradingLevel[],
+  spot: number
 ): DayTradingLevel[] {
   if (cross.length === 0) return regular;
 
+  // Filter out cross-symbol levels whose strikes are outside a reasonable range
+  const MAX_DISTANCE_PCT = 20;
+  const validCross = cross.filter(l => {
+    if (!l.isCrossSymbol) return true; // regular levels don't need this check
+    const distPct = Math.abs(l.strike - spot) / spot * 100;
+    return distPct <= MAX_DISTANCE_PCT;
+  });
+
   // Combine and sort by absolute distance from spot
-  const merged = [...regular, ...cross].sort(
+  const merged = [...regular, ...validCross].sort(
     (a, b) => Math.abs(a.distance) - Math.abs(b.distance)
   );
 

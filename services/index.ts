@@ -151,13 +151,32 @@ function parseCrossSymbolConfluence(
     combined_activity: l.combined_activity,
   });
 
-  const parsePair = (p: RawCrossSymbolPair): CrossSymbolPair => ({
-    pair: p.pair,
-    etf_symbol: p.etf_symbol,
-    index_symbol: p.index_symbol,
-    ratio: p.ratio,
-    levels: p.levels.map(parseLevel),
-  });
+  const parsePair = (p: RawCrossSymbolPair): CrossSymbolPair => {
+    const levels = p.levels.map(parseLevel);
+
+    // Validate symbol fields: filter out levels where etf/index sides are swapped
+    const validLevels = levels.filter(level => {
+      const etfMatch = level.etf.symbol.toUpperCase() === p.etf_symbol.toUpperCase();
+      const indexMatch = level.index.symbol.toUpperCase() === p.index_symbol.toUpperCase();
+      if (!etfMatch || !indexMatch) {
+        console.warn(
+          `[parseCrossSymbolConfluence] Symbol mismatch in pair ${p.pair}: ` +
+          `expected etf=${p.etf_symbol}/index=${p.index_symbol}, ` +
+          `got etf=${level.etf.symbol}/index=${level.index.symbol}. Skipping level.`
+        );
+        return false;
+      }
+      return true;
+    });
+
+    return {
+      pair: p.pair,
+      etf_symbol: p.etf_symbol,
+      index_symbol: p.index_symbol,
+      ratio: p.ratio,
+      levels: validLevels,
+    };
+  };
 
   const result: Partial<CrossSymbolConfluence> = {};
 
