@@ -285,23 +285,44 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
     Return the last traded price for *symbol*.
 
     Priority order (spot must match the strike price universe of the options):
-      1. ETF derivation – real-time ETF price × dynamic ratio (primary for indices)
-      1b. ETF derivation with hardcoded fallback ratio (if dynamic ratio fails)
-      2. SPOT_INDEX_MAP  – index ticker directly (fallback)
-      3. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
-      4. ticker.history / fast_info – the yfinance ticker object itself
-    """
-    # ── 0. For ETFs (SPY, QQQ), just use the ticker directly ──
-    etf_ticker = SPOT_ETF_MAP.get(symbol)
 
-    # ── 1. Primary: derive from ETF (real-time price × ratio) ──
-    # ETFs trade with real-time prices; index tickers (^SPX, ^NDX) may be
-    # 15-minute delayed during market hours.  We compute the index/ETF ratio
-    # from recent completed historical closes and apply it to the live ETF
-    # price obtained via fast_info (which is real-time even during market
-    # hours).
+    For index symbols (SPX, NDX):
+      1. Index fast_info.last_price directly — most accurate for the index
+      2. ETF derivation – real-time ETF price × dynamic ratio (fallback)
+      2b. ETF derivation with hardcoded fallback ratio (if dynamic ratio fails)
+      3. Index ticker history (fallback)
+      4. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
+      5. ticker.history / fast_info – the yfinance ticker object itself
+
+    For ETF symbols (SPY, QQQ):
+      1. fast_info.last_price via SPOT_INDEX_MAP
+      2. Index ticker history
+      3. ticker.history / fast_info – the yfinance ticker object itself
+    """
+    etf_ticker = SPOT_ETF_MAP.get(symbol)
+    index_ticker = SPOT_INDEX_MAP.get(symbol)
+
+    # ── 1. For index symbols (SPX, NDX): try index fast_info FIRST ──
+    # The index ticker's fast_info.last_price is more accurate than
+    # ETF-derived price (ETF × ratio uses yesterday's closes for the ratio,
+    # which doesn't perfectly match today's intraday ratio).
+    if etf_ticker and index_ticker:
+        try:
+            price = float(yf.Ticker(index_ticker).fast_info.last_price)
+            if price > 0:
+                logger.info(
+                    f"💰 {symbol} spot from index {index_ticker} "
+                    f"(fast_info primary): ${price:.2f}"
+                )
+                return price
+        except Exception:
+            pass
+
+    # ── 2. Fallback: derive from ETF (real-time price × ratio) ──
+    # ETFs trade with real-time prices; use this when index fast_info is
+    # unavailable.  We compute the index/ETF ratio from recent completed
+    # historical closes and apply it to the live ETF price.
     if etf_ticker:
-        index_ticker = SPOT_INDEX_MAP.get(symbol)
         if index_ticker:
             etf_price = _get_realtime_etf_price(etf_ticker)
             if etf_price is not None and etf_price > 0:
@@ -333,8 +354,9 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
                 f"⚠️ Could not get real-time {etf_ticker} price for {symbol} derivation"
             )
 
-    # ── 2. Fallback: index ticker directly ──
-    index_ticker = SPOT_INDEX_MAP.get(symbol)
+    # ── 3. Fallback: index ticker directly (fast_info + history) ──
+    # For ETFs (SPY, QQQ) this is the primary path. For indices (SPX, NDX)
+    # this is a fallback when both index fast_info and ETF derivation fail.
     if index_ticker:
         try:
             price = float(yf.Ticker(index_ticker).fast_info.last_price)
@@ -362,7 +384,7 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
                 f"⚠️ Could not fetch spot from index {index_ticker}: {e}"
             )
 
-    # ── 3. Fallback: futures ticker ──
+    # ── 4. Fallback: futures ticker ──
     futures_ticker = SPOT_FUTURES_MAP.get(symbol)
     if futures_ticker:
         logger.info(
@@ -381,7 +403,7 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
         except Exception as e:
             logger.warning(f"Could not fetch spot from {futures_ticker}: {e}")
 
-    # ── 4. Last resort: the passed-in ticker object ──
+    # ── 5. Last resort: the passed-in ticker object ──
     try:
         hist = ticker.history(period="1d")
         if hist is not None and not hist.empty:
