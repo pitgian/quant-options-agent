@@ -89,6 +89,16 @@ SPOT_INDEX_MAP = {
     "NDX": "^NDX",
 }
 
+# Hardcoded fallback ratios (index/ETF).  Used when the dynamic ratio
+# computation fails (e.g. yfinance history gaps, rate limiting).
+# These are approximate and should be updated periodically.
+#   SPX / SPY ≈ 10   (S&P 500 index / SPDR S&P 500 ETF)
+#   NDX / QQQ ≈ 41   (Nasdaq 100 index / Invesco QQQ ETF)
+HARDCODED_RATIOS: Dict[str, float] = {
+    "SPX": 10.0,
+    "NDX": 41.0,
+}
+
 # Fallback spot price source: only used when both ETF-derivation and index fail.
 # Futures trade at a premium/discount to the spot index, so these are a
 # last resort — the resulting gamma flip and distance metrics will be off.
@@ -182,10 +192,17 @@ def load_previous_oi_lookup(
 
 def _compute_etf_index_ratio(etf_ticker: str, index_ticker: str) -> Optional[float]:
     """
-    Compute the index/ETF price ratio from recent historical data.
+    Compute the index/ETF price ratio from recent **completed** daily closes.
 
     Returns the ratio such that:  index_spot ≈ etf_price × ratio
-    Uses the last common trading day's close for both tickers.
+
+    Key design choices:
+      • Uses only completed (historical) daily closes — the current
+        incomplete trading day is excluded because index data (^SPX, ^NDX)
+        may be 15-minute delayed during market hours while ETF data is
+        real-time, which would produce a stale ratio.
+      • Takes the **median** ratio across all available common dates to
+        filter out any single-day outliers.
     """
     try:
         etf_hist = yf.Ticker(etf_ticker).history(period="5d")
@@ -193,38 +210,74 @@ def _compute_etf_index_ratio(etf_ticker: str, index_ticker: str) -> Optional[flo
         if etf_hist.empty or idx_hist.empty:
             return None
 
-        # Find common dates (handle timezone-aware indices)
+        # Build list of (etf_close, idx_close) tuples for every common date
+        pairs: List[Tuple[float, float]] = []
+
+        # --- Try exact-index intersection first ---
         common = etf_hist.index.intersection(idx_hist.index)
-        if len(common) == 0:
-            # Fallback: normalize to dates only
+        if len(common) >= 1:
+            # Exclude the last (most recent) row — it may be an incomplete
+            # bar during market hours with stale index data.
+            completed = common[:-1] if len(common) > 1 else common
+            for dt in completed:
+                ec = float(etf_hist.loc[dt, "Close"])
+                ic = float(idx_hist.loc[dt, "Close"])
+                if ec > 0:
+                    pairs.append((ec, ic))
+
+        # --- Fallback: normalize to date-only and match ---
+        if not pairs:
             etf_dates = etf_hist.index.normalize()
             idx_dates = idx_hist.index.normalize()
-            common_dates = set(etf_dates) & set(idx_dates)
-            if not common_dates:
-                return None
-            last_date = max(common_dates)
-            etf_close = float(
-                etf_hist.loc[etf_hist.index.normalize() == last_date, "Close"].iloc[-1]
-            )
-            idx_close = float(
-                idx_hist.loc[idx_hist.index.normalize() == last_date, "Close"].iloc[-1]
-            )
-        else:
-            last = common[-1]
-            etf_close = float(etf_hist.loc[last, "Close"])
-            idx_close = float(idx_hist.loc[last, "Close"])
+            common_dates = sorted(set(etf_dates) & set(idx_dates))
+            # Exclude the most recent date (may be incomplete)
+            completed_dates = common_dates[:-1] if len(common_dates) > 1 else common_dates
+            for dt in completed_dates:
+                etf_row = etf_hist.loc[etf_hist.index.normalize() == dt, "Close"]
+                idx_row = idx_hist.loc[idx_hist.index.normalize() == dt, "Close"]
+                if len(etf_row) > 0 and len(idx_row) > 0:
+                    ec = float(etf_row.iloc[-1])
+                    ic = float(idx_row.iloc[-1])
+                    if ec > 0:
+                        pairs.append((ec, ic))
 
-        if etf_close <= 0:
+        if not pairs:
+            logger.warning(
+                f"⚠️ No completed common dates for {index_ticker}/{etf_ticker} ratio"
+            )
             return None
-        ratio = idx_close / etf_close
+
+        # Compute per-day ratios and take the median
+        ratios = sorted([ic / ec for ec, ic in pairs])
+        median_ratio = ratios[len(ratios) // 2]
+
         logger.info(
-            f"📐 Ratio {index_ticker}/{etf_ticker} = {ratio:.4f} "
-            f"(from historical close)"
+            f"📐 Ratio {index_ticker}/{etf_ticker} = {median_ratio:.4f} "
+            f"(median of {len(ratios)} days: "
+            f"{[f'{r:.4f}' for r in ratios]})"
         )
-        return ratio
+        return median_ratio
     except Exception as e:
         logger.warning(f"⚠️ Could not compute {index_ticker}/{etf_ticker} ratio: {e}")
         return None
+
+
+def _get_realtime_etf_price(etf_ticker: str) -> Optional[float]:
+    """Return the most current price for an ETF using fast_info (real-time)."""
+    try:
+        price = float(yf.Ticker(etf_ticker).fast_info.last_price)
+        if price > 0:
+            return price
+    except Exception:
+        pass
+    # Fallback to 1-day history
+    try:
+        hist = yf.Ticker(etf_ticker).history(period="1d")
+        if hist is not None and not hist.empty:
+            return float(hist["Close"].iloc[-1])
+    except Exception:
+        pass
+    return None
 
 
 def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
@@ -233,6 +286,7 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
 
     Priority order (spot must match the strike price universe of the options):
       1. ETF derivation – real-time ETF price × dynamic ratio (primary for indices)
+      1b. ETF derivation with hardcoded fallback ratio (if dynamic ratio fails)
       2. SPOT_INDEX_MAP  – index ticker directly (fallback)
       3. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
       4. ticker.history / fast_info – the yfinance ticker object itself
@@ -243,55 +297,70 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
     # ── 1. Primary: derive from ETF (real-time price × ratio) ──
     # ETFs trade with real-time prices; index tickers (^SPX, ^NDX) may be
     # 15-minute delayed during market hours.  We compute the index/ETF ratio
-    # from recent historical closes and apply it to the live ETF price.
+    # from recent completed historical closes and apply it to the live ETF
+    # price obtained via fast_info (which is real-time even during market
+    # hours).
     if etf_ticker:
         index_ticker = SPOT_INDEX_MAP.get(symbol)
         if index_ticker:
-            try:
+            etf_price = _get_realtime_etf_price(etf_ticker)
+            if etf_price is not None and etf_price > 0:
+                # Try dynamic ratio first
                 ratio = _compute_etf_index_ratio(etf_ticker, index_ticker)
-                if ratio is not None:
-                    etf = yf.Ticker(etf_ticker)
-                    etf_hist = etf.history(period="1d")
-                    if etf_hist is not None and not etf_hist.empty:
-                        etf_price = float(etf_hist["Close"].iloc[-1])
-                        spot = etf_price * ratio
-                        logger.info(
-                            f"💰 {symbol} spot from ETF {etf_ticker} "
-                            f"(${etf_price:.2f}) × {ratio:.4f} = ${spot:.2f}"
+                ratio_source = "dynamic"
+
+                # Fallback to hardcoded ratio if dynamic fails
+                if ratio is None:
+                    ratio = HARDCODED_RATIOS.get(symbol)
+                    ratio_source = "hardcoded"
+                    if ratio is not None:
+                        logger.warning(
+                            f"⚠️ Dynamic ratio failed for {symbol}, "
+                            f"using hardcoded ratio {ratio:.1f}"
                         )
-                        return spot
-            except Exception as e:
-                logger.warning(
-                    f"⚠️ Could not derive {symbol} spot from ETF {etf_ticker}: {e}"
-                )
+
+                if ratio is not None:
+                    spot = etf_price * ratio
+                    logger.info(
+                        f"💰 {symbol} spot from ETF {etf_ticker} "
+                        f"(${etf_price:.2f}) × {ratio:.4f} "
+                        f"({ratio_source}) = ${spot:.2f}"
+                    )
+                    return spot
+
+            # If we couldn't get ETF price at all, try index directly
+            logger.warning(
+                f"⚠️ Could not get real-time {etf_ticker} price for {symbol} derivation"
+            )
 
     # ── 2. Fallback: index ticker directly ──
     index_ticker = SPOT_INDEX_MAP.get(symbol)
     if index_ticker:
+        try:
+            price = float(yf.Ticker(index_ticker).fast_info.last_price)
+            if price > 0:
+                logger.info(
+                    f"💰 {symbol} spot from index {index_ticker} "
+                    f"(fast_info fallback): ${price:.2f}"
+                )
+                return price
+        except Exception:
+            pass
+
         try:
             idx = yf.Ticker(index_ticker)
             hist = idx.history(period="1d")
             if hist is not None and not hist.empty:
                 price = float(hist["Close"].iloc[-1])
                 logger.info(
-                    f"💰 {symbol} spot from index {index_ticker} (fallback): ${price:.2f}"
+                    f"💰 {symbol} spot from index {index_ticker} "
+                    f"(history fallback): ${price:.2f}"
                 )
                 return price
         except Exception as e:
             logger.warning(
                 f"⚠️ Could not fetch spot from index {index_ticker}: {e}"
             )
-
-        # Try fast_info on the index ticker as well
-        try:
-            price = float(yf.Ticker(index_ticker).fast_info.last_price)
-            if price > 0:
-                logger.info(
-                    f"💰 {symbol} spot from index {index_ticker} (fast_info): ${price:.2f}"
-                )
-                return price
-        except Exception:
-            pass
 
     # ── 3. Fallback: futures ticker ──
     futures_ticker = SPOT_FUTURES_MAP.get(symbol)
