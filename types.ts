@@ -44,6 +44,17 @@ export interface DayTradingLevel {
   totalVolume: number;
   distance: number;        // % from spot
   label: string;           // e.g. "Put Wall", "Call Wall"
+
+  // Cross-symbol confluence fields (present when isCrossSymbol is true)
+  isCrossSymbol?: boolean;
+  crossScore?: number;          // cross-symbol confluence score (0-100)
+  pairedSymbol?: string;        // the other symbol in the pair (e.g. "SPX" when viewing SPY)
+  pairedStrike?: number;        // the strike on the paired symbol
+  pairedScore?: number;         // the score on the paired symbol side
+  pairedWallType?: string;      // wall type on the paired side (e.g. "put")
+  combinedOI?: number;          // combined OI across both symbols
+  combinedVol?: number;         // combined volume across both symbols
+  combinedActivity?: number;    // combined activity metric
 }
 
 /**
@@ -59,6 +70,8 @@ export interface DayTradingData {
   gexStrikeData: GexStrikeData[]; // per-strike GEX for chart rendering
   /** @deprecated Use timestamp instead. Kept for backward compat. */
   lastUpdated?: string;
+  /** Cross-symbol confluence data (pre-computed by Python backend) */
+  crossSymbolConfluence?: CrossSymbolConfluence;
 }
 
 /**
@@ -79,6 +92,47 @@ export interface GexStrikeData {
  * Expiry filter for client-side filtering.
  */
 export type ExpiryFilter = '0dte' | '1-7dte' | '8-30dte' | '30+dte' | 'all';
+
+// ============================================================================
+// CROSS-SYMBOL CONFLUENCE TYPES
+// ============================================================================
+
+/** Cross-symbol confluence level from one side (ETF or Index) */
+export interface CrossSymbolSide {
+  symbol: string;
+  strike: number;
+  distance_pct: number;
+  total_oi: number;
+  total_vol: number;
+  score: number;
+  wall_type: string;
+}
+
+/** A matched cross-symbol confluence level */
+export interface CrossSymbolLevel {
+  type: 'support' | 'resistance';
+  cross_score: number;
+  etf: CrossSymbolSide;
+  index: CrossSymbolSide;
+  combined_oi: number;
+  combined_vol: number;
+  combined_activity: number;
+}
+
+/** Data for one pair (e.g., SPY_SPX) */
+export interface CrossSymbolPair {
+  pair: string;
+  etf_symbol: string;
+  index_symbol: string;
+  ratio: number;
+  levels: CrossSymbolLevel[];
+}
+
+/** All cross-symbol confluence data */
+export interface CrossSymbolConfluence {
+  SPY_SPX: CrossSymbolPair;
+  QQQ_NDX: CrossSymbolPair;
+}
 
 // ============================================================================
 // DEPRECATED TYPES — kept for UI component backward compatibility

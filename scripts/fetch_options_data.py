@@ -57,6 +57,18 @@ CONFLUENCE_INTEREST_WEIGHT = 0.5  # Weight for total interest in confluence scor
 CONFLUENCE_RATIO_WEIGHT = 0.3  # Weight for balance ratio in confluence score
 CONFLUENCE_DISTANCE_WEIGHT = 0.2  # Weight for proximity to spot in confluence score
 
+# Cross-symbol confluence settings
+CROSS_SYMBOL_TOLERANCE_PCT = 0.3    # % tolerance for matching levels
+CROSS_SYMBOL_MIN_ACTIVITY = 100     # minimum combined activity to qualify
+CROSS_SYMBOL_MAX_LEVELS = 5         # max cross-symbol levels per pair
+CROSS_SYMBOL_MIN_SCORE = 15.0       # Minimum individual wall score to qualify
+CROSS_SYMBOL_MIN_BALANCE = 0.20     # Minimum balance ratio between ETF/Index
+CROSS_SYMBOL_MIN_COMBINED_OI = 1000 # Minimum combined OI
+CROSS_SYMBOL_INTEREST_WEIGHT = 0.40 # Weight for combined interest
+CROSS_SYMBOL_BALANCE_WEIGHT = 0.20  # Weight for cross balance
+CROSS_SYMBOL_PROXIMITY_WEIGHT = 0.15# Weight for proximity to spot
+CROSS_SYMBOL_STRENGTH_WEIGHT = 0.25 # Weight for individual strength
+
 # Symbols processed when --symbol ALL is used
 ALL_SYMBOLS = ["SPY", "QQQ", "SPX", "NDX"]
 
@@ -1116,6 +1128,356 @@ def resolve_symbols(symbol_arg: str) -> List[str]:
     return [symbol_arg.upper()]
 
 
+# ---------------------------------------------------------------------------
+# Cross-symbol confluence
+# ---------------------------------------------------------------------------
+
+def _collect_walls_for_cross(
+    walls_data: Dict[str, Any], symbol: str
+) -> List[Dict[str, Any]]:
+    """
+    Collect all walls (put, call, confluence) into a flat list for
+    cross-symbol matching.  Each entry carries both the original wall_type
+    and an *effective_type* used for contradiction checking (confluence
+    levels resolve to their dominant side).
+    """
+    result: List[Dict[str, Any]] = []
+
+    for wall in walls_data.get("put_walls", []):
+        result.append({
+            "symbol": symbol,
+            "strike": wall["strike"],
+            "distance_pct": wall["distance_pct"],
+            "total_oi": wall["total_oi"],
+            "total_vol": wall["total_vol"],
+            "score": wall["score"],
+            "wall_type": "put",
+            "effective_type": "put",
+        })
+
+    for wall in walls_data.get("call_walls", []):
+        result.append({
+            "symbol": symbol,
+            "strike": wall["strike"],
+            "distance_pct": wall["distance_pct"],
+            "total_oi": wall["total_oi"],
+            "total_vol": wall["total_vol"],
+            "score": wall["score"],
+            "wall_type": "call",
+            "effective_type": "call",
+        })
+
+    for wall in walls_data.get("confluence_levels", []):
+        put_oi = wall.get("put_oi", 0)
+        call_oi = wall.get("call_oi", 0)
+        dominant = "put" if put_oi >= call_oi else "call"
+        result.append({
+            "symbol": symbol,
+            "strike": wall["strike"],
+            "distance_pct": wall["distance_pct"],
+            "total_oi": wall.get("total_oi", 0),
+            "total_vol": wall.get("total_vol", 0),
+            "score": wall["score"],
+            "wall_type": "confluence",
+            "effective_type": dominant,
+        })
+
+    return result
+
+
+def _is_contradictory(etf_wall: Dict[str, Any], idx_wall: Dict[str, Any]) -> bool:
+    """Return True if the two walls give contradictory signals (put vs call)."""
+    return {etf_wall["effective_type"], idx_wall["effective_type"]} == {"put", "call"}
+
+
+def _determine_cross_type(
+    etf_wall: Dict[str, Any], idx_wall: Dict[str, Any]
+) -> str:
+    """
+    Determine the cross-symbol level type.
+    Both put  → 'support',  both call → 'resistance'.
+    Contradictory pairs should already have been filtered out.
+    """
+    etf_eff = etf_wall["effective_type"]
+    idx_eff = idx_wall["effective_type"]
+    if etf_eff == "put" or idx_eff == "put":
+        return "support"
+    return "resistance"
+
+
+def _normalize_cross_values(values: List[float]) -> List[float]:
+    """Min-max normalize to [0, 1].  Returns 1.0 for all-equal non-zero values."""
+    if not values:
+        return []
+    mn, mx = min(values), max(values)
+    if mx == mn:
+        return [1.0 if mx > 0 else 0.0] * len(values)
+    return [(v - mn) / (mx - mn) for v in values]
+
+
+def _deduplicate_cross_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Deduplicate cross-symbol matches.
+
+    If multiple ETF levels match the same Index level (or vice versa),
+    keep only the pair with the highest cross_score.  Uses a greedy
+    approach: sort by score descending, then skip any match whose ETF
+    or Index strike has already been claimed.
+    """
+    sorted_matches = sorted(matches, key=lambda x: x["cross_score"], reverse=True)
+    used_etf_strikes: set = set()
+    used_idx_strikes: set = set()
+    result: List[Dict[str, Any]] = []
+
+    for m in sorted_matches:
+        etf_key = m["etf"]["strike"]
+        idx_key = m["idx"]["strike"]
+        if etf_key in used_etf_strikes or idx_key in used_idx_strikes:
+            continue
+        used_etf_strikes.add(etf_key)
+        used_idx_strikes.add(idx_key)
+        result.append(m)
+
+    return result
+
+
+def calculate_cross_symbol_confluence(
+    all_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Find cross-symbol confluence levels for each ETF/Index pair.
+
+    For each pair (SPY↔SPX, QQQ↔NDX):
+      1. Extract walls from both symbols
+      2. Normalize to percentage-from-spot (already computed as distance_pct)
+      3. Match walls within tolerance
+      4. Score and rank matches
+      5. Return top N cross-symbol levels
+
+    Args:
+        all_data: Dict mapping symbol name to its data (must contain
+                  ``"walls"`` and ``"spot"`` keys for each symbol).
+
+    Returns:
+        Dict keyed by pair name (``"SPY_SPX"``, ``"QQQ_NDX"``) containing
+        matched levels and metadata.
+    """
+    pairs = [("SPY", "SPX"), ("QQQ", "NDX")]
+    result: Dict[str, Any] = {}
+
+    for etf_sym, idx_sym in pairs:
+        etf_data = all_data.get(etf_sym)
+        idx_data = all_data.get(idx_sym)
+
+        if not etf_data or not idx_data:
+            logger.warning(
+                f"⚠️ Cross-symbol: skipping {etf_sym}/{idx_sym} — "
+                f"missing data (ETF: {'✓' if etf_data else '✗'}, "
+                f"Index: {'✓' if idx_data else '✗'})"
+            )
+            continue
+
+        etf_walls_data = etf_data.get("walls", {})
+        idx_walls_data = idx_data.get("walls", {})
+        etf_spot = etf_data.get("spot", 0)
+        idx_spot = idx_data.get("spot", 0)
+
+        if etf_spot <= 0 or idx_spot <= 0:
+            logger.warning(
+                f"⚠️ Cross-symbol: skipping {etf_sym}/{idx_sym} — "
+                f"invalid spot prices (ETF: {etf_spot}, Index: {idx_spot})"
+            )
+            continue
+
+        # Collect all walls into flat lists
+        etf_all = _collect_walls_for_cross(etf_walls_data, etf_sym)
+        idx_all = _collect_walls_for_cross(idx_walls_data, idx_sym)
+
+        if not etf_all or not idx_all:
+            logger.info(
+                f"ℹ️ Cross-symbol: no walls for {etf_sym}/{idx_sym} "
+                f"(ETF: {len(etf_all)}, Index: {len(idx_all)})"
+            )
+            pair_key = f"{etf_sym}_{idx_sym}"
+            result[pair_key] = {
+                "pair": pair_key,
+                "etf_symbol": etf_sym,
+                "index_symbol": idx_sym,
+                "ratio": round(idx_spot / etf_spot, 4),
+                "levels": [],
+            }
+            continue
+
+        # ── Find all potential matches within tolerance ──
+        matches: List[Dict[str, Any]] = []
+
+        for ew in etf_all:
+            for iw in idx_all:
+                # Skip contradictory types (put vs call)
+                if _is_contradictory(ew, iw):
+                    continue
+
+                # Check percentage-distance tolerance
+                dist_diff = abs(ew["distance_pct"] - iw["distance_pct"])
+                if dist_diff > CROSS_SYMBOL_TOLERANCE_PCT:
+                    continue
+
+                # Compute activity for each side
+                etf_activity = (
+                    ew["total_oi"] * SCORE_OI_WEIGHT
+                    + ew["total_vol"] * SCORE_VOL_WEIGHT
+                )
+                idx_activity = (
+                    iw["total_oi"] * SCORE_OI_WEIGHT
+                    + iw["total_vol"] * SCORE_VOL_WEIGHT
+                )
+                combined_activity = etf_activity + idx_activity
+
+                # Check minimum combined activity
+                if combined_activity < CROSS_SYMBOL_MIN_ACTIVITY:
+                    continue
+
+                # Check minimum individual scores
+                if ew["score"] < CROSS_SYMBOL_MIN_SCORE or iw["score"] < CROSS_SYMBOL_MIN_SCORE:
+                    continue
+
+                # Determine cross-symbol type
+                cross_type = _determine_cross_type(ew, iw)
+
+                matches.append({
+                    "etf": ew,
+                    "idx": iw,
+                    "etf_activity": etf_activity,
+                    "idx_activity": idx_activity,
+                    "combined_activity": combined_activity,
+                    "cross_type": cross_type,
+                    "avg_distance_pct": (
+                        abs(ew["distance_pct"]) + abs(iw["distance_pct"])
+                    ) / 2,
+                    "match_distance_pct": dist_diff,
+                })
+
+        if not matches:
+            logger.info(
+                f"ℹ️ Cross-symbol: no matching levels for {etf_sym}/{idx_sym}"
+            )
+            pair_key = f"{etf_sym}_{idx_sym}"
+            result[pair_key] = {
+                "pair": pair_key,
+                "etf_symbol": etf_sym,
+                "index_symbol": idx_sym,
+                "ratio": round(idx_spot / etf_spot, 4),
+                "levels": [],
+            }
+            continue
+
+        # ── Normalize activities and scores across all matches in this pair ──
+        etf_activities = [m["etf_activity"] for m in matches]
+        idx_activities = [m["idx_activity"] for m in matches]
+        etf_scores = [m["etf"]["score"] for m in matches]
+        idx_scores = [m["idx"]["score"] for m in matches]
+
+        norm_etf_act = _normalize_cross_values(etf_activities)
+        norm_idx_act = _normalize_cross_values(idx_activities)
+        norm_etf_scores = _normalize_cross_values(etf_scores)
+        norm_idx_scores = _normalize_cross_values(idx_scores)
+
+        # ── Compute cross-symbol scores ──
+        for i, m in enumerate(matches):
+            nea = norm_etf_act[i]   # normalized ETF activity
+            nia = norm_idx_act[i]   # normalized Index activity
+            nes = norm_etf_scores[i]
+            nis = norm_idx_scores[i]
+
+            # Combined Interest: geometric mean of normalized activities
+            combined_interest = (nea * nia) ** 0.5 if nea > 0 and nia > 0 else 0.0
+
+            # Cross Balance: ratio of weaker to stronger side
+            max_act = max(nea, nia)
+            cross_balance = min(nea, nia) / max_act if max_act > 0 else 0.0
+
+            # Proximity: inverse distance from spot
+            proximity = 1.0 / (1.0 + m["avg_distance_pct"] / 2.0)
+
+            # Individual Strength: weakest link (min of normalized scores)
+            individual_strength = min(nes, nis)
+
+            # Weighted final score (scaled to 0-100)
+            raw_score = (
+                CROSS_SYMBOL_INTEREST_WEIGHT * combined_interest
+                + CROSS_SYMBOL_BALANCE_WEIGHT * cross_balance
+                + CROSS_SYMBOL_PROXIMITY_WEIGHT * proximity
+                + CROSS_SYMBOL_STRENGTH_WEIGHT * individual_strength
+            )
+
+            m["cross_score"] = round(raw_score * 100, 1)
+            m["cross_balance"] = cross_balance
+
+        # ── Filter by minimum balance ratio ──
+        matches = [m for m in matches if m["cross_balance"] >= CROSS_SYMBOL_MIN_BALANCE]
+
+        # ── Filter by minimum combined OI ──
+        matches = [
+            m for m in matches
+            if m["etf"]["total_oi"] + m["idx"]["total_oi"] >= CROSS_SYMBOL_MIN_COMBINED_OI
+        ]
+
+        # ── Deduplicate: keep best match per unique ETF/Index strike ──
+        matches = _deduplicate_cross_matches(matches)
+
+        # Sort by cross_score descending
+        matches.sort(key=lambda x: x["cross_score"], reverse=True)
+
+        # Cap at max levels per pair
+        matches = matches[:CROSS_SYMBOL_MAX_LEVELS]
+
+        # ── Build output levels ──
+        levels: List[Dict[str, Any]] = []
+        for m in matches:
+            levels.append({
+                "type": m["cross_type"],
+                "cross_score": m["cross_score"],
+                "etf": {
+                    "symbol": m["etf"]["symbol"],
+                    "strike": m["etf"]["strike"],
+                    "distance_pct": m["etf"]["distance_pct"],
+                    "total_oi": m["etf"]["total_oi"],
+                    "total_vol": m["etf"]["total_vol"],
+                    "score": m["etf"]["score"],
+                    "wall_type": m["etf"]["wall_type"],
+                },
+                "index": {
+                    "symbol": m["idx"]["symbol"],
+                    "strike": m["idx"]["strike"],
+                    "distance_pct": m["idx"]["distance_pct"],
+                    "total_oi": m["idx"]["total_oi"],
+                    "total_vol": m["idx"]["total_vol"],
+                    "score": m["idx"]["score"],
+                    "wall_type": m["idx"]["wall_type"],
+                },
+                "combined_oi": m["etf"]["total_oi"] + m["idx"]["total_oi"],
+                "combined_vol": m["etf"]["total_vol"] + m["idx"]["total_vol"],
+                "combined_activity": round(m["combined_activity"], 1),
+            })
+
+        pair_key = f"{etf_sym}_{idx_sym}"
+        ratio = round(idx_spot / etf_spot, 4)
+        result[pair_key] = {
+            "pair": pair_key,
+            "etf_symbol": etf_sym,
+            "index_symbol": idx_sym,
+            "ratio": ratio,
+            "levels": levels,
+        }
+
+        logger.info(
+            f"🔗 Cross-symbol {pair_key}: {len(levels)} confluence levels found "
+            f"(ratio: {ratio:.2f})"
+        )
+
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Options Wall Analyzer – fetch & rank Put/Call walls (multi-symbol)"
@@ -1186,12 +1548,16 @@ def main() -> None:
             f"(continuing with {len(symbols_data)} successful)"
         )
 
+    # Calculate cross-symbol confluence levels (SPY↔SPX, QQQ↔NDX)
+    cross_symbol_confluence = calculate_cross_symbol_confluence(symbols_data)
+
     # Assemble top-level output (matches RawJson interface in vercelDataService.ts)
     now_iso = datetime.now(timezone.utc).isoformat()
     output = {
         "version": DATA_VERSION,
         "generated": now_iso,
         "symbols": symbols_data,
+        "cross_symbol_confluence": cross_symbol_confluence,
     }
 
     # Ensure output directory exists
@@ -1214,11 +1580,16 @@ def main() -> None:
         len(symbols_data[s].get("walls", {}).get("confluence_levels", []))
         for s in symbols_data
     )
+    total_cross = sum(
+        len(cross_symbol_confluence.get(pair, {}).get("levels", []))
+        for pair in cross_symbol_confluence
+    )
     logger.info(f"💾 Data saved to {output_path}")
     logger.info(
         f"📊 Summary: {len(symbols_data)} symbols, "
         f"{total_put} total put walls, {total_call} total call walls, "
-        f"{total_confluence} total confluence levels"
+        f"{total_confluence} total confluence levels, "
+        f"{total_cross} cross-symbol confluence levels"
     )
 
 

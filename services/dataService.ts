@@ -20,7 +20,7 @@ import {
 // LOCAL STORAGE CACHE
 // ============================================================================
 
-const CACHE_VERSION = '5.0';
+const CACHE_VERSION = '6.0';
 const CACHE_KEY = `options_data_cache_v${CACHE_VERSION}`;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 

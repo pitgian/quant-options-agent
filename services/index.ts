@@ -7,11 +7,11 @@
  * @module services/index
  */
 
-import { DayTradingData, ExpiryFilter } from '../types';
+import { DayTradingData, ExpiryFilter, CrossSymbolConfluence, CrossSymbolPair, CrossSymbolLevel, CrossSymbolSide } from '../types';
 
 // Service imports
 import { fetchRawData, getAvailableSymbols, isDataFresh, getDataAgeMinutes, getLastUpdateTime, clearFetchCache } from './fetchService';
-import { RawExpiry } from './fetchService';
+import { RawExpiry, RawCrossSymbolPair, RawCrossSymbolLevel, RawCrossSymbolSide } from './fetchService';
 import { computeGEXPerStrike, computeGexRegime, computeGexStrikeData } from './gexService';
 import { computeWalls } from './wallService';
 import { buildDayTradingData } from './keyLevelService';
@@ -102,7 +102,10 @@ export async function fetchOptionsData(
   const gexRegime = computeGexRegime(gexStrikeMap, symbolData.spot);
   const gexStrikeData = computeGexStrikeData(gexStrikeMap);
 
-  // Step 4: Build DayTradingData
+  // Step 4: Parse cross-symbol confluence data
+  const crossSymbolConfluence = parseCrossSymbolConfluence(raw.cross_symbol_confluence);
+
+  // Step 5: Build DayTradingData
   return buildDayTradingData(
     upperSymbol,
     symbolData.spot,
@@ -110,8 +113,61 @@ export async function fetchOptionsData(
     putWalls,
     callWalls,
     gexRegime,
-    gexStrikeData
+    gexStrikeData,
+    crossSymbolConfluence
   );
+}
+
+// ============================================================================
+// CROSS-SYMBOL CONFLUENCE PARSING
+// ============================================================================
+
+/**
+ * Transforms raw cross-symbol confluence JSON into typed CrossSymbolConfluence.
+ * Returns undefined if the data is missing or incomplete.
+ */
+function parseCrossSymbolConfluence(
+  raw: Record<string, RawCrossSymbolPair> | undefined
+): CrossSymbolConfluence | undefined {
+  if (!raw) return undefined;
+
+  const parseSide = (s: RawCrossSymbolSide): CrossSymbolSide => ({
+    symbol: s.symbol,
+    strike: s.strike,
+    distance_pct: s.distance_pct,
+    total_oi: s.total_oi,
+    total_vol: s.total_vol,
+    score: s.score,
+    wall_type: s.wall_type,
+  });
+
+  const parseLevel = (l: RawCrossSymbolLevel): CrossSymbolLevel => ({
+    type: l.type as 'support' | 'resistance',
+    cross_score: l.cross_score,
+    etf: parseSide(l.etf),
+    index: parseSide(l.index),
+    combined_oi: l.combined_oi,
+    combined_vol: l.combined_vol,
+    combined_activity: l.combined_activity,
+  });
+
+  const parsePair = (p: RawCrossSymbolPair): CrossSymbolPair => ({
+    pair: p.pair,
+    etf_symbol: p.etf_symbol,
+    index_symbol: p.index_symbol,
+    ratio: p.ratio,
+    levels: p.levels.map(parseLevel),
+  });
+
+  const result: Partial<CrossSymbolConfluence> = {};
+
+  if (raw.SPY_SPX) result.SPY_SPX = parsePair(raw.SPY_SPX);
+  if (raw.QQQ_NDX) result.QQQ_NDX = parsePair(raw.QQQ_NDX);
+
+  // Only return if at least one pair exists
+  if (!result.SPY_SPX && !result.QQQ_NDX) return undefined;
+
+  return result as CrossSymbolConfluence;
 }
 
 // ============================================================================

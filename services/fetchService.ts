@@ -26,6 +26,7 @@ export interface RawJson {
   version: string;
   generated: string;
   symbols: Record<string, RawSymbolData>;
+  cross_symbol_confluence?: Record<string, RawCrossSymbolPair>;
 }
 
 export interface RawSymbolData {
@@ -84,6 +85,38 @@ export interface RawExpirationDetail {
   oi: number;
   volume: number;
   weight: number;
+}
+
+// ============================================================================
+// CROSS-SYMBOL RAW TYPES
+// ============================================================================
+
+export interface RawCrossSymbolSide {
+  symbol: string;
+  strike: number;
+  distance_pct: number;
+  total_oi: number;
+  total_vol: number;
+  score: number;
+  wall_type: string;
+}
+
+export interface RawCrossSymbolLevel {
+  type: string;  // 'support' | 'resistance'
+  cross_score: number;
+  etf: RawCrossSymbolSide;
+  index: RawCrossSymbolSide;
+  combined_oi: number;
+  combined_vol: number;
+  combined_activity: number;
+}
+
+export interface RawCrossSymbolPair {
+  pair: string;
+  etf_symbol: string;
+  index_symbol: string;
+  ratio: number;
+  levels: RawCrossSymbolLevel[];
 }
 
 /** Internal cache entry */

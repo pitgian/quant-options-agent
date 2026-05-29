@@ -46,61 +46,105 @@ const StrengthBar: React.FC<{ value: number; color: string }> = ({ value, color 
   </div>
 );
 
-/** Single level row */
+/** Single level row — renders regular and cross-symbol levels */
 const LevelRow: React.FC<{
   level: DayTradingLevel;
   isHovered: boolean;
   onHover: (strike: number | null) => void;
 }> = ({ level, isHovered, onHover }) => {
   const isResistance = level.type === 'resistance';
-  const color = isResistance ? '#f87171' : '#4ade80';   // red-400 / green-400
-  const dimColor = isResistance ? '#991b1b' : '#166534'; // red-800 / green-800
+  const isCross = !!level.isCrossSymbol;
+
+  // Cross-symbol levels use amber/gold accent; regular levels use red/green
+  const color = isCross ? '#f59e0b' : (isResistance ? '#f87171' : '#4ade80');
+
+  // For cross-symbol: prefer combined metrics, fall back to regular
+  const displayOI = isCross && level.combinedOI != null ? level.combinedOI : level.totalOI;
+  const displayVol = isCross && level.combinedVol != null ? level.combinedVol : level.totalVolume;
+  const displayStrength = isCross && level.crossScore != null ? level.crossScore : level.strength;
 
   return (
     <div
       onMouseEnter={() => onHover(level.strike)}
       onMouseLeave={() => onHover(null)}
-      className="flex items-center gap-3 px-4 py-2 rounded-lg transition-all duration-150 cursor-default"
+      className="flex flex-col px-4 py-2 rounded-lg transition-all duration-150 cursor-default"
       style={{
-        backgroundColor: isHovered ? (isResistance ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)') : 'transparent',
+        backgroundColor: isHovered
+          ? (isCross ? 'rgba(245,158,11,0.08)' : (isResistance ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)'))
+          : (isCross ? 'rgba(245,158,11,0.03)' : 'transparent'),
+        borderLeft: isCross ? '2px solid rgba(245,158,11,0.3)' : 'none',
       }}
     >
-      {/* Strike price */}
-      <span className="font-mono text-sm font-semibold w-16" style={{ color }}>
-        ${level.strike.toFixed(0)}
-      </span>
+      <div className="flex items-center gap-3">
+        {/* Strike price */}
+        <span className="font-mono text-sm font-semibold w-16" style={{ color }}>
+          ${level.strike.toFixed(0)}
+        </span>
 
-      {/* Label badge */}
-      <span
-        className="text-[11px] font-medium px-2 py-0.5 rounded"
-        style={{
-          backgroundColor: isResistance ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-          color,
-        }}
-      >
-        {level.label}
-      </span>
+        {/* Label badge — amber ★ Cross-Symbol or regular label */}
+        {isCross ? (
+          <span
+            className="text-[11px] font-medium px-2 py-0.5 rounded"
+            style={{
+              backgroundColor: 'rgba(245,158,11,0.15)',
+              color: '#f59e0b',
+            }}
+          >
+            ★ Cross-Symbol
+          </span>
+        ) : (
+          <span
+            className="text-[11px] font-medium px-2 py-0.5 rounded"
+            style={{
+              backgroundColor: isResistance ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+              color,
+            }}
+          >
+            {level.label}
+          </span>
+        )}
 
-      {/* OI */}
-      <span className="text-xs text-gray-400 w-16">
-        OI: {formatCompact(level.totalOI)}
-      </span>
+        {/* OI — combined for cross-symbol, regular otherwise */}
+        <span className="text-xs text-gray-400 w-16">
+          OI: {formatCompact(displayOI)}
+        </span>
 
-      {/* Volume */}
-      <span className="text-xs text-gray-400 w-16">
-        Vol: {formatCompact(level.totalVolume)}
-      </span>
+        {/* Volume */}
+        <span className="text-xs text-gray-400 w-16">
+          Vol: {formatCompact(displayVol)}
+        </span>
 
-      {/* Distance */}
-      <span
-        className="text-xs font-mono font-medium w-12 text-right"
-        style={{ color }}
-      >
-        {formatDistance(level.distance)}
-      </span>
+        {/* Distance */}
+        <span
+          className="text-xs font-mono font-medium w-12 text-right"
+          style={{ color }}
+        >
+          {formatDistance(level.distance)}
+        </span>
 
-      {/* Strength bar */}
-      <StrengthBar value={level.strength} color={color} />
+        {/* Strength bar — uses crossScore for cross-symbol levels */}
+        <StrengthBar value={displayStrength} color={color} />
+      </div>
+
+      {/* Cross-symbol sub-row: paired symbol info */}
+      {isCross && level.pairedSymbol && level.pairedStrike != null && (
+        <div className="flex items-center gap-1.5 mt-0.5" style={{ marginLeft: '76px' }}>
+          <span className="text-[10px] text-amber-400/60">↳</span>
+          <span className="text-[10px] text-gray-500">
+            {level.pairedSymbol}: {level.pairedStrike.toLocaleString()}
+            {level.pairedWallType && (
+              <span className="ml-1 text-amber-400/50">
+                {level.pairedWallType === 'put' ? 'Put Wall' : level.pairedWallType === 'call' ? 'Call Wall' : level.pairedWallType}
+              </span>
+            )}
+          </span>
+          {level.crossScore != null && (
+            <span className="text-[10px] text-amber-400/50 ml-1">
+              Cross: {level.crossScore}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -179,8 +223,17 @@ export function DayTradingView() {
     return [...data.support].sort((a, b) => b.strike - a.strike);
   }, [data]);
 
+  // ---- Cross-symbol detection ----
+  const hasCrossSymbolLevels = useMemo(() => {
+    if (!data) return false;
+    return [...data.resistance, ...data.support].some(l => l.isCrossSymbol);
+  }, [data]);
+
   // ---- Update flash animation state ----
   const [flashVisible, setFlashVisible] = useState(false);
+
+  // ---- Cross-symbol visibility toggle ----
+  const [showCrossSymbol, setShowCrossSymbol] = useState(true);
 
   useEffect(() => {
     if (showUpdatedFlash) {
@@ -234,6 +287,23 @@ export function DayTradingView() {
                 <option key={opt.key} value={opt.key}>{opt.label}</option>
               ))}
             </select>
+
+            {/* Cross-symbol toggle */}
+            {hasCrossSymbolLevels && (
+              <button
+                onClick={() => setShowCrossSymbol(!showCrossSymbol)}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-all duration-150"
+                style={{
+                  backgroundColor: showCrossSymbol ? 'rgba(245,158,11,0.15)' : 'transparent',
+                  color: showCrossSymbol ? '#f59e0b' : '#64748b',
+                  border: showCrossSymbol ? '1px solid rgba(245,158,11,0.3)' : '1px solid transparent',
+                }}
+                title={showCrossSymbol ? 'Hide cross-symbol levels' : 'Show cross-symbol levels'}
+              >
+                <span>★</span>
+                <span>Cross</span>
+              </button>
+            )}
 
             {/* Refresh button */}
             <button
@@ -298,7 +368,9 @@ export function DayTradingView() {
                 <div className="h-px flex-1 bg-red-900/40" />
               </div>
               <div className="flex flex-col gap-0.5">
-                {sortedResistance.map((level) => (
+                {sortedResistance
+                  .filter(level => showCrossSymbol || !level.isCrossSymbol)
+                  .map((level) => (
                   <LevelRow
                     key={`res-${level.strike}`}
                     level={level}
@@ -331,7 +403,9 @@ export function DayTradingView() {
                 <div className="h-px flex-1 bg-green-900/40" />
               </div>
               <div className="flex flex-col gap-0.5">
-                {sortedSupport.map((level) => (
+                {sortedSupport
+                  .filter(level => showCrossSymbol || !level.isCrossSymbol)
+                  .map((level) => (
                   <LevelRow
                     key={`sup-${level.strike}`}
                     level={level}
@@ -344,7 +418,8 @@ export function DayTradingView() {
           )}
 
           {/* ---- Empty state ---- */}
-          {sortedResistance.length === 0 && sortedSupport.length === 0 && (
+          {sortedResistance.filter(l => showCrossSymbol || !l.isCrossSymbol).length === 0 &&
+           sortedSupport.filter(l => showCrossSymbol || !l.isCrossSymbol).length === 0 && (
             <div className="text-center py-12 text-gray-500">
               <p className="text-sm">No key levels found for this expiry filter.</p>
               <p className="text-xs mt-1">Try changing the DTE filter or symbol.</p>
