@@ -61,7 +61,7 @@ const LevelRow: React.FC<{
   // For cross-symbol: prefer combined metrics, fall back to regular
   const displayOI = isCross && level.combinedOI != null ? level.combinedOI : level.totalOI;
   const displayVol = isCross && level.combinedVol != null ? level.combinedVol : level.totalVolume;
-  const displayStrength = isCross && level.crossScore != null ? level.crossScore : level.strength;
+  const displayStrength = level.strength;
 
   return (
     <div
