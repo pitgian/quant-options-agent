@@ -194,6 +194,7 @@ export function useOptionsData(): UseOptionsDataReturn {
   const [showUpdatedFlash, setShowUpdatedFlash] = useState(false);
   const [isBackgroundRefreshing, setIsBackgroundRefreshing] = useState(false);
   const prevTimestampRef = useRef<string | null>(null);
+  const symbolRef = useRef(symbol);
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('0dte');
   const [highlightedStrike, setHighlightedStrike] = useState<number | null>(null);
 
@@ -202,7 +203,12 @@ export function useOptionsData(): UseOptionsDataReturn {
     setSymbolState(newSymbol);
     setExpiryFilter('0dte');
     setHighlightedStrike(null);
+    setData(null);          // Prevent stale data from wrong symbol
+    setError(null);         // Clear any previous error
   }, []);
+
+  // Keep symbolRef in sync for race condition guards
+  useEffect(() => { symbolRef.current = symbol; }, [symbol]);
 
   // ---- Legacy backward compat wrappers ----
   const expirationFilter = expiryFilter;
@@ -218,24 +224,36 @@ export function useOptionsData(): UseOptionsDataReturn {
 
   // ---- Data fetching ----
   const loadData = useCallback(async (forceRefresh = false) => {
+    const currentSymbol = symbol;
     setLoading(true);
     setError(null);
 
-    const result: FetchResult = await fetchOptionsData(symbol, expiryFilter, forceRefresh);
+    try {
+      const result: FetchResult = await fetchOptionsData(currentSymbol, expiryFilter, forceRefresh);
 
-    if (result.success && result.data) {
-      setData(result.data);
-      prevTimestampRef.current = result.data.timestamp ?? null;
-      setLastRefreshed(new Date());
-      setError(null);
-    } else {
-      setError(result.error || 'Unknown error');
+      // GUARD: symbol may have changed during fetch
+      if (currentSymbol !== symbolRef.current) return;
+
+      if (result.success && result.data) {
+        setData(result.data);
+        prevTimestampRef.current = result.data.timestamp ?? null;
+        setLastRefreshed(new Date());
+        setError(null);
+      } else {
+        setError(result.error || 'Unknown error');
+      }
+    } catch (err) {
+      if (currentSymbol !== symbolRef.current) return;
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      if (currentSymbol === symbolRef.current) {
+        setLoading(false);
+      }
     }
 
-    setLoading(false);
-
     // Update time since
-    const ts = await getTimeSinceUpdate(symbol);
+    const ts = await getTimeSinceUpdate(currentSymbol);
+    if (currentSymbol !== symbolRef.current) return;
     setTimeSinceUpdate(ts);
   }, [symbol, expiryFilter]);
 
@@ -245,8 +263,11 @@ export function useOptionsData(): UseOptionsDataReturn {
   // timestamp actually changes, avoiding unnecessary re-renders.
   const silentRefresh = useCallback(async () => {
     setIsBackgroundRefreshing(true);
+    const currentSymbol = symbol;
     try {
-      const result: FetchResult = await fetchOptionsData(symbol, expiryFilter, true);
+      const result: FetchResult = await fetchOptionsData(currentSymbol, expiryFilter, true);
+      // GUARD: Only update if symbol hasn't changed during fetch
+      if (currentSymbol !== symbolRef.current) return;
       if (result.success && result.data) {
         const prevTimestamp = prevTimestampRef.current;
         const newTimestamp = result.data.timestamp ?? null;
@@ -259,7 +280,8 @@ export function useOptionsData(): UseOptionsDataReturn {
           setTimeout(() => setShowUpdatedFlash(false), 3000);
         }
       }
-      const ts = await getTimeSinceUpdate(symbol);
+      const ts = await getTimeSinceUpdate(currentSymbol);
+      if (currentSymbol !== symbolRef.current) return;
       setTimeSinceUpdate(ts);
     } finally {
       setIsBackgroundRefreshing(false);

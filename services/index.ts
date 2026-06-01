@@ -102,8 +102,8 @@ export async function fetchOptionsData(
   const gexRegime = computeGexRegime(gexStrikeMap, symbolData.spot);
   const gexStrikeData = computeGexStrikeData(gexStrikeMap);
 
-  // Step 4: Parse cross-symbol confluence data
-  const crossSymbolConfluence = parseCrossSymbolConfluence(raw.cross_symbol_confluence);
+  // Step 4: Parse cross-symbol confluence data, filtered to relevant pair only
+  const crossSymbolConfluence = parseCrossSymbolConfluence(raw.cross_symbol_confluence, upperSymbol);
 
   // Step 5: Build DayTradingData
   return buildDayTradingData(
@@ -127,7 +127,8 @@ export async function fetchOptionsData(
  * Returns undefined if the data is missing or incomplete.
  */
 function parseCrossSymbolConfluence(
-  raw: Record<string, RawCrossSymbolPair> | undefined
+  raw: Record<string, RawCrossSymbolPair> | undefined,
+  symbol?: string
 ): CrossSymbolConfluence | undefined {
   if (!raw) return undefined;
 
@@ -178,10 +179,17 @@ function parseCrossSymbolConfluence(
     };
   };
 
+  // Determine which pair is relevant for the requested symbol
+  const upperSymbol = symbol?.toUpperCase();
+  const relevantPair = upperSymbol
+    ? (upperSymbol === 'SPY' || upperSymbol === 'SPX' ? 'SPY_SPX' : 'QQQ_NDX')
+    : null;
+
   const result: Partial<CrossSymbolConfluence> = {};
 
-  if (raw.SPY_SPX) result.SPY_SPX = parsePair(raw.SPY_SPX);
-  if (raw.QQQ_NDX) result.QQQ_NDX = parsePair(raw.QQQ_NDX);
+  // Only parse the relevant pair (or both if symbol not specified)
+  if (raw.SPY_SPX && (!relevantPair || relevantPair === 'SPY_SPX')) result.SPY_SPX = parsePair(raw.SPY_SPX);
+  if (raw.QQQ_NDX && (!relevantPair || relevantPair === 'QQQ_NDX')) result.QQQ_NDX = parsePair(raw.QQQ_NDX);
 
   // Only return if at least one pair exists
   if (!result.SPY_SPX && !result.QQQ_NDX) return undefined;

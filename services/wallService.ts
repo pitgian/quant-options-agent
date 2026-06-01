@@ -103,7 +103,14 @@ export function computeWalls(
     oppositeMap: Map<number, StrikeAggregate>,
   ): Wall[] {
     const entries = Array.from(ownMap.entries())
-      .filter(([strike, data]) => filterFn(strike) && (data.oi > 0 || data.vol > 0));
+      .filter(([strike, data]) => {
+        if (!filterFn(strike)) return false;
+        if (data.oi <= 0 && data.vol <= 0) return false;
+        // Strike-range validation: reject strikes outside 30%-300% of spot
+        const ratio = strike / spotPrice;
+        if (ratio < 0.3 || ratio > 3.0) return false;
+        return true;
+      });
 
     if (entries.length === 0) return [];
 

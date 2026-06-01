@@ -32,6 +32,7 @@ export function buildDayTradingData(
   // Convert put walls to support levels (below spot)
   const support: DayTradingLevel[] = putWalls
     .filter(w => w.strike <= spot)
+    .filter(w => w.strike >= spot * 0.3)    // Reject strikes below 30% of spot
     .map(w => ({
       strike: w.strike,
       type: 'support' as const,
@@ -47,6 +48,7 @@ export function buildDayTradingData(
   // Convert call walls to resistance levels (above spot)
   const resistance: DayTradingLevel[] = callWalls
     .filter(w => w.strike >= spot)
+    .filter(w => w.strike <= spot * 3.0)    // Reject strikes above 300% of spot
     .map(w => ({
       strike: w.strike,
       type: 'resistance' as const,
@@ -60,13 +62,14 @@ export function buildDayTradingData(
     .slice(0, 7);
 
   // Merge cross-symbol confluence levels
-  const crossLevels = extractCrossSymbolLevels(symbol, crossSymbolConfluence);
-  const crossSupport = crossLevels.filter(l => l.type === 'support');
-  const crossResistance = crossLevels.filter(l => l.type === 'resistance');
+  const crossLevels = extractCrossSymbolLevels(symbol, crossSymbolConfluence, spot);
+  // Re-classify based on current spot position (not stale Python backend classification)
+  const crossSupport = crossLevels.filter(l => l.strike <= spot);
+  const crossResistance = crossLevels.filter(l => l.strike > spot);
 
   // Insert cross-symbol levels into the appropriate arrays
-  const mergedSupport = mergeLevels(support, crossSupport, spot);
-  const mergedResistance = mergeLevels(resistance, crossResistance, spot);
+  const mergedSupport = mergeLevels(support, crossSupport, spot, 'support');
+  const mergedResistance = mergeLevels(resistance, crossResistance, spot, 'resistance');
 
   return {
     symbol,
@@ -103,7 +106,8 @@ const SYMBOL_PAIR_MAP: Record<string, { pairKey: string; side: 'etf' | 'index' }
  */
 function extractCrossSymbolLevels(
   symbol: string,
-  confluence?: CrossSymbolConfluence
+  confluence: CrossSymbolConfluence | undefined,
+  spot: number
 ): DayTradingLevel[] {
   if (!confluence) return [];
 
@@ -126,6 +130,10 @@ function extractCrossSymbolLevels(
 
       const primary = etfIsPrimary ? level.etf : level.index;
       const paired = etfIsPrimary ? level.index : level.etf;
+
+      // SANITY CHECK: primary strike must be within reasonable range of spot
+      const strikeToSpotRatio = primary.strike / spot;
+      if (strikeToSpotRatio < 0.3 || strikeToSpotRatio > 3.0) return null;
 
       return {
         strike: primary.strike,
@@ -157,7 +165,8 @@ function extractCrossSymbolLevels(
 function mergeLevels(
   regular: DayTradingLevel[],
   cross: DayTradingLevel[],
-  spot: number
+  spot: number,
+  direction: 'support' | 'resistance'
 ): DayTradingLevel[] {
   if (cross.length === 0) return regular;
 
@@ -166,7 +175,11 @@ function mergeLevels(
   const validCross = cross.filter(l => {
     if (!l.isCrossSymbol) return true; // regular levels don't need this check
     const distPct = Math.abs(l.strike - spot) / spot * 100;
-    return distPct <= MAX_DISTANCE_PCT;
+    if (distPct > MAX_DISTANCE_PCT) return false;
+    // DIRECTIONAL CHECK: support must be below spot, resistance above
+    if (direction === 'support' && l.strike > spot) return false;
+    if (direction === 'resistance' && l.strike < spot) return false;
+    return true;
   });
 
   // Combine and sort by absolute distance from spot

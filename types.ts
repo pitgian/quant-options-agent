@@ -130,8 +130,8 @@ export interface CrossSymbolPair {
 
 /** All cross-symbol confluence data */
 export interface CrossSymbolConfluence {
-  SPY_SPX: CrossSymbolPair;
-  QQQ_NDX: CrossSymbolPair;
+  SPY_SPX?: CrossSymbolPair;
+  QQQ_NDX?: CrossSymbolPair;
 }
 
 // ============================================================================
