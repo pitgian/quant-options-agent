@@ -10,6 +10,12 @@
 import { Wall, GexRegime, DayTradingLevel, DayTradingData, GexStrikeData, CrossSymbolConfluence, CrossSymbolLevel } from '../types';
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const DAY_TRADING_MAX_DISTANCE_PCT = 5; // Only show levels within 5% of spot for day trading
+
+// ============================================================================
 // DAY TRADING DATA BUILDER
 // ============================================================================
 
@@ -33,6 +39,7 @@ export function buildDayTradingData(
   const support: DayTradingLevel[] = putWalls
     .filter(w => w.strike <= spot)
     .filter(w => w.strike >= spot * 0.3)    // Reject strikes below 30% of spot
+    .filter(w => w.distance <= DAY_TRADING_MAX_DISTANCE_PCT)
     .map(w => ({
       strike: w.strike,
       type: 'support' as const,
@@ -49,6 +56,7 @@ export function buildDayTradingData(
   const resistance: DayTradingLevel[] = callWalls
     .filter(w => w.strike >= spot)
     .filter(w => w.strike <= spot * 3.0)    // Reject strikes above 300% of spot
+    .filter(w => w.distance <= DAY_TRADING_MAX_DISTANCE_PCT)
     .map(w => ({
       strike: w.strike,
       type: 'resistance' as const,
@@ -171,7 +179,7 @@ function mergeLevels(
   if (cross.length === 0) return regular;
 
   // Filter out cross-symbol levels whose strikes are outside a reasonable range
-  const MAX_DISTANCE_PCT = 20;
+  const MAX_DISTANCE_PCT = 5; // was 20, now consistent with day trading focus
   const validCross = cross.filter(l => {
     if (!l.isCrossSymbol) return true; // regular levels don't need this check
     const distPct = Math.abs(l.strike - spot) / spot * 100;

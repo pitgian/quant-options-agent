@@ -2,10 +2,11 @@
  * Wall Service
  *
  * Computes put/call walls from raw expiration data using simple
- * weighted scoring.
+ * weighted scoring with proximity boost for day trading relevance.
  *
- * Scoring formula: score = weighted_OI × 0.7 + weighted_Vol × 0.3
+ * Scoring formula: score = (weighted_OI × 0.7 + weighted_Vol × 0.3) × proximityBoost
  *   where weights include time decay: timeWeight = 1 / (1 + DTE / 7)
+ *   and proximityBoost decays from 1.0 (at spot) to MIN_PROXIMITY_BOOST at PROXIMITY_BOOST_RANGE%+
  *
  * Returns max 7 walls per side, normalized to 0-100.
  *
@@ -22,6 +23,8 @@ import { estimateGamma } from '../utils/gammaEstimate';
 
 const CONTRACT_SIZE = 100;
 const MAX_WALLS_PER_SIDE = 7;
+const PROXIMITY_BOOST_RANGE = 10; // % distance for proximity boost decay
+const MIN_PROXIMITY_BOOST = 0.3;  // minimum boost factor
 
 // ============================================================================
 // INTERNAL TYPES
@@ -114,9 +117,14 @@ export function computeWalls(
 
     if (entries.length === 0) return [];
 
-    // Score: simple weighted OI + Volume
+    // Score: weighted OI + Volume with proximity boost
     const scored = entries.map(([strike, data]) => {
-      const rawScore = data.oi * 0.7 + data.vol * 0.3;
+      const baseScore = data.oi * 0.7 + data.vol * 0.3;
+      const distancePct = spotPrice > 0
+        ? Math.abs(strike - spotPrice) / spotPrice * 100
+        : 0;
+      const proximityBoost = Math.max(MIN_PROXIMITY_BOOST, 1.0 - (distancePct / PROXIMITY_BOOST_RANGE) * (1.0 - MIN_PROXIMITY_BOOST));
+      const rawScore = baseScore * proximityBoost;
       const crossData = oppositeMap.get(strike);
       const distance = spotPrice > 0
         ? Math.round((Math.abs(strike - spotPrice) / spotPrice) * 10000) / 100
