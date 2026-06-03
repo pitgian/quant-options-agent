@@ -408,18 +408,27 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
 
     Priority order (spot must match the strike price universe of the options):
 
-    1. PRIMARY: Futures (ES=F for SPX/SPY, NQ=F for NDX/QQQ) — trades nearly 24/5
-    2. Twelve Data API (ETF-derived, may be delayed on free tier)
-    3. yfinance fallback chain (index fast_info, ETF derivation, index history, ticker)
+    1. For ETFs (SPY, QQQ): direct real-time ETF price from yfinance (most accurate)
+    2. PRIMARY for indices: Futures (ES=F for SPX, NQ=F for NDX) — trades nearly 24/5
+    3. Twelve Data API (ETF-derived, may be delayed on free tier)
+    4. yfinance fallback chain (index fast_info, ETF derivation, index history, ticker)
 
-    The yfinance fallback chain:
-      - Index fast_info.last_price directly
-      - ETF derivation (real-time ETF price × dynamic ratio)
-      - ETF derivation with hardcoded fallback ratio
-      - Index ticker history
-      - The passed-in ticker object (fast_info + history)
+    ETFs (SPY, QQQ) trade with real-time prices on exchanges, so we prefer the
+    direct price over a futures-derived approximation (which uses hardcoded ratios
+    that drift over time).  Futures remain the primary source for indices (SPX, NDX)
+    because their ^SPX/^NDX tickers may return 15-minute delayed data.
     """
-    # ── 1. PRIMARY: Futures (real-time, trades 24/5) ──
+    # ── 0. For ETFs: prefer direct real-time price (exact, no ratio drift) ──
+    ETF_SYMBOLS = {'SPY', 'QQQ'}
+    if symbol in ETF_SYMBOLS:
+        direct_price = _get_realtime_etf_price(symbol)
+        if direct_price and direct_price > 0:
+            logger.info(
+                f"💰 {symbol} spot from direct ETF price: ${direct_price:.2f}"
+            )
+            return direct_price
+
+    # ── 1. PRIMARY for indices: Futures (real-time, trades 24/5) ──
     futures_price = get_spot_from_futures(symbol)
     if futures_price and futures_price > 0:
         return futures_price
