@@ -295,46 +295,50 @@ def _get_realtime_etf_price(etf_ticker: str) -> Optional[float]:
     return None
 
 
-def get_spot_finnhub(symbol: str) -> Optional[float]:
-    """Get real-time spot price from Finnhub API (primary source).
+# Futures-based spot price configuration.
+# Futures (ES=F, NQ=F) trade nearly 24/5 and closely track their respective
+# indices, making them an excellent primary source for real-time spot prices.
+FUTURES_CONFIG = {
+    'SPX': {'futures_symbol': 'ES=F', 'adjustment_factor': 1.0},    # ES ≈ SPX
+    'SPY': {'futures_symbol': 'ES=F', 'adjustment_factor': 0.1},    # SPY ≈ ES / 10
+    'NDX': {'futures_symbol': 'NQ=F', 'adjustment_factor': 1.0},    # NQ ≈ NDX
+    'QQQ': {'futures_symbol': 'NQ=F', 'adjustment_factor': 1/41},   # QQQ ≈ NQ / 41
+}
 
-    Finnhub provides real-time US stock quotes on the free tier (60 calls/min).
-    For indices (SPX, NDX), derives the price from the corresponding ETF.
 
-    Requires FINNHUB_API_KEY environment variable (GitHub Secrets / Vercel env vars).
+def get_spot_from_futures(symbol: str) -> Optional[float]:
+    """Get spot price from futures (primary source — trades nearly 24/5).
+
+    For each symbol, fetches the corresponding futures price via yfinance
+    and applies an adjustment factor to derive the spot price.
     """
-    api_key = os.environ.get('FINNHUB_API_KEY')
-    if not api_key:
+    config = FUTURES_CONFIG.get(symbol)
+    if not config:
         return None
 
-    # Map indices to their ETF equivalents for real-time data
-    etf_map = {
-        'SPX': 'SPY',
-        'NDX': 'QQQ',
-    }
-
-    fetch_symbol = etf_map.get(symbol, symbol)
-    ratio_map = {
-        'SPX': 10.0,
-        'NDX': 41.0,
-    }
-    ratio = ratio_map.get(symbol, 1.0)
-
     try:
-        url = f"https://finnhub.io/api/v1/quote?symbol={fetch_symbol}&token={api_key}"
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            price = data.get('c')  # current price
-            if price and price > 0:
-                spot = price * ratio
-                logger.info(
-                    f"🔥 Finnhub spot for {symbol} (via {fetch_symbol}): "
-                    f"${spot:.2f} (raw={price:.2f}, ratio={ratio})"
-                )
-                return spot
+        ft = yf.Ticker(config['futures_symbol'])
+        price = None
+        # Try fast_info first
+        try:
+            price = ft.fast_info['last_price']
+        except Exception:
+            pass
+        # Fallback to history
+        if not price or price <= 0:
+            hist = ft.history(period="1d")
+            if not hist.empty:
+                price = hist['Close'].iloc[-1]
+
+        if price and price > 0:
+            spot = price * config['adjustment_factor']
+            logger.info(
+                f"🔥 Futures spot for {symbol} (via {config['futures_symbol']}): "
+                f"${spot:.2f} (raw={price:.2f}, factor={config['adjustment_factor']})"
+            )
+            return spot
     except Exception as e:
-        logger.warning(f"Finnhub error for {symbol}: {e}")
+        logger.warning(f"Futures error for {symbol}: {e}")
 
     return None
 
@@ -404,43 +408,34 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
 
     Priority order (spot must match the strike price universe of the options):
 
-    1. PRIMARY: Finnhub API (real-time US stock quotes, free tier)
-    2. Twelve Data API (may be 15-min delayed on free tier)
-    3. yfinance fallback chain (see below)
+    1. PRIMARY: Futures (ES=F for SPX/SPY, NQ=F for NDX/QQQ) — trades nearly 24/5
+    2. Twelve Data API (ETF-derived, may be delayed on free tier)
+    3. yfinance fallback chain (index fast_info, ETF derivation, index history, ticker)
 
-    FALLBACK — For index symbols (SPX, NDX):
-      1. Index fast_info.last_price directly — most accurate for the index
-      2. ETF derivation – real-time ETF price × dynamic ratio (fallback)
-      2b. ETF derivation with hardcoded fallback ratio (if dynamic ratio fails)
-      3. Index ticker history (fallback)
-      4. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
-      5. ticker.history / fast_info – the yfinance ticker object itself
-
-    FALLBACK — For ETF symbols (SPY, QQQ):
-      1. fast_info.last_price via SPOT_INDEX_MAP
-      2. Index ticker history
-      3. ticker.history / fast_info – the yfinance ticker object itself
+    The yfinance fallback chain:
+      - Index fast_info.last_price directly
+      - ETF derivation (real-time ETF price × dynamic ratio)
+      - ETF derivation with hardcoded fallback ratio
+      - Index ticker history
+      - The passed-in ticker object (fast_info + history)
     """
-    # ── 1. PRIMARY: Finnhub (real-time) ──
-    finnhub_price = get_spot_finnhub(symbol)
-    if finnhub_price and finnhub_price > 0:
-        return finnhub_price
+    # ── 1. PRIMARY: Futures (real-time, trades 24/5) ──
+    futures_price = get_spot_from_futures(symbol)
+    if futures_price and futures_price > 0:
+        return futures_price
 
-    # ── 2. Twelve Data (may be delayed) ──
+    # ── 2. Twelve Data (ETF-derived, may be delayed) ──
     td_price = get_spot_twelve_data(symbol)
     if td_price and td_price > 0:
         return td_price
 
-    # ── FALLBACK: yfinance logic below ──
+    # ── 3. FALLBACK: yfinance logic below ──
     logger.info(f"Falling back to yfinance for {symbol} spot price")
 
     etf_ticker = SPOT_ETF_MAP.get(symbol)
     index_ticker = SPOT_INDEX_MAP.get(symbol)
 
-    # ── 1. For index symbols (SPX, NDX): try index fast_info FIRST ──
-    # The index ticker's fast_info.last_price is more accurate than
-    # ETF-derived price (ETF × ratio uses yesterday's closes for the ratio,
-    # which doesn't perfectly match today's intraday ratio).
+    # ── 3a. For index symbols (SPX, NDX): try index fast_info FIRST ──
     if etf_ticker and index_ticker:
         try:
             price = float(yf.Ticker(index_ticker).fast_info.last_price)
@@ -453,19 +448,14 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
         except Exception:
             pass
 
-    # ── 2. Fallback: derive from ETF (real-time price × ratio) ──
-    # ETFs trade with real-time prices; use this when index fast_info is
-    # unavailable.  We compute the index/ETF ratio from recent completed
-    # historical closes and apply it to the live ETF price.
+    # ── 3b. Derive from ETF (real-time price × ratio) ──
     if etf_ticker:
         if index_ticker:
             etf_price = _get_realtime_etf_price(etf_ticker)
             if etf_price is not None and etf_price > 0:
-                # Try dynamic ratio first
                 ratio = _compute_etf_index_ratio(etf_ticker, index_ticker)
                 ratio_source = "dynamic"
 
-                # Fallback to hardcoded ratio if dynamic fails
                 if ratio is None:
                     ratio = HARDCODED_RATIOS.get(symbol)
                     ratio_source = "hardcoded"
@@ -484,14 +474,11 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
                     )
                     return spot
 
-            # If we couldn't get ETF price at all, try index directly
             logger.warning(
                 f"⚠️ Could not get real-time {etf_ticker} price for {symbol} derivation"
             )
 
-    # ── 3. Fallback: index ticker directly (fast_info + history) ──
-    # For ETFs (SPY, QQQ) this is the primary path. For indices (SPX, NDX)
-    # this is a fallback when both index fast_info and ETF derivation fail.
+    # ── 3c. Index ticker directly (fast_info + history) ──
     if index_ticker:
         try:
             price = float(yf.Ticker(index_ticker).fast_info.last_price)
@@ -519,26 +506,7 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
                 f"⚠️ Could not fetch spot from index {index_ticker}: {e}"
             )
 
-    # ── 4. Fallback: futures ticker ──
-    futures_ticker = SPOT_FUTURES_MAP.get(symbol)
-    if futures_ticker:
-        logger.info(
-            f"⚠️ {symbol} index spot unavailable, trying futures {futures_ticker}..."
-        )
-        try:
-            fut = yf.Ticker(futures_ticker)
-            hist = fut.history(period="1d")
-            if hist is not None and not hist.empty:
-                price = float(hist["Close"].iloc[-1])
-                logger.warning(
-                    f"💰 {symbol} spot from futures {futures_ticker}: ${price:.2f} "
-                    f"(may not match index strike range!)"
-                )
-                return price
-        except Exception as e:
-            logger.warning(f"Could not fetch spot from {futures_ticker}: {e}")
-
-    # ── 5. Last resort: the passed-in ticker object ──
+    # ── 3d. Last resort: the passed-in ticker object ──
     try:
         hist = ticker.history(period="1d")
         if hist is not None and not hist.empty:

@@ -23,7 +23,6 @@ import {
   ExpirationFilterPreset,
 } from '../types';
 import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/dataService';
-import { fetchLiveSpot, getSpotForSymbol } from '../services/spotService';
 
 // ============================================================================
 // LEGACY DATA BRIDGE
@@ -170,9 +169,6 @@ export interface UseOptionsDataReturn {
   setHighlightedStrike: (strike: number | null) => void;
   /** Timestamp of the last successful client-side fetch */
   lastRefreshed: Date | null;
-  /** Live spot price from Finnhub (real-time), null if unavailable */
-  liveSpot: number | null;
-
   // ---- Legacy backward compatibility (deprecated, Phase 3 will remove) ----
   /** @deprecated Use data instead. Legacy OptionsData for backward compat. */
   displayData: OptionsData | null;
@@ -200,8 +196,6 @@ export function useOptionsData(): UseOptionsDataReturn {
   const symbolRef = useRef(symbol);
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('0dte');
   const [highlightedStrike, setHighlightedStrike] = useState<number | null>(null);
-  const [liveSpot, setLiveSpot] = useState<number | null>(null);
-
   // ---- Symbol change handler (also resets filter) ----
   const setSymbol = useCallback((newSymbol: string) => {
     setSymbolState(newSymbol);
@@ -317,36 +311,6 @@ export function useOptionsData(): UseOptionsDataReturn {
     return () => clearTimeout(timeoutId);
   }, [silentRefresh]);
 
-  // Live spot price polling — every 30 seconds during market hours
-  useEffect(() => {
-    if (!data?.symbol) return;
-
-    const isMarketHours = () => {
-      const now = new Date();
-      const utcH = now.getUTCHours();
-      const utcM = now.getUTCMinutes();
-      const minutesSinceMidnight = utcH * 60 + utcM;
-      return minutesSinceMidnight >= 13 * 60 + 30 && minutesSinceMidnight < 20 * 60;
-    };
-
-    const pollSpot = async () => {
-      if (!isMarketHours()) return;
-      try {
-        const spotResponse = await fetchLiveSpot();
-        if (spotResponse && data?.symbol) {
-          const spot = getSpotForSymbol(spotResponse, data.symbol);
-          if (spot && spot > 0) setLiveSpot(spot);
-        }
-      } catch {
-        // Silently fail — keep using cron job spot
-      }
-    };
-
-    pollSpot();
-    const interval = setInterval(pollSpot, 30_000);
-    return () => clearInterval(interval);
-  }, [data?.symbol]);
-
   // ---- Handlers ----
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -371,7 +335,6 @@ export function useOptionsData(): UseOptionsDataReturn {
     highlightedStrike,
     setHighlightedStrike,
     lastRefreshed,
-    liveSpot,
     // Legacy backward compat
     displayData,
     expirationFilter,

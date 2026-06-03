@@ -9,7 +9,6 @@
   "rewrites": [
     { "source": "/api", "destination": "/api/index" },
     { "source": "/api/", "destination": "/api/index" },
-    { "source": "/api/spot", "destination": "/api/spot" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
