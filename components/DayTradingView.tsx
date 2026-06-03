@@ -82,12 +82,16 @@ const LevelRow: React.FC<{
   onHover: (strike: number | null) => void;
   maxOI: number;
   maxVol: number;
-}> = ({ level, isHovered, onHover, maxOI, maxVol }) => {
+  effectiveSpot: number;
+}> = ({ level, isHovered, onHover, maxOI, maxVol, effectiveSpot }) => {
   const isResistance = level.type === 'resistance';
   const isCross = !!level.isCrossSymbol;
 
   // Cross-symbol levels use amber/gold accent; regular levels use red/green
   const color = isCross ? '#f59e0b' : (isResistance ? '#f87171' : '#4ade80');
+
+  // Live distance from effective spot (real-time if available)
+  const liveDistancePct = ((level.strike - effectiveSpot) / effectiveSpot) * 100;
 
   // Always use primary symbol's OI/Vol (same scale as regular levels)
 
@@ -137,7 +141,7 @@ const LevelRow: React.FC<{
           className="text-xs font-mono font-medium w-12 text-right"
           style={{ color }}
         >
-          {formatDistance(isResistance ? level.distance : -level.distance)}
+          {formatDistance(liveDistancePct)}
         </span>
 
         {/* OI/Vol visual bars */}
@@ -221,6 +225,7 @@ export function DayTradingView() {
     highlightedStrike,
     setHighlightedStrike,
     lastRefreshed,
+    liveSpot,
   } = useOptionsData();
 
   // ---- Last updated text ----
@@ -282,6 +287,7 @@ export function DayTradingView() {
   if (!data) return <ErrorState message="No data available" onRetry={handleRefresh} />;
 
   const { spot, gexRegime } = data;
+  const effectiveSpot = liveSpot ?? spot;
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#0d1117' }}>
@@ -379,7 +385,7 @@ export function DayTradingView() {
             <div className="flex items-baseline gap-3 mb-2">
               <h1 className="text-2xl font-bold text-gray-100">{data.symbol}</h1>
               <span className="text-2xl font-mono font-bold text-white">
-                ${spot.toFixed(2)}
+                ${effectiveSpot.toFixed(2)}
               </span>
             </div>
             <RegimeBadge
@@ -411,6 +417,7 @@ export function DayTradingView() {
                     onHover={setHighlightedStrike}
                     maxOI={maxOI}
                     maxVol={maxVol}
+                    effectiveSpot={effectiveSpot}
                   />
                 ))}
               </div>
@@ -422,7 +429,7 @@ export function DayTradingView() {
             <div className="h-px flex-1" style={{ background: 'linear-gradient(to right, transparent, #3b82f6, transparent)' }} />
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-blue-400 tracking-wider uppercase">Spot</span>
-              <span className="text-sm font-mono font-bold text-blue-300">${spot.toFixed(2)}</span>
+              <span className="text-sm font-mono font-bold text-blue-300">${effectiveSpot.toFixed(2)}</span>
             </div>
             <div className="h-px flex-1" style={{ background: 'linear-gradient(to right, #3b82f6, transparent)' }} />
           </div>
@@ -448,6 +455,7 @@ export function DayTradingView() {
                     onHover={setHighlightedStrike}
                     maxOI={maxOI}
                     maxVol={maxVol}
+                    effectiveSpot={effectiveSpot}
                   />
                 ))}
               </div>

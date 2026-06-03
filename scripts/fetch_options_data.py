@@ -295,6 +295,50 @@ def _get_realtime_etf_price(etf_ticker: str) -> Optional[float]:
     return None
 
 
+def get_spot_finnhub(symbol: str) -> Optional[float]:
+    """Get real-time spot price from Finnhub API (primary source).
+
+    Finnhub provides real-time US stock quotes on the free tier (60 calls/min).
+    For indices (SPX, NDX), derives the price from the corresponding ETF.
+
+    Requires FINNHUB_API_KEY environment variable (GitHub Secrets / Vercel env vars).
+    """
+    api_key = os.environ.get('FINNHUB_API_KEY')
+    if not api_key:
+        return None
+
+    # Map indices to their ETF equivalents for real-time data
+    etf_map = {
+        'SPX': 'SPY',
+        'NDX': 'QQQ',
+    }
+
+    fetch_symbol = etf_map.get(symbol, symbol)
+    ratio_map = {
+        'SPX': 10.0,
+        'NDX': 41.0,
+    }
+    ratio = ratio_map.get(symbol, 1.0)
+
+    try:
+        url = f"https://finnhub.io/api/v1/quote?symbol={fetch_symbol}&token={api_key}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            price = data.get('c')  # current price
+            if price and price > 0:
+                spot = price * ratio
+                logger.info(
+                    f"🔥 Finnhub spot for {symbol} (via {fetch_symbol}): "
+                    f"${spot:.2f} (raw={price:.2f}, ratio={ratio})"
+                )
+                return spot
+    except Exception as e:
+        logger.warning(f"Finnhub error for {symbol}: {e}")
+
+    return None
+
+
 def get_spot_twelve_data(symbol: str) -> Optional[float]:
     """Get real-time spot price from Twelve Data API.
 
@@ -360,7 +404,9 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
 
     Priority order (spot must match the strike price universe of the options):
 
-    PRIMARY: Twelve Data API (real-time, no 15-min delay)
+    1. PRIMARY: Finnhub API (real-time US stock quotes, free tier)
+    2. Twelve Data API (may be 15-min delayed on free tier)
+    3. yfinance fallback chain (see below)
 
     FALLBACK — For index symbols (SPX, NDX):
       1. Index fast_info.last_price directly — most accurate for the index
@@ -375,7 +421,12 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
       2. Index ticker history
       3. ticker.history / fast_info – the yfinance ticker object itself
     """
-    # ── PRIMARY: Try Twelve Data first (real-time) ──
+    # ── 1. PRIMARY: Finnhub (real-time) ──
+    finnhub_price = get_spot_finnhub(symbol)
+    if finnhub_price and finnhub_price > 0:
+        return finnhub_price
+
+    # ── 2. Twelve Data (may be delayed) ──
     td_price = get_spot_twelve_data(symbol)
     if td_price and td_price > 0:
         return td_price
