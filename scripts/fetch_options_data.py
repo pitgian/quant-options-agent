@@ -16,6 +16,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 # ---------------------------------------------------------------------------
@@ -293,13 +295,74 @@ def _get_realtime_etf_price(etf_ticker: str) -> Optional[float]:
     return None
 
 
+def get_spot_twelve_data(symbol: str) -> Optional[float]:
+    """Get real-time spot price from Twelve Data API.
+
+    For ETFs (SPY, QQQ): fetch directly (real-time).
+    For indices (SPX, NDX): derive from ETF price × ratio.
+    """
+    api_key = os.environ.get('TWELVEDATA_API_KEY')
+    if not api_key:
+        logger.warning("TWELVEDATA_API_KEY not set, skipping Twelve Data")
+        return None
+
+    # Index derivation from ETF: ratio of previous closes
+    INDEX_ETF_MAP = {
+        'SPX': {'etf': 'SPY', 'ratio': 10.0},   # SPX ≈ SPY × 10
+        'NDX': {'etf': 'QQQ', 'ratio': 41.0},    # NDX ≈ QQQ × 41
+    }
+
+    # Determine what to fetch from Twelve Data
+    if symbol in INDEX_ETF_MAP:
+        # For indices, fetch the corresponding ETF and derive
+        etf_symbol = INDEX_ETF_MAP[symbol]['etf']
+        ratio = INDEX_ETF_MAP[symbol]['ratio']
+        td_symbol = etf_symbol
+    else:
+        # For ETFs, fetch directly
+        td_symbol = symbol
+        ratio = None
+
+    try:
+        url = f"https://api.twelvedata.com/price?symbol={td_symbol}&apikey={api_key}"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        if 'price' in data:
+            etf_price = float(data['price'])
+
+            if ratio:
+                # Derive index price from ETF
+                derived_price = etf_price * ratio
+                logger.info(
+                    f"Twelve Data: {symbol} derived from {td_symbol} "
+                    f"({etf_price}) × {ratio} = {derived_price:.2f}"
+                )
+                return derived_price
+            else:
+                logger.info(f"Twelve Data spot for {symbol}: {etf_price}")
+                return etf_price
+        elif 'message' in data:
+            logger.warning(f"Twelve Data error for {td_symbol}: {data['message']}")
+            return None
+        else:
+            logger.warning(f"Unexpected Twelve Data response for {td_symbol}: {data}")
+            return None
+    except Exception as e:
+        logger.warning(f"Twelve Data fetch failed for {td_symbol}: {e}")
+        return None
+
+
 def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
     """
     Return the last traded price for *symbol*.
 
     Priority order (spot must match the strike price universe of the options):
 
-    For index symbols (SPX, NDX):
+    PRIMARY: Twelve Data API (real-time, no 15-min delay)
+
+    FALLBACK — For index symbols (SPX, NDX):
       1. Index fast_info.last_price directly — most accurate for the index
       2. ETF derivation – real-time ETF price × dynamic ratio (fallback)
       2b. ETF derivation with hardcoded fallback ratio (if dynamic ratio fails)
@@ -307,11 +370,19 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
       4. SPOT_FUTURES_MAP – futures ticker (fallback, may differ from index)
       5. ticker.history / fast_info – the yfinance ticker object itself
 
-    For ETF symbols (SPY, QQQ):
+    FALLBACK — For ETF symbols (SPY, QQQ):
       1. fast_info.last_price via SPOT_INDEX_MAP
       2. Index ticker history
       3. ticker.history / fast_info – the yfinance ticker object itself
     """
+    # ── PRIMARY: Try Twelve Data first (real-time) ──
+    td_price = get_spot_twelve_data(symbol)
+    if td_price and td_price > 0:
+        return td_price
+
+    # ── FALLBACK: yfinance logic below ──
+    logger.info(f"Falling back to yfinance for {symbol} spot price")
+
     etf_ticker = SPOT_ETF_MAP.get(symbol)
     index_ticker = SPOT_INDEX_MAP.get(symbol)
 
