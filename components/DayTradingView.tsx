@@ -137,7 +137,7 @@ const LevelRow: React.FC<{
           className="text-xs font-mono font-medium w-12 text-right"
           style={{ color }}
         >
-          {formatDistance(level.distance)}
+          {formatDistance(isResistance ? level.distance : -level.distance)}
         </span>
 
         {/* OI/Vol visual bars */}
