@@ -14,6 +14,7 @@ import { Wall, GexRegime, DayTradingLevel, DayTradingData, GexStrikeData, CrossS
 // ============================================================================
 
 const DAY_TRADING_MAX_DISTANCE_PCT = 5; // Only show levels within 5% of spot for day trading
+const MIN_CROSS_SYMBOL_SCORE = 30;      // Minimum cross_score for meaningful confluence
 
 // ============================================================================
 // DAY TRADING DATA BUILDER
@@ -143,20 +144,25 @@ function extractCrossSymbolLevels(
       const strikeToSpotRatio = primary.strike / spot;
       if (strikeToSpotRatio < 0.3 || strikeToSpotRatio > 3.0) return null;
 
+      // Only include cross-symbol levels with meaningful confluence score
+      if (level.cross_score < MIN_CROSS_SYMBOL_SCORE) return null;
+
       return {
         strike: primary.strike,
         type: level.type,
-        strength: Math.min(100, Math.round(level.cross_score * 1.5 + 15)),
+        strength: Math.min(100, Math.round(level.cross_score)),
         totalOI: primary.total_oi,
         totalVolume: primary.total_vol,
         distance: primary.distance_pct,
         label: `Cross-Symbol ${level.type === 'support' ? 'Support' : 'Resistance'}`,
         isCrossSymbol: true,
-        crossScore: Math.min(100, Math.round(level.cross_score * 1.5 + 15)),
+        crossScore: Math.min(100, Math.round(level.cross_score)),
         pairedSymbol: paired.symbol,
         pairedStrike: paired.strike,
         pairedScore: paired.score,
         pairedWallType: paired.wall_type,
+        pairedOI: paired.total_oi,
+        pairedVol: paired.total_vol,
         combinedOI: level.combined_oi,
         combinedVol: level.combined_vol,
         combinedActivity: level.combined_activity,
@@ -190,8 +196,12 @@ function mergeLevels(
     return true;
   });
 
+  // Deduplicate: remove regular levels that overlap with cross-symbol levels
+  const crossStrikes = new Set(validCross.map(l => l.strike));
+  const dedupedRegular = regular.filter(l => !crossStrikes.has(l.strike));
+
   // Combine and sort by absolute distance from spot
-  const merged = [...regular, ...validCross].sort(
+  const merged = [...dedupedRegular, ...validCross].sort(
     (a, b) => Math.abs(a.distance) - Math.abs(b.distance)
   );
 

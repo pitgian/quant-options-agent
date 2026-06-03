@@ -33,35 +33,63 @@ const EXPIRY_OPTIONS: { key: ExpiryFilter; label: string }[] = [
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Strength bar — small inline bar showing 0-100 score */
-const StrengthBar: React.FC<{ value: number; color: string }> = ({ value, color }) => (
-  <div className="flex items-center gap-1.5">
-    <div className="w-16 h-1.5 rounded-full bg-gray-700/50 overflow-hidden">
-      <div
-        className="h-full rounded-full transition-all duration-300"
-        style={{ width: `${Math.min(100, value)}%`, backgroundColor: color }}
-      />
+/** OI/Vol bars — two small inline bars showing relative OI and Volume strength */
+const OIVolBars: React.FC<{
+  oi: number;
+  vol: number;
+  maxOI: number;
+  maxVol: number;
+}> = ({ oi, vol, maxOI, maxVol }) => {
+  const oiPct = maxOI > 0 ? Math.min(100, (oi / maxOI) * 100) : 0;
+  const volPct = maxVol > 0 ? Math.min(100, (vol / maxVol) * 100) : 0;
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      {/* OI bar */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] text-gray-500 w-5 shrink-0">OI</span>
+        <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+          <div
+            className="h-full rounded-full transition-all duration-300"
+            style={{ width: `${oiPct}%`, backgroundColor: 'rgba(99,102,241,0.6)' }}
+          />
+        </div>
+        <span className="text-[9px] text-gray-500 w-10 text-right">
+          {formatCompact(oi)}
+        </span>
+      </div>
+      {/* Vol bar */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] text-gray-500 w-5 shrink-0">Vol</span>
+        <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+          <div
+            className="h-full rounded-full transition-all duration-300"
+            style={{ width: `${volPct}%`, backgroundColor: 'rgba(34,197,94,0.6)' }}
+          />
+        </div>
+        <span className="text-[9px] text-gray-500 w-10 text-right">
+          {formatCompact(vol)}
+        </span>
+      </div>
     </div>
-    <span className="text-[10px] text-gray-500 w-6 text-right">{value}</span>
-  </div>
-);
+  );
+};
 
 /** Single level row — renders regular and cross-symbol levels */
 const LevelRow: React.FC<{
   level: DayTradingLevel;
   isHovered: boolean;
   onHover: (strike: number | null) => void;
-}> = ({ level, isHovered, onHover }) => {
+  maxOI: number;
+  maxVol: number;
+}> = ({ level, isHovered, onHover, maxOI, maxVol }) => {
   const isResistance = level.type === 'resistance';
   const isCross = !!level.isCrossSymbol;
 
   // Cross-symbol levels use amber/gold accent; regular levels use red/green
   const color = isCross ? '#f59e0b' : (isResistance ? '#f87171' : '#4ade80');
 
-  // For cross-symbol: prefer combined metrics, fall back to regular
-  const displayOI = isCross && level.combinedOI != null ? level.combinedOI : level.totalOI;
-  const displayVol = isCross && level.combinedVol != null ? level.combinedVol : level.totalVolume;
-  const displayStrength = level.strength;
+  // Always use primary symbol's OI/Vol (same scale as regular levels)
 
   return (
     <div
@@ -104,16 +132,6 @@ const LevelRow: React.FC<{
           </span>
         )}
 
-        {/* OI — combined for cross-symbol, regular otherwise */}
-        <span className="text-xs text-gray-400 w-16">
-          OI: {formatCompact(displayOI)}
-        </span>
-
-        {/* Volume */}
-        <span className="text-xs text-gray-400 w-16">
-          Vol: {formatCompact(displayVol)}
-        </span>
-
         {/* Distance */}
         <span
           className="text-xs font-mono font-medium w-12 text-right"
@@ -122,11 +140,11 @@ const LevelRow: React.FC<{
           {formatDistance(level.distance)}
         </span>
 
-        {/* Strength bar — uses crossScore for cross-symbol levels */}
-        <StrengthBar value={displayStrength} color={color} />
+        {/* OI/Vol visual bars */}
+        <OIVolBars oi={level.totalOI} vol={level.totalVolume} maxOI={maxOI} maxVol={maxVol} />
       </div>
 
-      {/* Cross-symbol sub-row: paired symbol info */}
+      {/* Cross-symbol sub-row: paired symbol info with OI/Vol */}
       {isCross && level.pairedSymbol && level.pairedStrike != null && (
         <div className="flex items-center gap-1.5 mt-0.5" style={{ marginLeft: '76px' }}>
           <span className="text-[10px] text-amber-400/60">↳</span>
@@ -137,12 +155,13 @@ const LevelRow: React.FC<{
                 {level.pairedWallType === 'put' ? 'Put Wall' : level.pairedWallType === 'call' ? 'Call Wall' : level.pairedWallType}
               </span>
             )}
+            {level.pairedOI != null && (
+              <span className="ml-1.5 text-gray-600">| OI: {formatCompact(level.pairedOI)}</span>
+            )}
+            {level.pairedVol != null && (
+              <span className="ml-1.5 text-gray-600">| Vol: {formatCompact(level.pairedVol)}</span>
+            )}
           </span>
-          {level.crossScore != null && (
-            <span className="text-[10px] text-amber-400/50 ml-1">
-              Cross: {level.crossScore}
-            </span>
-          )}
         </div>
       )}
     </div>
@@ -227,6 +246,20 @@ export function DayTradingView() {
   const hasCrossSymbolLevels = useMemo(() => {
     if (!data) return false;
     return [...data.resistance, ...data.support].some(l => l.isCrossSymbol);
+  }, [data]);
+
+  // ---- Max OI / Vol for bar normalization ----
+  const { maxOI, maxVol } = useMemo(() => {
+    if (!data) return { maxOI: 0, maxVol: 0 };
+    const allLevels = [...data.resistance, ...data.support];
+    let maxOI = 0;
+    let maxVol = 0;
+    for (const l of allLevels) {
+      // Use primary symbol's OI/Vol for all levels (consistent scale)
+      if (l.totalOI > maxOI) maxOI = l.totalOI;
+      if (l.totalVolume > maxVol) maxVol = l.totalVolume;
+    }
+    return { maxOI, maxVol };
   }, [data]);
 
   // ---- Update flash animation state ----
@@ -376,6 +409,8 @@ export function DayTradingView() {
                     level={level}
                     isHovered={highlightedStrike === level.strike}
                     onHover={setHighlightedStrike}
+                    maxOI={maxOI}
+                    maxVol={maxVol}
                   />
                 ))}
               </div>
@@ -411,6 +446,8 @@ export function DayTradingView() {
                     level={level}
                     isHovered={highlightedStrike === level.strike}
                     onHover={setHighlightedStrike}
+                    maxOI={maxOI}
+                    maxVol={maxVol}
                   />
                 ))}
               </div>

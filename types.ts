@@ -52,6 +52,8 @@ export interface DayTradingLevel {
   pairedStrike?: number;        // the strike on the paired symbol
   pairedScore?: number;         // the score on the paired symbol side
   pairedWallType?: string;      // wall type on the paired side (e.g. "put")
+  pairedOI?: number;            // paired symbol's individual OI
+  pairedVol?: number;           // paired symbol's individual volume
   combinedOI?: number;          // combined OI across both symbols
   combinedVol?: number;         // combined volume across both symbols
   combinedActivity?: number;    // combined activity metric

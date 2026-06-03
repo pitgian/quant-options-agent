@@ -61,9 +61,10 @@ CONFLUENCE_DISTANCE_WEIGHT = 0.2  # Weight for proximity to spot in confluence s
 CROSS_SYMBOL_TOLERANCE_PCT = 0.3    # % tolerance for matching levels
 CROSS_SYMBOL_MIN_ACTIVITY = 100     # minimum combined activity to qualify
 CROSS_SYMBOL_MAX_LEVELS = 5         # max cross-symbol levels per pair
-CROSS_SYMBOL_MIN_SCORE = 15.0       # Minimum individual wall score to qualify
+CROSS_SYMBOL_MIN_SCORE = 35.0       # Minimum individual wall score to qualify
 CROSS_SYMBOL_MIN_BALANCE = 0.20     # Minimum balance ratio between ETF/Index
-CROSS_SYMBOL_MIN_COMBINED_OI = 1000 # Minimum combined OI
+CROSS_SYMBOL_MIN_COMBINED_OI = 10000 # Minimum combined OI
+CROSS_SYMBOL_MIN_CROSS_SCORE = 30   # Minimum cross_score for a confluence level
 CROSS_SYMBOL_INTEREST_WEIGHT = 0.40 # Weight for combined interest
 CROSS_SYMBOL_BALANCE_WEIGHT = 0.20  # Weight for cross balance
 CROSS_SYMBOL_PROXIMITY_WEIGHT = 0.15# Weight for proximity to spot
@@ -1427,6 +1428,9 @@ def calculate_cross_symbol_confluence(
 
         # Sort by cross_score descending
         matches.sort(key=lambda x: x["cross_score"], reverse=True)
+
+        # Filter by minimum cross_score
+        matches = [m for m in matches if m['cross_score'] >= CROSS_SYMBOL_MIN_CROSS_SCORE]
 
         # Cap at max levels per pair
         matches = matches[:CROSS_SYMBOL_MAX_LEVELS]
