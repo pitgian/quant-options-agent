@@ -201,6 +201,69 @@ const RegimeBadge: React.FC<{
   );
 };
 
+/** Trading Guide Accordion component */
+const TradingGuide: React.FC = () => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="mb-6 rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden transition-all duration-300">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-800/20 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-amber-400 text-sm">💡</span>
+          <span className="text-[13px] font-semibold text-gray-300">Guida Operativa: Come usare questi livelli</span>
+        </div>
+        <span className={`text-[10px] text-gray-500 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
+          ▼
+        </span>
+      </button>
+      
+      {isOpen && (
+        <div className="px-4 pb-4 pt-1.5 border-t border-slate-800/50 text-[11px] text-gray-400 space-y-3.5 animate-fadeIn">
+          <div>
+            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5">
+              <span className="text-red-400 text-xs">🛑</span> Major Gamma Wall (Supporti e Resistenze dei Market Maker)
+            </h4>
+            <p className="pl-4 leading-relaxed text-gray-400">
+              Rappresentano i livelli chiave con la massima concentrazione di contratti dei Market Maker:
+              <br />
+              • <strong className="text-red-400/90">Call Wall (Resistenza)</strong>: Funziona come un soffitto. Ottimo livello per chiudere i Long o valutare Short di rimbalzo (Mean Reversion).
+              <br />
+              • <strong className="text-green-400/90">Put Wall (Supporto)</strong>: Funziona come un pavimento. Ottimo livello per comprare (entrare Long) o chiudere gli Short.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5">
+              <span className="text-blue-400 text-xs">⇄</span> Gamma Flip (Pivot di Volatilità)
+            </h4>
+            <p className="pl-4 leading-relaxed text-gray-400">
+              La linea di confine che separa i due regimi di volatilità del mercato:
+              <br />
+              • <strong className="text-green-400/90">Sopra il Flip (Positive Gamma - Regime Calmo)</strong>: Le oscillazioni tendono a rimbalzare sui supporti/resistenze. Compra i supporti e vendi le resistenze.
+              <br />
+              • <strong className="text-red-400/90">Sotto il Flip (Negative Gamma - Regime Volatile)</strong>: I movimenti sono rapidi ed estesi. Favorisci le rotture dei livelli (breakout) e il trend-following.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5">
+              <span className="text-purple-400 text-xs">📅</span> Scelta delle Scadenze (Filtro DTE)
+            </h4>
+            <p className="pl-4 leading-relaxed text-gray-400">
+              • <strong className="text-gray-300">0 DTE (Intraday)</strong>: Livelli dinamici per la sessione odierna. Perfetti per scalping e trading veloce.
+              <br />
+              • <strong className="text-gray-300">1-7 DTE / All (Strutturali)</strong>: Livelli istituzionali più stabili, fungono da forti barriere di medio periodo.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
@@ -389,6 +452,9 @@ export function DayTradingView() {
               flipPoint={gexRegime.flipPoint}
             />
           </div>
+
+          {/* Operational Guide */}
+          <TradingGuide />
 
           {/* ---- RESISTANCE ---- */}
           {sortedResistance.length > 0 && (
