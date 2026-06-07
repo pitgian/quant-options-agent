@@ -65,7 +65,7 @@ CROSS_SYMBOL_MIN_ACTIVITY = 100     # minimum combined activity to qualify
 CROSS_SYMBOL_MAX_LEVELS = 5         # max cross-symbol levels per pair
 CROSS_SYMBOL_MIN_SCORE = 35.0       # Minimum individual wall score to qualify
 CROSS_SYMBOL_MIN_BALANCE = 0.20     # Minimum balance ratio between ETF/Index
-CROSS_SYMBOL_MIN_COMBINED_OI = 10000 # Minimum combined OI
+CROSS_SYMBOL_MIN_COMBINED_OI = 5000 # Minimum combined OI
 CROSS_SYMBOL_MIN_CROSS_SCORE = 30   # Minimum cross_score for a confluence level
 CROSS_SYMBOL_INTEREST_WEIGHT = 0.40 # Weight for combined interest
 CROSS_SYMBOL_BALANCE_WEIGHT = 0.20  # Weight for cross balance
@@ -830,6 +830,14 @@ def _score_and_rank(
 
     # Filter out zero-score walls
     valid = [c for c in candidates if c["score"] > 0]
+    if not valid:
+        return []
+
+    # Normalize scores to 0-100 (aligned with TS frontend)
+    max_score = max(c["score"] for c in valid)
+    for c in valid:
+        c["score"] = round((c["score"] / max_score) * 100, 1) if max_score > 0 else 0.0
+
     valid.sort(key=lambda x: x["score"], reverse=True)
     return valid
 
@@ -946,10 +954,10 @@ def calculate_confluence_levels(
 
     for i, c in enumerate(candidates):
         c["score"] = round(
-            norm_interests[i] * CONFLUENCE_INTEREST_WEIGHT
-            + norm_ratios[i] * CONFLUENCE_RATIO_WEIGHT
-            + norm_proximities[i] * CONFLUENCE_DISTANCE_WEIGHT,
-            4,
+            (norm_interests[i] * CONFLUENCE_INTEREST_WEIGHT
+             + norm_ratios[i] * CONFLUENCE_RATIO_WEIGHT
+             + norm_proximities[i] * CONFLUENCE_DISTANCE_WEIGHT) * 100,
+            1,
         )
         c["contributing_expiries"] = sorted(c["expiry_breakdown"].keys())
 
@@ -1501,36 +1509,23 @@ def calculate_cross_symbol_confluence(
             }
             continue
 
-        # ── Normalize activities and scores across all matches in this pair ──
-        etf_activities = [m["etf_activity"] for m in matches]
-        idx_activities = [m["idx_activity"] for m in matches]
-        etf_scores = [m["etf"]["score"] for m in matches]
-        idx_scores = [m["idx"]["score"] for m in matches]
-
-        norm_etf_act = _normalize_cross_values(etf_activities)
-        norm_idx_act = _normalize_cross_values(idx_activities)
-        norm_etf_scores = _normalize_cross_values(etf_scores)
-        norm_idx_scores = _normalize_cross_values(idx_scores)
-
         # ── Compute cross-symbol scores ──
         for i, m in enumerate(matches):
-            nea = norm_etf_act[i]   # normalized ETF activity
-            nia = norm_idx_act[i]   # normalized Index activity
-            nes = norm_etf_scores[i]
-            nis = norm_idx_scores[i]
+            es = m["etf"]["score"]  # 0-100 score
+            is_ = m["idx"]["score"]  # 0-100 score
 
-            # Combined Interest: geometric mean of normalized activities
-            combined_interest = (nea * nia) ** 0.5 if nea > 0 and nia > 0 else 0.0
+            # Combined Interest: geometric mean of scores (scaled 0-1)
+            combined_interest = ((es * is_) ** 0.5) / 100.0
 
-            # Cross Balance: ratio of weaker to stronger side
-            max_act = max(nea, nia)
-            cross_balance = min(nea, nia) / max_act if max_act > 0 else 0.0
+            # Cross Balance: ratio of weaker to stronger score
+            max_score = max(es, is_)
+            cross_balance = min(es, is_) / max_score if max_score > 0 else 0.0
 
             # Proximity: inverse distance from spot
             proximity = 1.0 / (1.0 + m["avg_distance_pct"] / 2.0)
 
-            # Individual Strength: weakest link (min of normalized scores)
-            individual_strength = min(nes, nis)
+            # Individual Strength: weakest link (min of scores scaled 0-1)
+            individual_strength = min(es, is_) / 100.0
 
             # Weighted final score (scaled to 0-100)
             raw_score = (
