@@ -36,20 +36,40 @@ export function buildDayTradingData(
   gexStrikeData: GexStrikeData[],
   crossSymbolConfluence?: CrossSymbolConfluence
 ): DayTradingData {
+  // Find GEX peaks above/below spot to identify Major Gamma Walls
+  let maxPositiveGexStrike = -1;
+  let maxPositiveGex = 0;
+  let maxNegativeGexStrike = -1;
+  let minNegativeGex = 0;
+
+  for (const strikeData of gexStrikeData) {
+    if (strikeData.netGEX > maxPositiveGex && strikeData.strike >= spot) {
+      maxPositiveGex = strikeData.netGEX;
+      maxPositiveGexStrike = strikeData.strike;
+    }
+    if (strikeData.netGEX < minNegativeGex && strikeData.strike <= spot) {
+      minNegativeGex = strikeData.netGEX;
+      maxNegativeGexStrike = strikeData.strike;
+    }
+  }
+
   // Convert put walls to support levels (below spot)
   const support: DayTradingLevel[] = putWalls
     .filter(w => w.strike <= spot)
     .filter(w => w.strike >= spot * 0.3)    // Reject strikes below 30% of spot
     .filter(w => w.distance <= DAY_TRADING_MAX_DISTANCE_PCT)
-    .map(w => ({
-      strike: w.strike,
-      type: 'support' as const,
-      strength: w.score,
-      totalOI: w.totalOI,
-      totalVolume: w.totalVolume,
-      distance: w.distance,
-      label: 'Put Wall',
-    }))
+    .map(w => {
+      const isGammaPeak = w.strike === maxNegativeGexStrike;
+      return {
+        strike: w.strike,
+        type: 'support' as const,
+        strength: w.score,
+        totalOI: w.totalOI,
+        totalVolume: w.totalVolume,
+        distance: w.distance,
+        label: isGammaPeak ? 'Major Gamma Wall' : 'Put Wall',
+      };
+    })
     .sort((a, b) => a.distance - b.distance)
     .slice(0, 7);
 
@@ -58,17 +78,54 @@ export function buildDayTradingData(
     .filter(w => w.strike >= spot)
     .filter(w => w.strike <= spot * 3.0)    // Reject strikes above 300% of spot
     .filter(w => w.distance <= DAY_TRADING_MAX_DISTANCE_PCT)
-    .map(w => ({
-      strike: w.strike,
-      type: 'resistance' as const,
-      strength: w.score,
-      totalOI: w.totalOI,
-      totalVolume: w.totalVolume,
-      distance: w.distance,
-      label: 'Call Wall',
-    }))
+    .map(w => {
+      const isGammaPeak = w.strike === maxPositiveGexStrike;
+      return {
+        strike: w.strike,
+        type: 'resistance' as const,
+        strength: w.score,
+        totalOI: w.totalOI,
+        totalVolume: w.totalVolume,
+        distance: w.distance,
+        label: isGammaPeak ? 'Major Gamma Wall' : 'Call Wall',
+      };
+    })
     .sort((a, b) => a.distance - b.distance)
     .slice(0, 7);
+
+  // Create Gamma Flip Pivot level if it is within range
+  const flipLevel: DayTradingLevel | null = gexRegime.flipPoint !== null ? {
+    strike: gexRegime.flipPoint,
+    type: gexRegime.flipPoint <= spot ? 'support' : 'resistance',
+    strength: 95, // Gamma Flip is highly significant
+    totalOI: 0,
+    totalVolume: 0,
+    distance: spot > 0 ? (Math.abs(gexRegime.flipPoint - spot) / spot) * 100 : 0,
+    label: 'Gamma Flip (Pivot)',
+  } : null;
+
+  // Insert Gamma Flip level into the appropriate array
+  if (flipLevel && flipLevel.distance <= DAY_TRADING_MAX_DISTANCE_PCT) {
+    if (flipLevel.type === 'support') {
+      const existingIdx = support.findIndex(s => s.strike === flipLevel.strike);
+      if (existingIdx === -1) {
+        support.push(flipLevel);
+        support.sort((a, b) => a.distance - b.distance);
+      } else {
+        support[existingIdx].label = `${support[existingIdx].label} / GEX Flip`;
+        support[existingIdx].strength = Math.max(support[existingIdx].strength, 95);
+      }
+    } else {
+      const existingIdx = resistance.findIndex(r => r.strike === flipLevel.strike);
+      if (existingIdx === -1) {
+        resistance.push(flipLevel);
+        resistance.sort((a, b) => a.distance - b.distance);
+      } else {
+        resistance[existingIdx].label = `${resistance[existingIdx].label} / GEX Flip`;
+        resistance[existingIdx].strength = Math.max(resistance[existingIdx].strength, 95);
+      }
+    }
+  }
 
   // Merge cross-symbol confluence levels
   const crossLevels = extractCrossSymbolLevels(symbol, crossSymbolConfluence, spot);

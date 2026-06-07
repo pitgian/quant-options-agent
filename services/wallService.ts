@@ -119,11 +119,25 @@ export function computeWalls(
 
     // Score: weighted OI + Volume with proximity boost
     const scored = entries.map(([strike, data]) => {
-      const baseScore = data.oi * 0.7 + data.vol * 0.3;
+      // DTE-dependent dynamic weighting (Volume is more important for intraday 0DTE/1DTE)
+      let oiWeight = 0.7;
+      let volWeight = 0.3;
+      if (data.nearestDTE === 0) {
+        oiWeight = 0.25;
+        volWeight = 0.75;
+      } else if (data.nearestDTE <= 3) {
+        oiWeight = 0.50;
+        volWeight = 0.50;
+      }
+
+      const baseScore = data.oi * oiWeight + data.vol * volWeight;
       const distancePct = spotPrice > 0
         ? Math.abs(strike - spotPrice) / spotPrice * 100
         : 0;
-      const proximityBoost = Math.max(MIN_PROXIMITY_BOOST, 1.0 - (distancePct / PROXIMITY_BOOST_RANGE) * (1.0 - MIN_PROXIMITY_BOOST));
+      
+      // Exponential proximity decay (Gaussian) to prioritize strikes closer to spot
+      const PROXIMITY_SIGMA = 1.5; // standard deviation percentage
+      const proximityBoost = Math.exp(-Math.pow(distancePct / PROXIMITY_SIGMA, 2));
       const rawScore = baseScore * proximityBoost;
       const crossData = oppositeMap.get(strike);
       const distance = spotPrice > 0

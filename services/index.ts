@@ -87,7 +87,6 @@ export async function fetchOptionsData(
 
   // Step 1: Filter expiries
   const filteredExpiries = filterExpiries(symbolData.expiries, expiryFilter);
-  if (filteredExpiries.length === 0) return null;
 
   // Step 2: Compute walls
   const { putWalls, callWalls } = computeWalls(

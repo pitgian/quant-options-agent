@@ -694,6 +694,13 @@ def calculate_walls(
                 exp: {**data, "weight": round(expiry_weights_put.get(exp, 1.0), 3)}
                 for exp, data in sides["put"].items()
             }
+            # Find nearest DTE for put
+            nearest_dte_put = 999
+            for exp in sides["put"].keys():
+                dte = days_to_expiry(exp)
+                if dte < nearest_dte_put:
+                    nearest_dte_put = dte
+
             put_candidates.append(
                 {
                     "strike": strike,
@@ -706,6 +713,7 @@ def calculate_walls(
                     "net_gex": put_gex + call_gex_at_strike,
                     "expiry_breakdown": put_expiry_breakdown,
                     "type": "put",
+                    "nearest_dte": nearest_dte_put,
                 }
             )
 
@@ -731,6 +739,13 @@ def calculate_walls(
                 exp: {**data, "weight": round(expiry_weights_call.get(exp, 1.0), 3)}
                 for exp, data in sides["call"].items()
             }
+            # Find nearest DTE for call
+            nearest_dte_call = 999
+            for exp in sides["call"].keys():
+                dte = days_to_expiry(exp)
+                if dte < nearest_dte_call:
+                    nearest_dte_call = dte
+
             call_candidates.append(
                 {
                     "strike": strike,
@@ -743,6 +758,7 @@ def calculate_walls(
                     "net_gex": put_gex_at_strike + call_gex,
                     "expiry_breakdown": call_expiry_breakdown,
                     "type": "call",
+                    "nearest_dte": nearest_dte_call,
                 }
             )
 
@@ -764,34 +780,48 @@ def _score_and_rank(
     """
     Apply cross-side penalty scoring using absolute values.
     
-    Formula:
-        own_activity = total_oi * 0.8 + total_vol * 0.2
-        cross_activity = opp_oi * 0.8 + opp_vol * 0.2
-        cross_ratio = cross_activity / (own_activity + cross_activity)  if total > 0
-        score = own_activity * max(0, 1 - α × cross_ratio)
-    
-    This preserves absolute magnitude (a wall with 476K OI always scores
-    much higher than one with 3 OI) while penalizing cross-side dominance.
-    
-    Returns candidates sorted by score descending.
+    Formula (aligned with TS frontend wallService):
+        DTE-dependent weighting:
+          - DTE == 0: 75% Vol / 25% OI
+          - DTE <= 3: 50% Vol / 50% OI
+          - Else: 30% Vol / 70% OI
+        Proximity decay:
+          - Exponential Gaussian decay: exp(-(dist / 1.5)^2)
+        Score:
+          - (own_activity * max(0, 1 - α × cross_ratio)) * proximity_decay
     """
+    import math
     if not candidates:
         return []
 
     for c in candidates:
+        nearest_dte = c.get("nearest_dte", 999)
+        if nearest_dte == 0:
+            oi_weight = 0.25
+            vol_weight = 0.75
+        elif nearest_dte <= 3:
+            oi_weight = 0.50
+            vol_weight = 0.50
+        else:
+            oi_weight = 0.70
+            vol_weight = 0.30
+
         # Own side activity (absolute, weighted)
-        own_activity = c["total_oi"] * SCORE_OI_WEIGHT + c["total_vol"] * SCORE_VOL_WEIGHT
+        own_activity = c["total_oi"] * oi_weight + c["total_vol"] * vol_weight
         # Cross side activity (absolute, weighted)
-        cross_activity = c["opp_oi"] * SCORE_OI_WEIGHT + c["opp_vol"] * SCORE_VOL_WEIGHT
+        cross_activity = c["opp_oi"] * oi_weight + c["opp_vol"] * vol_weight
 
         # Cross-side ratio: fraction of total activity that is cross-side
         total_activity = own_activity + cross_activity
         cross_ratio = cross_activity / total_activity if total_activity > 0 else 0
 
-        # Score: own activity discounted by cross-side dominance
-        # When cross_ratio → 0 (no cross side): score ≈ own_activity
-        # When cross_ratio → 1 (cross dominates): score → own_activity × (1 - α)
-        c["score"] = round(own_activity * max(0, 1 - CROSS_SIDE_ALPHA * cross_ratio), 2)
+        # Proximity decay (Gaussian) to prioritize strikes closer to spot
+        distance_pct = abs(c["strike"] - spot) / spot * 100
+        PROXIMITY_SIGMA = 1.5
+        proximity_boost = math.exp(-((distance_pct / PROXIMITY_SIGMA) ** 2))
+
+        # Score: own activity discounted by cross-side dominance and proximity decay
+        c["score"] = round(own_activity * max(0, 1 - CROSS_SIDE_ALPHA * cross_ratio) * proximity_boost, 2)
 
         # Distance from spot as percentage
         c["distance_pct"] = round((c["strike"] - spot) / spot * 100, 2)
