@@ -357,6 +357,20 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     return { maxOptionsVolume: maxOpt, maxFuturesVolume: maxFut };
   }, [zoomedProfile]);
 
+  // ---- Cross-Symbol Level mapping for chart visualization ----
+  const crossSymbolLevelsMap = useMemo(() => {
+    const map = new Map<number, any>();
+    if (!data) return map;
+
+    const allLevels = [...data.support, ...data.resistance];
+    for (const lvl of allLevels) {
+      if (lvl.isCrossSymbol) {
+        map.set(lvl.strike, lvl);
+      }
+    }
+    return map;
+  }, [data]);
+
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={handleRefresh} />;
   if (!data) return <ErrorState message="No data available" onRetry={handleRefresh} />;
@@ -502,6 +516,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                 const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                 const isLVN = !!lvnZone;
                 const isTrough = nodes.lvnStrikes.has(d.strike);
+                const crossLvl = crossSymbolLevelsMap.get(d.strike);
 
                 const optBarWidth = (d.optionsVolume / maxOptionsVolume) * 100;
                 const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.optionsVolume) / (hasFuturesData ? maxFuturesVolume : maxOptionsVolume)) * 100;
@@ -582,6 +597,14 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
 
                       {/* Right-aligned node badges */}
                       <div className="absolute right-2 top-0.5 flex gap-1">
+                        {crossLvl && (
+                          <span
+                            className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase flex items-center gap-0.5 cursor-help"
+                            title={`Confluenza Cross-Symbol con ${crossLvl.pairedSymbol} a strike $${crossLvl.pairedStrike.toFixed(0)} (Score: ${crossLvl.crossScore})`}
+                          >
+                            🔗 {crossLvl.pairedSymbol} ${crossLvl.pairedStrike.toFixed(0)}
+                          </span>
+                        )}
                         {isHVN && (
                           <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase">
                             HVN
