@@ -272,7 +272,14 @@ const TradingGuide: React.FC = () => {
 // Main Component
 // ---------------------------------------------------------------------------
 
-export function DayTradingView() {
+interface DayTradingViewProps {
+  sharedState?: any;
+}
+
+export function DayTradingView({ sharedState }: DayTradingViewProps) {
+  const localState = useOptionsData();
+  const state = sharedState || localState;
+
   const {
     data,
     loading,
@@ -288,7 +295,7 @@ export function DayTradingView() {
     highlightedStrike,
     setHighlightedStrike,
     lastRefreshed,
-  } = useOptionsData();
+  } = state;
 
   // ---- Last updated text ----
   const lastUpdatedText = useMemo(() => {

@@ -42,6 +42,7 @@ export interface RawSymbolData {
   };
   total_net_gex?: number;
   gex_flip_point?: number | null;
+  futures_volume_profile?: Record<string, number>;
 }
 
 export interface RawExpiry {

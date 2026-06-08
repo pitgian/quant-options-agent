@@ -105,7 +105,7 @@ export async function fetchOptionsData(
   const crossSymbolConfluence = parseCrossSymbolConfluence(raw.cross_symbol_confluence, upperSymbol);
 
   // Step 5: Build DayTradingData
-  return buildDayTradingData(
+  const dayTradingData = buildDayTradingData(
     upperSymbol,
     symbolData.spot,
     generatedAt,
@@ -115,6 +115,13 @@ export async function fetchOptionsData(
     gexStrikeData,
     crossSymbolConfluence
   );
+
+  // Propagate futures volume profile if present
+  if (symbolData.futures_volume_profile) {
+    dayTradingData.futuresVolumeProfile = symbolData.futures_volume_profile;
+  }
+
+  return dayTradingData;
 }
 
 // ============================================================================

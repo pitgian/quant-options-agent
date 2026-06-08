@@ -74,6 +74,8 @@ export interface DayTradingData {
   lastUpdated?: string;
   /** Cross-symbol confluence data (pre-computed by Python backend) */
   crossSymbolConfluence?: CrossSymbolConfluence;
+  /** Futures volume profile mapping strike price to total traded volume */
+  futuresVolumeProfile?: Record<string, number>;
 }
 
 /**

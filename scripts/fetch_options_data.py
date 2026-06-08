@@ -966,6 +966,72 @@ def calculate_confluence_levels(
     return candidates
 
 
+def fetch_futures_volume_profile(
+    symbol: str,
+    spot_price: float,
+    strikes: List[float],
+    days_back: int = 30,
+) -> Dict[str, float]:
+    """
+    Fetches futures candles (1h interval) for the past 30 days.
+    Scales the futures prices to match the symbol spot price.
+    Distributes volume of each candle across the symbol's option strikes.
+    Returns a dict mapping strike price (string) to total volume (float).
+    """
+    # Map index/ETF symbols to correct futures contract
+    futures_symbol = "ES=F" if symbol in ["SPY", "SPX"] else "NQ=F"
+    logger.info(f"📈 Fetching futures volume profile for {symbol} using {futures_symbol}...")
+    
+    try:
+        futures_ticker = yf.Ticker(futures_symbol)
+        # Fetch 30 days of 1-hour candles
+        hist = futures_ticker.history(period=f"{days_back}d", interval="1h")
+        if hist.empty:
+            logger.warning(f"⚠️ No futures data returned for {futures_symbol}")
+            return {}
+        
+        # Get the current/last close of futures to calculate scaling ratio
+        futures_last_close = hist["Close"].iloc[-1]
+        ratio = spot_price / futures_last_close
+        
+        # Initialize profile
+        profile = {strike: 0.0 for strike in strikes}
+        
+        # Sort strikes for fast lookups
+        strikes_sorted = sorted(strikes)
+        if not strikes_sorted:
+            return {}
+            
+        for _, row in hist.iterrows():
+            high = row["High"] * ratio
+            low = row["Low"] * ratio
+            volume = row["Volume"]
+            
+            if pd.isna(high) or pd.isna(low) or pd.isna(volume) or volume <= 0:
+                continue
+                
+            # Find strikes within [low, high]
+            strikes_in_range = [s for s in strikes_sorted if low <= s <= high]
+            
+            if strikes_in_range:
+                vol_share = volume / len(strikes_in_range)
+                for s in strikes_in_range:
+                    profile[s] += vol_share
+            else:
+                # Assign to the single closest strike
+                closest_strike = min(strikes_sorted, key=lambda s: abs(s - (high + low)/2))
+                profile[closest_strike] += volume
+                
+        # Round volumes for clean JSON and serialize strike keys as strings
+        profile_str_keys = {str(strike): round(vol, 1) for strike, vol in profile.items() if vol > 0}
+        return profile_str_keys
+        
+    except Exception as e:
+        logger.error(f"❌ Error computing futures volume profile for {symbol}: {e}")
+        return {}
+
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
@@ -1237,12 +1303,21 @@ def fetch_symbol_data(
     # 8. Assemble per-symbol output (matches RawSymbolData interface)
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # Extract unique strikes from option chains
+    strikes = list({
+        opt["strike"]
+        for exp_info in all_options_by_expiry
+        for opt in exp_info["options"]
+    })
+    futures_volume_profile = fetch_futures_volume_profile(symbol, spot, strikes)
+
     result = {
         "spot": spot,
         "generated": now_iso,
         "oi_fallback_used": oi_fallback_used,
         "total_net_gex": round(total_net_gex, 2),
         "gex_flip_point": gex_flip_point,
+        "futures_volume_profile": futures_volume_profile,
         "expiries": raw_expiries,
         "walls": {
             "put_walls": put_walls,
