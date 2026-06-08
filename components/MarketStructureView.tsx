@@ -57,6 +57,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
 
   const [zoomPct, setZoomPct] = useState(3.0);
   const [flashVisible, setFlashVisible] = useState(false);
+  const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '2d' | '7d' | '30d' | '90d'>('auto');
 
   useEffect(() => {
     if (showUpdatedFlash) {
@@ -85,16 +86,20 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       const sd = data.gexStrikeData.find(d => d.strike === strike);
       const optionsVolume = sd ? (sd.callOI + sd.putOI + sd.callVolume + sd.putVolume) : 0;
 
-      // Look up in futures volume profile based on selected expiryFilter
+      // Look up in futures volume profile based on selected expiryFilter or manual override
       let futuresVolume = 0;
       if (data.futuresVolumeProfiles) {
-        // Map expiryFilter ('0dte' | '1-7dte' | '8-30dte' | '30+dte' | 'all') to timeframe ('2d' | '7d' | '30d' | '90d' | '30d')
         let tf = '30d';
-        if (expiryFilter === '0dte') tf = '2d';
-        else if (expiryFilter === '1-7dte') tf = '7d';
-        else if (expiryFilter === '8-30dte') tf = '30d';
-        else if (expiryFilter === '30+dte') tf = '90d';
-        else if (expiryFilter === 'all') tf = '30d';
+        if (selectedFuturesTf === 'auto') {
+          // Map expiryFilter ('0dte' | '1-7dte' | '8-30dte' | '30+dte' | 'all') to timeframe ('2d' | '7d' | '30d' | '90d' | '30d')
+          if (expiryFilter === '0dte') tf = '2d';
+          else if (expiryFilter === '1-7dte') tf = '7d';
+          else if (expiryFilter === '8-30dte') tf = '30d';
+          else if (expiryFilter === '30+dte') tf = '90d';
+          else if (expiryFilter === 'all') tf = '30d';
+        } else {
+          tf = selectedFuturesTf;
+        }
 
         const profileForTf = data.futuresVolumeProfiles[tf];
         if (profileForTf) {
@@ -125,7 +130,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     });
 
     return rawProfile;
-  }, [data, expiryFilter]);
+  }, [data, expiryFilter, selectedFuturesTf]);
 
   // ---- Filter profile based on zoom percentage around spot ----
   const zoomedProfile = useMemo(() => {
@@ -444,15 +449,34 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
             </div>
 
             {/* DTE Selector */}
-            <select
-              value={expiryFilter}
-              onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
-              className="bg-[#1e293b] border border-gray-700 text-gray-300 text-sm rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
-            >
-              {EXPIRY_OPTIONS.map((opt) => (
-                <option key={opt.key} value={opt.key}>{opt.label}</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Opzioni:</span>
+              <select
+                value={expiryFilter}
+                onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
+                className="bg-[#1e293b] border border-gray-700 text-gray-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
+              >
+                {EXPIRY_OPTIONS.map((opt) => (
+                  <option key={opt.key} value={opt.key}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Futures Timeframe Selector */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Futures:</span>
+              <select
+                value={selectedFuturesTf}
+                onChange={(e) => setSelectedFuturesTf(e.target.value as 'auto' | '2d' | '7d' | '30d' | '90d')}
+                className="bg-[#1e293b] border border-gray-700 text-gray-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
+              >
+                <option value="auto">Auto (Allineato)</option>
+                <option value="2d">2 Giorni (15m)</option>
+                <option value="7d">7 Giorni (30m)</option>
+                <option value="30d">30 Giorni (1h)</option>
+                <option value="90d">90 Giorni (1d)</option>
+              </select>
+            </div>
 
             {/* Refresh */}
             <button
@@ -514,12 +538,25 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/50"></span>
                     <span>
-                      <strong>Profilo Futures:</strong> Storico allineato alla scadenza ({
-                        expiryFilter === '0dte' ? '2 Giorni, candele a 15m' :
-                        expiryFilter === '1-7dte' ? '7 Giorni, candele a 30m' :
-                        expiryFilter === '8-30dte' ? '30 Giorni, candele a 1h' :
-                        expiryFilter === '30+dte' ? '90 Giorni, candele a 1d' :
-                        '30 Giorni, candele a 1h'
+                      <strong>Profilo Futures:</strong> Storico {
+                        selectedFuturesTf === 'auto' ? 'allineato alla scadenza' : 'personalizzato'
+                      } ({
+                        (() => {
+                          let tf = '30d';
+                          if (selectedFuturesTf === 'auto') {
+                            if (expiryFilter === '0dte') tf = '2d';
+                            else if (expiryFilter === '1-7dte') tf = '7d';
+                            else if (expiryFilter === '8-30dte') tf = '30d';
+                            else if (expiryFilter === '30+dte') tf = '90d';
+                          } else {
+                            tf = selectedFuturesTf;
+                          }
+                          return tf === '2d' ? '2 Giorni, candele a 15m' :
+                                 tf === '7d' ? '7 Giorni, candele a 30m' :
+                                 tf === '30d' ? '30 Giorni, candele a 1h' :
+                                 tf === '90d' ? '90 Giorni, candele a 1d' :
+                                 '30 Giorni, candele a 1h';
+                        })()
                       }, indicizzato allo spot)
                     </span>
                   </div>
