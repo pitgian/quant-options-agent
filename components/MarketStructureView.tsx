@@ -670,7 +670,11 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                     </div>
                     <div className="flex items-center justify-between text-[11px] text-gray-400">
                       <span>Prezzo Confine:</span>
-                      <span className="font-mono font-bold text-gray-200">${analysis.nearestBoundary.strike.toFixed(0)}</span>
+                      <span className="font-mono font-bold text-gray-200 text-right">
+                        {analysis.nearestBoundary.low === analysis.nearestBoundary.high
+                          ? `$${analysis.nearestBoundary.low.toFixed(0)}`
+                          : `$${analysis.nearestBoundary.low.toFixed(0)} - $${analysis.nearestBoundary.high.toFixed(0)}`}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between text-[11px] text-gray-400">
                       <span>Distanza dallo Spot:</span>
