@@ -70,8 +70,7 @@ export function buildDayTradingData(
         label: isGammaPeak ? 'Major Gamma Wall' : 'Put Wall',
       };
     })
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 7);
+    .sort((a, b) => a.distance - b.distance);
 
   // Convert call walls to resistance levels (above spot)
   const resistance: DayTradingLevel[] = callWalls
@@ -90,8 +89,7 @@ export function buildDayTradingData(
         label: isGammaPeak ? 'Major Gamma Wall' : 'Call Wall',
       };
     })
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 7);
+    .sort((a, b) => a.distance - b.distance);
 
   // Create Gamma Flip Pivot level if it is within range
   const flipLevel: DayTradingLevel | null = gexRegime.flipPoint !== null ? {
@@ -137,14 +135,27 @@ export function buildDayTradingData(
   const mergedSupport = mergeLevels(support, crossSupport, spot, 'support');
   const mergedResistance = mergeLevels(resistance, crossResistance, spot, 'resistance');
 
+  // Filter out clustered levels (minimum 0.4% distance from each other)
+  const spacedSupport = filterSpacedLevels(mergedSupport, spot, 0.4);
+  const spacedResistance = filterSpacedLevels(mergedResistance, spot, 0.4);
+
+  // Keep top 5 closest to spot
+  const finalSupport = spacedSupport
+    .sort((a, b) => Math.abs(a.distance) - Math.abs(b.distance))
+    .slice(0, 5);
+
+  const finalResistance = spacedResistance
+    .sort((a, b) => Math.abs(a.distance) - Math.abs(b.distance))
+    .slice(0, 5);
+
   return {
     symbol,
     spot,
     timestamp,
     lastUpdated: timestamp, // backward compat alias
     gexRegime,
-    resistance: mergedResistance,
-    support: mergedSupport,
+    resistance: finalResistance,
+    support: finalSupport,
     gexStrikeData,
     crossSymbolConfluence,
   };
@@ -264,4 +275,35 @@ function mergeLevels(
 
   // Allow up to 10 levels per side (7 regular + 3 cross-symbol buffer)
   return merged.slice(0, 10);
+}
+
+/**
+ * Filters out key levels that are too close to each other (clustering),
+ * prioritizing the levels with higher strength/score.
+ *
+ * Enforces a minimum distance of `minDistancePct` (e.g. 0.4% of spot).
+ */
+function filterSpacedLevels(
+  levels: DayTradingLevel[],
+  spot: number,
+  minDistancePct: number
+): DayTradingLevel[] {
+  if (levels.length <= 1) return levels;
+
+  const minDistance = spot * (minDistancePct / 100);
+
+  // Sort by strength descending so we prioritize keeping stronger levels
+  const sortedByStrength = [...levels].sort((a, b) => b.strength - a.strength);
+
+  const selected: DayTradingLevel[] = [];
+
+  for (const level of sortedByStrength) {
+    // Check if too close to any already selected level
+    const isTooClose = selected.some(s => Math.abs(s.strike - level.strike) < minDistance);
+    if (!isTooClose) {
+      selected.push(level);
+    }
+  }
+
+  return selected;
 }
