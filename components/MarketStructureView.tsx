@@ -117,39 +117,14 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
   // ---- Node detection (HVN & LVN) ----
   const nodes = useMemo(() => {
     if (zoomedProfile.length === 0) {
-      return { hvnStrikes: new Set<number>(), lvnStrikes: new Set<number>(), lvnZones: new Map<number, { low: number; high: number }>(), smoothedProfile: [] };
+      return { hvnStrikes: new Set<number>(), lvnStrikes: new Set<number>(), lvnZones: new Map<number, { low: number; high: number }>() };
     }
 
     const hasFutures = zoomedProfile.some(d => d.futuresVolume > 0);
 
-    // Smooth profile volumes using a 3-point moving average to filter noise
-    const smoothedProfile = zoomedProfile.map((item, idx) => {
-      let optSum = 0;
-      let futSum = 0;
-      let count = 0;
-
-      for (let i = -1; i <= 1; i++) {
-        const t = idx + i;
-        if (t >= 0 && t < zoomedProfile.length) {
-          optSum += zoomedProfile[t].optionsVolume;
-          futSum += zoomedProfile[t].futuresVolume;
-          count++;
-        }
-      }
-
-      return {
-        strike: item.strike,
-        optionsVolume: item.optionsVolume,
-        futuresVolume: item.futuresVolume,
-        distancePct: item.distancePct,
-        smoothedOptVolume: count > 0 ? optSum / count : 0,
-        smoothedFutVolume: count > 0 ? futSum / count : 0,
-      };
-    });
-
-    // Median values of smoothed target volume for significance filters
-    const targetVolumes = smoothedProfile
-      .map(d => hasFutures ? d.smoothedFutVolume : d.smoothedOptVolume)
+    // Median values of target volume for significance filters (computed on raw volumes)
+    const targetVolumes = zoomedProfile
+      .map(d => hasFutures ? d.futuresVolume : d.optionsVolume)
       .filter(v => v > 0);
     targetVolumes.sort((a, b) => a - b);
     const medianVolume = targetVolumes.length > 0 ? targetVolumes[Math.floor(targetVolumes.length / 2)] : 0;
@@ -158,35 +133,38 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     const lvnStrikes = new Set<number>();
     const lvnZones = new Map<number, { low: number; high: number }>();
 
-    // Detect local peaks (HVNs) and local troughs (LVNs) using a 5-strike window
-    for (let i = 2; i < smoothedProfile.length - 2; i++) {
+    // Detect local peaks (HVNs) and local troughs (LVNs) using a 5-strike window on RAW volumes
+    for (let i = 2; i < zoomedProfile.length - 2; i++) {
       const window = [
-        smoothedProfile[i - 2],
-        smoothedProfile[i - 1],
-        smoothedProfile[i],
-        smoothedProfile[i + 1],
-        smoothedProfile[i + 2],
-      ].map(d => hasFutures ? d.smoothedFutVolume : d.smoothedOptVolume);
+        zoomedProfile[i - 2],
+        zoomedProfile[i - 1],
+        zoomedProfile[i],
+        zoomedProfile[i + 1],
+        zoomedProfile[i + 2],
+      ].map(d => hasFutures ? d.futuresVolume : d.optionsVolume);
 
       const v_curr = window[2];
-      const max_surrounding = Math.max(window[0], window[1], window[3], window[4]);
+      const max_val = Math.max(...window);
       const min_val = Math.min(...window);
+      const max_surrounding = Math.max(window[0], window[1], window[3], window[4]);
 
-      // Peak (HVN)
-      if (v_curr >= window[1] && v_curr >= window[3] && v_curr > medianVolume * 1.15) {
-        hvnStrikes.add(smoothedProfile[i].strike);
+      // Peak (HVN): must be the absolute maximum in the 5-strike window
+      // and must be higher than medianVolume * 1.15
+      if (v_curr === max_val && v_curr > medianVolume * 1.15) {
+        hvnStrikes.add(zoomedProfile[i].strike);
       }
 
       // Trough (LVN): deepest valley in the 5-strike neighborhood
-      // Check that the trough has at least a 50% drop compared to the highest volume in its neighborhood
-      if (v_curr === min_val && v_curr <= max_surrounding * 0.5 && v_curr < medianVolume * 0.8) {
-        lvnStrikes.add(smoothedProfile[i].strike);
+      // Must be a deep drop (<= 50% of surrounding peaks), and must be low volume overall (< medianVolume * 0.8)
+      // Also ensure there is some non-zero volume surrounding it (max_surrounding > 0) to avoid tagging empty strikes
+      if (v_curr === min_val && max_surrounding > 0 && v_curr <= max_surrounding * 0.5 && v_curr < medianVolume * 0.8) {
+        lvnStrikes.add(zoomedProfile[i].strike);
 
         // Expand left to define the transition zone
         let leftIdx = i;
         while (leftIdx > 0) {
-          const v_left = hasFutures ? smoothedProfile[leftIdx - 1].smoothedFutVolume : smoothedProfile[leftIdx - 1].smoothedOptVolume;
-          if (v_left <= v_curr * 1.4 && v_left < medianVolume * 0.8) {
+          const v_left = hasFutures ? zoomedProfile[leftIdx - 1].futuresVolume : zoomedProfile[leftIdx - 1].optionsVolume;
+          if (v_left <= v_curr * 1.5 && v_left < medianVolume * 0.7) {
             leftIdx--;
           } else {
             break;
@@ -195,23 +173,23 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
 
         // Expand right to define the transition zone
         let rightIdx = i;
-        while (rightIdx < smoothedProfile.length - 1) {
-          const v_right = hasFutures ? smoothedProfile[rightIdx + 1].smoothedFutVolume : smoothedProfile[rightIdx + 1].smoothedOptVolume;
-          if (v_right <= v_curr * 1.4 && v_right < medianVolume * 0.8) {
+        while (rightIdx < zoomedProfile.length - 1) {
+          const v_right = hasFutures ? zoomedProfile[rightIdx + 1].futuresVolume : zoomedProfile[rightIdx + 1].optionsVolume;
+          if (v_right <= v_curr * 1.5 && v_right < medianVolume * 0.7) {
             rightIdx++;
           } else {
             break;
           }
         }
 
-        lvnZones.set(smoothedProfile[i].strike, {
-          low: smoothedProfile[leftIdx].strike,
-          high: smoothedProfile[rightIdx].strike,
+        lvnZones.set(zoomedProfile[i].strike, {
+          low: zoomedProfile[leftIdx].strike,
+          high: zoomedProfile[rightIdx].strike,
         });
       }
     }
 
-    return { hvnStrikes, lvnStrikes, lvnZones, smoothedProfile };
+    return { hvnStrikes, lvnStrikes, lvnZones };
   }, [zoomedProfile]);
 
   // ---- Merge overlapping LVN zones ----
@@ -496,6 +474,16 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                 <p className="text-xs text-gray-400 mt-1">
                   Distribuzione dell'Open Interest + Volume delle Opzioni (sinistra) e dei Volumi dei Futures (destra).
                 </p>
+                <div className="flex flex-wrap gap-4 mt-3 pt-3 border-t border-gray-800/60 text-[11px] text-gray-400">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500/50"></span>
+                    <span><strong>Profilo Opzioni:</strong> Posizionamento corrente (Open Interest + Volume Intraday)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-green-500/50"></span>
+                    <span><strong>Profilo Futures:</strong> Storico ultimi 30 giorni (candele a 1 ora, indicizzate allo spot)</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -538,7 +526,11 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                         className="h-full rounded-l transition-all duration-300 flex items-center justify-end pr-2 overflow-hidden"
                         style={{
                           width: `${Math.max(2, optBarWidth)}%`,
-                          backgroundColor: isHVN ? 'rgba(99,102,241,0.45)' : 'rgba(59,130,246,0.25)',
+                          backgroundColor: isHVN
+                            ? 'rgba(99,102,241,0.45)'
+                            : isLVN
+                            ? 'rgba(244,63,94,0.08)'
+                            : 'rgba(59,130,246,0.25)',
                         }}
                       >
                         {optBarWidth > 15 && (
