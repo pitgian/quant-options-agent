@@ -14,7 +14,7 @@ import { Wall, GexRegime, DayTradingLevel, DayTradingData, GexStrikeData, CrossS
 // ============================================================================
 
 const DAY_TRADING_MAX_DISTANCE_PCT = 5; // Only show levels within 5% of spot for day trading
-const MIN_CROSS_SYMBOL_SCORE = 30;      // Minimum cross_score for meaningful confluence
+const MIN_CROSS_SYMBOL_SCORE = 60;      // Minimum cross_score for meaningful confluence
 
 // ============================================================================
 // DAY TRADING DATA BUILDER

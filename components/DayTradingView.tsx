@@ -47,27 +47,27 @@ const OIVolBars: React.FC<{
     <div className="flex flex-col gap-0.5">
       {/* OI bar */}
       <div className="flex items-center gap-1.5">
-        <span className="text-[9px] text-gray-500 w-5 shrink-0">OI</span>
-        <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+        <span className="text-[11px] text-gray-500 w-6 shrink-0 font-medium">OI</span>
+        <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
           <div
             className="h-full rounded-full transition-all duration-300"
             style={{ width: `${oiPct}%`, backgroundColor: 'rgba(99,102,241,0.6)' }}
           />
         </div>
-        <span className="text-[9px] text-gray-500 w-10 text-right">
+        <span className="text-[11px] font-mono text-gray-400 w-12 text-right">
           {formatCompact(oi)}
         </span>
       </div>
       {/* Vol bar */}
       <div className="flex items-center gap-1.5">
-        <span className="text-[9px] text-gray-500 w-5 shrink-0">Vol</span>
-        <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+        <span className="text-[11px] text-gray-500 w-6 shrink-0 font-medium">Vol</span>
+        <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
           <div
             className="h-full rounded-full transition-all duration-300"
             style={{ width: `${volPct}%`, backgroundColor: 'rgba(34,197,94,0.6)' }}
           />
         </div>
-        <span className="text-[9px] text-gray-500 w-10 text-right">
+        <span className="text-[11px] font-mono text-gray-400 w-12 text-right">
           {formatCompact(vol)}
         </span>
       </div>
@@ -95,7 +95,7 @@ const LevelRow: React.FC<{
     <div
       onMouseEnter={() => onHover(level.strike)}
       onMouseLeave={() => onHover(null)}
-      className="flex flex-col px-4 py-2 rounded-lg transition-all duration-150 cursor-default"
+      className="flex flex-col px-4 py-2.5 rounded-lg transition-all duration-150 cursor-default"
       style={{
         backgroundColor: isHovered
           ? (isCross ? 'rgba(245,158,11,0.08)' : (isResistance ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)'))
@@ -103,63 +103,67 @@ const LevelRow: React.FC<{
         borderLeft: isCross ? '2px solid rgba(245,158,11,0.3)' : 'none',
       }}
     >
-      <div className="flex items-center gap-3">
+      <div className="grid grid-cols-[80px_192px_64px_1fr] gap-4 items-center">
         {/* Strike price */}
-        <span className="font-mono text-sm font-semibold w-16" style={{ color }}>
+        <span className="font-mono text-base font-bold" style={{ color }}>
           ${level.strike.toFixed(0)}
         </span>
 
         {/* Label badge — amber ★ Cross-Symbol or regular label */}
-        {isCross ? (
-          <span
-            className="text-[11px] font-medium px-2 py-0.5 rounded"
-            style={{
-              backgroundColor: 'rgba(245,158,11,0.15)',
-              color: '#f59e0b',
-            }}
-          >
-            ★ Cross-Symbol
-          </span>
-        ) : (
-          <span
-            className="text-[11px] font-medium px-2 py-0.5 rounded"
-            style={{
-              backgroundColor: isResistance ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-              color,
-            }}
-          >
-            {level.label}
-          </span>
-        )}
+        <div className="flex items-center">
+          {isCross ? (
+            <span
+              className="text-[12px] font-semibold px-2.5 py-0.5 rounded"
+              style={{
+                backgroundColor: 'rgba(245,158,11,0.15)',
+                color: '#f59e0b',
+              }}
+            >
+              ★ Cross-Symbol
+            </span>
+          ) : (
+            <span
+              className="text-[12px] font-semibold px-2.5 py-0.5 rounded"
+              style={{
+                backgroundColor: isResistance ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+                color,
+              }}
+            >
+              {level.label}
+            </span>
+          )}
+        </div>
 
         {/* Distance */}
         <span
-          className="text-xs font-mono font-medium w-12 text-right"
+          className="text-sm font-mono font-semibold text-right"
           style={{ color }}
         >
           {formatDistance(level.distance)}
         </span>
 
         {/* OI/Vol visual bars */}
-        <OIVolBars oi={level.totalOI} vol={level.totalVolume} maxOI={maxOI} maxVol={maxVol} />
+        <div className="flex justify-start pl-2">
+          <OIVolBars oi={level.totalOI} vol={level.totalVolume} maxOI={maxOI} maxVol={maxVol} />
+        </div>
       </div>
 
       {/* Cross-symbol sub-row: paired symbol info with OI/Vol */}
       {isCross && level.pairedSymbol && level.pairedStrike != null && (
-        <div className="flex items-center gap-1.5 mt-0.5" style={{ marginLeft: '76px' }}>
-          <span className="text-[10px] text-amber-400/60">↳</span>
-          <span className="text-[10px] text-gray-500">
-            {level.pairedSymbol}: {level.pairedStrike.toLocaleString()}
+        <div className="flex items-center gap-2 mt-1.5" style={{ marginLeft: '96px' }}>
+          <span className="text-xs text-amber-400/60 font-bold">↳</span>
+          <span className="text-xs text-gray-400">
+            {level.pairedSymbol}: <strong className="text-gray-200 font-mono">${level.pairedStrike.toFixed(0)}</strong>
             {level.pairedWallType && (
-              <span className="ml-1 text-amber-400/50">
+              <span className="ml-2 px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-400/10 text-amber-400/80">
                 {level.pairedWallType === 'put' ? 'Put Wall' : level.pairedWallType === 'call' ? 'Call Wall' : level.pairedWallType}
               </span>
             )}
             {level.pairedOI != null && (
-              <span className="ml-1.5 text-gray-600">| OI: {formatCompact(level.pairedOI)}</span>
+              <span className="ml-2.5 text-gray-500 font-mono">| OI: <span className="text-gray-300">{formatCompact(level.pairedOI)}</span></span>
             )}
             {level.pairedVol != null && (
-              <span className="ml-1.5 text-gray-600">| Vol: {formatCompact(level.pairedVol)}</span>
+              <span className="ml-2.5 text-gray-500 font-mono">| Vol: <span className="text-gray-300">{formatCompact(level.pairedVol)}</span></span>
             )}
           </span>
         </div>
@@ -183,18 +187,18 @@ const RegimeBadge: React.FC<{
   const c = colors[regime];
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       <div
-        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold"
         style={{ backgroundColor: c.bg, color: c.text }}
       >
         <span>{c.icon}</span>
         <span>{label}</span>
-        <span className="text-[11px] opacity-70">({formatGEX(netGEX)})</span>
+        <span className="text-xs opacity-75 font-mono">({formatGEX(netGEX)})</span>
       </div>
       {flipPoint !== null && (
-        <span className="text-[11px] text-gray-500 pl-1">
-          Flip: ${formatStrike(flipPoint)}
+        <span className="text-xs text-gray-400 pl-1 font-medium">
+          Flip: <strong className="text-gray-300 font-mono">${formatStrike(flipPoint)}</strong>
         </span>
       )}
     </div>
@@ -213,17 +217,17 @@ const TradingGuide: React.FC = () => {
       >
         <div className="flex items-center gap-2">
           <span className="text-amber-400 text-sm">💡</span>
-          <span className="text-[13px] font-semibold text-gray-300">Guida Operativa: Come usare questi livelli</span>
+          <span className="text-sm font-semibold text-gray-300">Guida Operativa: Come usare questi livelli</span>
         </div>
-        <span className={`text-[10px] text-gray-500 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
+        <span className={`text-xs text-gray-500 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
           ▼
         </span>
       </button>
       
       {isOpen && (
-        <div className="px-4 pb-4 pt-1.5 border-t border-slate-800/50 text-[11px] text-gray-400 space-y-3.5 animate-fadeIn">
+        <div className="px-4 pb-4 pt-1.5 border-t border-slate-800/50 text-xs text-gray-400 space-y-3.5 animate-fadeIn">
           <div>
-            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5">
+            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5 text-[13px]">
               <span className="text-red-400 text-xs">🛑</span> Major Gamma Wall (Supporti e Resistenze dei Market Maker)
             </h4>
             <p className="pl-4 leading-relaxed text-gray-400">
@@ -236,7 +240,7 @@ const TradingGuide: React.FC = () => {
           </div>
 
           <div>
-            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5">
+            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5 text-[13px]">
               <span className="text-blue-400 text-xs">⇄</span> Gamma Flip (Pivot di Volatilità)
             </h4>
             <p className="pl-4 leading-relaxed text-gray-400">
@@ -249,7 +253,7 @@ const TradingGuide: React.FC = () => {
           </div>
 
           <div>
-            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5">
+            <h4 className="font-bold text-gray-200 mb-1 flex items-center gap-1.5 text-[13px]">
               <span className="text-purple-400 text-xs">📅</span> Scelta delle Scadenze (Filtro DTE)
             </h4>
             <p className="pl-4 leading-relaxed text-gray-400">
@@ -459,9 +463,9 @@ export function DayTradingView() {
           {/* ---- RESISTANCE ---- */}
           {sortedResistance.length > 0 && (
             <div className="mb-2">
-              <div className="flex items-center gap-2 px-4 mb-1">
+              <div className="flex items-center gap-2 px-4 mb-1.5">
                 <div className="h-px flex-1 bg-red-900/40" />
-                <span className="text-[11px] font-semibold tracking-widest text-red-400/70 uppercase">
+                <span className="text-xs font-semibold tracking-widest text-red-400/70 uppercase">
                   Resistance
                 </span>
                 <div className="h-px flex-1 bg-red-900/40" />
@@ -484,11 +488,11 @@ export function DayTradingView() {
           )}
 
           {/* ---- SPOT LINE ---- */}
-          <div className="flex items-center gap-3 my-3 px-4">
+          <div className="flex items-center gap-4 my-4 px-4">
             <div className="h-px flex-1" style={{ background: 'linear-gradient(to right, transparent, #3b82f6, transparent)' }} />
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-blue-400 tracking-wider uppercase">Spot</span>
-              <span className="text-sm font-mono font-bold text-blue-300">${spot.toFixed(2)}</span>
+            <div className="flex items-center gap-2.5">
+              <span className="text-sm font-bold text-blue-400 tracking-wider uppercase">Spot</span>
+              <span className="text-base font-mono font-bold text-blue-300">${spot.toFixed(2)}</span>
             </div>
             <div className="h-px flex-1" style={{ background: 'linear-gradient(to right, #3b82f6, transparent)' }} />
           </div>
@@ -496,9 +500,9 @@ export function DayTradingView() {
           {/* ---- SUPPORT ---- */}
           {sortedSupport.length > 0 && (
             <div className="mt-2">
-              <div className="flex items-center gap-2 px-4 mb-1">
+              <div className="flex items-center gap-2 px-4 mb-1.5">
                 <div className="h-px flex-1 bg-green-900/40" />
-                <span className="text-[11px] font-semibold tracking-widest text-green-400/70 uppercase">
+                <span className="text-xs font-semibold tracking-widest text-green-400/70 uppercase">
                   Support
                 </span>
                 <div className="h-px flex-1 bg-green-900/40" />
