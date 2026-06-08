@@ -85,9 +85,27 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       const sd = data.gexStrikeData.find(d => d.strike === strike);
       const optionsVolume = sd ? (sd.callOI + sd.putOI + sd.callVolume + sd.putVolume) : 0;
 
-      // Look up in futures volume profile
+      // Look up in futures volume profile based on selected expiryFilter
       let futuresVolume = 0;
-      if (data.futuresVolumeProfile) {
+      if (data.futuresVolumeProfiles) {
+        // Map expiryFilter ('0dte' | '1-7dte' | '8-30dte' | '30+dte' | 'all') to timeframe ('2d' | '7d' | '30d' | '90d' | '30d')
+        let tf = '30d';
+        if (expiryFilter === '0dte') tf = '2d';
+        else if (expiryFilter === '1-7dte') tf = '7d';
+        else if (expiryFilter === '8-30dte') tf = '30d';
+        else if (expiryFilter === '30+dte') tf = '90d';
+        else if (expiryFilter === 'all') tf = '30d';
+
+        const profileForTf = data.futuresVolumeProfiles[tf];
+        if (profileForTf) {
+          futuresVolume = profileForTf[strike.toString()]
+            || profileForTf[strike.toFixed(1)]
+            || profileForTf[strike.toFixed(2)]
+            || profileForTf[strike.toFixed(0)]
+            || 0;
+        }
+      } else if (data.futuresVolumeProfile) {
+        // Fallback to legacy single profile
         const exactVal = data.futuresVolumeProfile[strike.toString()]
           || data.futuresVolumeProfile[strike.toFixed(1)]
           || data.futuresVolumeProfile[strike.toFixed(2)]
@@ -107,7 +125,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     });
 
     return rawProfile;
-  }, [data]);
+  }, [data, expiryFilter]);
 
   // ---- Filter profile based on zoom percentage around spot ----
   const zoomedProfile = useMemo(() => {
@@ -495,7 +513,15 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/50"></span>
-                    <span><strong>Profilo Futures:</strong> Storico ultimi 30 giorni (candele a 1 ora, indicizzate allo spot)</span>
+                    <span>
+                      <strong>Profilo Futures:</strong> Storico allineato alla scadenza ({
+                        expiryFilter === '0dte' ? '2 Giorni, candele a 15m' :
+                        expiryFilter === '1-7dte' ? '7 Giorni, candele a 30m' :
+                        expiryFilter === '8-30dte' ? '30 Giorni, candele a 1h' :
+                        expiryFilter === '30+dte' ? '90 Giorni, candele a 1d' :
+                        '30 Giorni, candele a 1h'
+                      }, indicizzato allo spot)
+                    </span>
                   </div>
                 </div>
               </div>

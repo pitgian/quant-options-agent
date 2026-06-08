@@ -970,22 +970,23 @@ def fetch_futures_volume_profile(
     symbol: str,
     spot_price: float,
     strikes: List[float],
-    days_back: int = 30,
+    period: str = "30d",
+    interval: str = "1h",
 ) -> Dict[str, float]:
     """
-    Fetches futures candles (1h interval) for the past 30 days.
+    Fetches futures candles for a given period and interval.
     Scales the futures prices to match the symbol spot price.
     Distributes volume of each candle across the symbol's option strikes.
     Returns a dict mapping strike price (string) to total volume (float).
     """
     # Map index/ETF symbols to correct futures contract
     futures_symbol = "ES=F" if symbol in ["SPY", "SPX"] else "NQ=F"
-    logger.info(f"📈 Fetching futures volume profile for {symbol} using {futures_symbol}...")
+    logger.info(f"📈 Fetching futures volume profile for {symbol} using {futures_symbol} ({period}/{interval})...")
     
     try:
         futures_ticker = yf.Ticker(futures_symbol)
-        # Fetch 30 days of 1-hour candles
-        hist = futures_ticker.history(period=f"{days_back}d", interval="1h")
+        # Fetch futures candles based on period and interval
+        hist = futures_ticker.history(period=period, interval=interval)
         if hist.empty:
             logger.warning(f"⚠️ No futures data returned for {futures_symbol}")
             return {}
@@ -1309,7 +1310,12 @@ def fetch_symbol_data(
         for exp_info in all_options_by_expiry
         for opt in exp_info["options"]
     })
-    futures_volume_profile = fetch_futures_volume_profile(symbol, spot, strikes)
+    
+    # Pre-calculate multiple timeframes for options expiry alignment
+    futures_volume_profile_2d = fetch_futures_volume_profile(symbol, spot, strikes, period="2d", interval="15m")
+    futures_volume_profile_7d = fetch_futures_volume_profile(symbol, spot, strikes, period="7d", interval="30m")
+    futures_volume_profile_30d = fetch_futures_volume_profile(symbol, spot, strikes, period="30d", interval="1h")
+    futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, period="90d", interval="1d")
 
     result = {
         "spot": spot,
@@ -1317,7 +1323,13 @@ def fetch_symbol_data(
         "oi_fallback_used": oi_fallback_used,
         "total_net_gex": round(total_net_gex, 2),
         "gex_flip_point": gex_flip_point,
-        "futures_volume_profile": futures_volume_profile,
+        "futures_volume_profile": futures_volume_profile_30d, # Keep legacy 30d profile as default
+        "futures_volume_profiles": {
+            "2d": futures_volume_profile_2d,
+            "7d": futures_volume_profile_7d,
+            "30d": futures_volume_profile_30d,
+            "90d": futures_volume_profile_90d,
+        },
         "expiries": raw_expiries,
         "walls": {
             "put_walls": put_walls,

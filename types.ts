@@ -76,6 +76,8 @@ export interface DayTradingData {
   crossSymbolConfluence?: CrossSymbolConfluence;
   /** Futures volume profile mapping strike price to total traded volume */
   futuresVolumeProfile?: Record<string, number>;
+  /** Futures volume profiles by timeframe preset (e.g. '2d', '7d', '30d', '90d') */
+  futuresVolumeProfiles?: Record<string, Record<string, number>>;
 }
 
 /**
