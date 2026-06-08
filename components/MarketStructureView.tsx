@@ -117,7 +117,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
   // ---- Node detection (HVN & LVN) ----
   const nodes = useMemo(() => {
     if (zoomedProfile.length === 0) {
-      return { hvnStrikes: new Set<number>(), lvnStrikes: new Set<number>(), smoothedProfile: [] };
+      return { hvnStrikes: new Set<number>(), lvnStrikes: new Set<number>(), lvnZones: new Map<number, { low: number; high: number }>(), smoothedProfile: [] };
     }
 
     const hasFutures = zoomedProfile.some(d => d.futuresVolume > 0);
@@ -156,31 +156,88 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
 
     const hvnStrikes = new Set<number>();
     const lvnStrikes = new Set<number>();
+    const lvnZones = new Map<number, { low: number; high: number }>();
 
-    // Detect local peaks (HVNs) and local troughs (LVNs)
-    for (let i = 1; i < smoothedProfile.length - 1; i++) {
-      const prev = hasFutures ? smoothedProfile[i - 1].smoothedFutVolume : smoothedProfile[i - 1].smoothedOptVolume;
-      const curr = hasFutures ? smoothedProfile[i].smoothedFutVolume : smoothedProfile[i].smoothedOptVolume;
-      const next = hasFutures ? smoothedProfile[i + 1].smoothedFutVolume : smoothedProfile[i + 1].smoothedOptVolume;
+    // Detect local peaks (HVNs) and local troughs (LVNs) using a 5-strike window
+    for (let i = 2; i < smoothedProfile.length - 2; i++) {
+      const window = [
+        smoothedProfile[i - 2],
+        smoothedProfile[i - 1],
+        smoothedProfile[i],
+        smoothedProfile[i + 1],
+        smoothedProfile[i + 2],
+      ].map(d => hasFutures ? d.smoothedFutVolume : d.smoothedOptVolume);
 
-      // Peak
-      if (curr > prev && curr > next && curr > medianVolume * 1.15) {
+      const v_curr = window[2];
+      const max_surrounding = Math.max(window[0], window[1], window[3], window[4]);
+      const min_val = Math.min(...window);
+
+      // Peak (HVN)
+      if (v_curr >= window[1] && v_curr >= window[3] && v_curr > medianVolume * 1.15) {
         hvnStrikes.add(smoothedProfile[i].strike);
       }
-      // Trough
-      else if (curr < prev && curr < next && curr < medianVolume * 0.85) {
+
+      // Trough (LVN): deepest valley in the 5-strike neighborhood
+      // Check that the trough has at least a 50% drop compared to the highest volume in its neighborhood
+      if (v_curr === min_val && v_curr <= max_surrounding * 0.5 && v_curr < medianVolume * 0.8) {
         lvnStrikes.add(smoothedProfile[i].strike);
+
+        // Expand left to define the transition zone
+        let leftIdx = i;
+        while (leftIdx > 0) {
+          const v_left = hasFutures ? smoothedProfile[leftIdx - 1].smoothedFutVolume : smoothedProfile[leftIdx - 1].smoothedOptVolume;
+          if (v_left <= v_curr * 1.4 && v_left < medianVolume * 0.8) {
+            leftIdx--;
+          } else {
+            break;
+          }
+        }
+
+        // Expand right to define the transition zone
+        let rightIdx = i;
+        while (rightIdx < smoothedProfile.length - 1) {
+          const v_right = hasFutures ? smoothedProfile[rightIdx + 1].smoothedFutVolume : smoothedProfile[rightIdx + 1].smoothedOptVolume;
+          if (v_right <= v_curr * 1.4 && v_right < medianVolume * 0.8) {
+            rightIdx++;
+          } else {
+            break;
+          }
+        }
+
+        lvnZones.set(smoothedProfile[i].strike, {
+          low: smoothedProfile[leftIdx].strike,
+          high: smoothedProfile[rightIdx].strike,
+        });
       }
     }
 
-    return { hvnStrikes, lvnStrikes, smoothedProfile };
+    return { hvnStrikes, lvnStrikes, lvnZones, smoothedProfile };
   }, [zoomedProfile]);
+
+  // ---- Merge overlapping LVN zones ----
+  const mergedZones = useMemo(() => {
+    const rawZones = Array.from(nodes.lvnZones.values()).sort((a, b) => a.low - b.low);
+    if (rawZones.length === 0) return [];
+
+    const merged: { low: number; high: number }[] = [{ ...rawZones[0] }];
+    for (let i = 1; i < rawZones.length; i++) {
+      const current = rawZones[i];
+      const last = merged[merged.length - 1];
+
+      if (current.low <= last.high) {
+        // Overlap: merge
+        last.high = Math.max(last.high, current.high);
+      } else {
+        merged.push({ ...current });
+      }
+    }
+    return merged;
+  }, [nodes.lvnZones]);
 
   // ---- Value Area / Fair Value Areas (FVAs) Grouping ----
   const fairValueAreas = useMemo(() => {
     if (!data || zoomedProfile.length === 0) return [];
 
-    const sortedLvns = Array.from(nodes.lvnStrikes).sort((a, b) => a - b);
     const strikes = zoomedProfile.map(d => d.strike).sort((a, b) => a - b);
     const spot = data.spot;
 
@@ -193,15 +250,37 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       status: 'current' | 'above' | 'below';
     }[] = [];
 
-    // FVA bounds: low boundaries start at first strike, partition by LVNs, end at last strike
-    const boundaries = [strikes[0], ...sortedLvns, strikes[strikes.length - 1]];
+    // FVA low and high bounds are defined by the spaces between merged LVN zones
+    const ranges: { low: number; high: number }[] = [];
 
-    for (let i = 0; i < boundaries.length - 1; i++) {
-      const low = boundaries[i];
-      const high = boundaries[i + 1];
+    if (mergedZones.length === 0) {
+      ranges.push({ low: strikes[0], high: strikes[strikes.length - 1] });
+    } else {
+      // First range: from min strike to first zone low
+      if (strikes[0] < mergedZones[0].low) {
+        ranges.push({ low: strikes[0], high: mergedZones[0].low });
+      }
 
-      const strikesInArea = zoomedProfile.filter(d => d.strike >= low && d.strike <= high);
-      if (strikesInArea.length === 0) continue;
+      // Middle ranges: from zone[i].high to zone[i+1].low
+      for (let i = 0; i < mergedZones.length - 1; i++) {
+        const low = mergedZones[i].high;
+        const high = mergedZones[i + 1].low;
+        if (low < high) {
+          ranges.push({ low, high });
+        }
+      }
+
+      // Last range: from last zone high to max strike
+      const lastZone = mergedZones[mergedZones.length - 1];
+      if (lastZone.high < strikes[strikes.length - 1]) {
+        ranges.push({ low: lastZone.high, high: strikes[strikes.length - 1] });
+      }
+    }
+
+    // Now populate FVA details for each range
+    ranges.forEach((range, idx) => {
+      const strikesInArea = zoomedProfile.filter(d => d.strike >= range.low && d.strike <= range.high);
+      if (strikesInArea.length === 0) return;
 
       let poc = strikesInArea[0].strike;
       let maxVol = -1;
@@ -216,42 +295,49 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       }
 
       let status: 'current' | 'above' | 'below' = 'above';
-      if (spot >= low && spot <= high) {
+      if (spot >= range.low && spot <= range.high) {
         status = 'current';
-      } else if (spot < low) {
+      } else if (spot < range.low) {
         status = 'above';
       } else {
         status = 'below';
       }
 
       areas.push({
-        id: i + 1,
-        low,
-        high,
+        id: idx + 1,
+        low: range.low,
+        high: range.high,
         poc,
         maxVolume: maxVol,
         status,
       });
-    }
+    });
 
     return areas;
-  }, [nodes, zoomedProfile, data]);
+  }, [mergedZones, zoomedProfile, data]);
 
   // ---- Actionable Trading Analysis Card ----
   const analysis = useMemo(() => {
     if (!data || fairValueAreas.length === 0) return null;
     const spot = data.spot;
 
-    // Find current FVA
+    // Find if spot is inside a Fair Value Area
     const currentArea = fairValueAreas.find(a => a.status === 'current');
+
+    // Or check if spot is inside an LVN transition zone
+    const currentLvnZone = mergedZones.find(z => spot >= z.low && spot <= z.high);
+
+    if (currentLvnZone) {
+      return {
+        isInsideLvn: true,
+        lvnZone: currentLvnZone,
+        suggestion: `Il prezzo si trova all'interno di una Zona di Transizione a basso volume ($${currentLvnZone.low.toFixed(0)} - $${currentLvnZone.high.toFixed(0)}). I volumi in questa fascia sono molto scarsi. Questo indica instabilità: il prezzo tende ad attraversare rapidamente quest'area per raggiungere una zona di Fair Value adiacente o subire un netto rigetto verso la zona precedente. Monitorare la forza dei volumi per identificare un breakout confermato.`,
+      };
+    }
 
     if (!currentArea) {
       return {
-        message: "Il prezzo si trova al di fuori dei nodi ad alto volume rilevati (fuori dalle aree principali di Fair Value).",
-        upperBoundary: null,
-        lowerBoundary: null,
-        nearestHVN: null,
-        regimeExplanation: "Condizioni atipiche. Possibile forte direzionalità in corso.",
+        message: "Il prezzo si trova al di fuori dei nodi ad alto volume rilevati.",
         suggestion: "Monitorare la reazione del prezzo sui confini dell'area di Fair Value più vicina.",
       };
     }
@@ -260,22 +346,27 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     const distanceToLower = spot - currentArea.low;
 
     const nearestBoundary = distanceToUpper < distanceToLower
-      ? { strike: currentArea.high, type: 'Upper LVN (Resistenza)', dist: distanceToUpper, pct: (distanceToUpper / spot) * 100 }
-      : { strike: currentArea.low, type: 'Lower LVN (Supporto)', dist: distanceToLower, pct: (distanceToLower / spot) * 100 };
+      ? { low: currentArea.high, high: currentArea.high, type: 'Confine Superiore (LVN)', dist: distanceToUpper, pct: (distanceToUpper / spot) * 100 }
+      : { low: currentArea.low, high: currentArea.low, type: 'Confine Inferiore (LVN)', dist: distanceToLower, pct: (distanceToLower / spot) * 100 };
+
+    const lvnZone = mergedZones.find(z => z.low === nearestBoundary.low || z.high === nearestBoundary.high);
+    const boundaryText = lvnZone
+      ? `Zona LVN a $${lvnZone.low.toFixed(0)} - $${lvnZone.high.toFixed(0)}`
+      : `$${nearestBoundary.low.toFixed(0)}`;
 
     let suggestion = "";
     if (nearestBoundary.pct < 0.6) {
-      suggestion = `Il prezzo spot è in prossimità del confine critico (${nearestBoundary.type}) a $${nearestBoundary.strike.toFixed(0)} (distanza: ${nearestBoundary.pct.toFixed(2)}%). Un rifiuto dei volumi su questo livello suggerisce una reazione di rimbalzo (Mean Reversion) verso il POC interno a $${currentArea.poc.toFixed(0)}. Al contrario, una rottura decisa dei volumi (Breakout) innescherà un'accelerazione rapida verso il Point of Control dell'area successiva.`;
+      suggestion = `Il prezzo spot è in prossimità del limite critico (${nearestBoundary.type}) definito dalla ${boundaryText} (distanza: ${nearestBoundary.pct.toFixed(2)}%). Un rifiuto dei volumi su questa soglia suggerisce una reazione di rimbalzo (Mean Reversion) verso il POC interno a $${currentArea.poc.toFixed(0)}. Al contrario, una rottura decisa dei volumi (Breakout) indicherà una rapida transizione attraverso la zona di rifiuto verso l'FVA adiacente.`;
     } else {
-      suggestion = `Il prezzo si sta muovendo in equilibrio all'interno della zona di Fair Value ($${currentArea.low.toFixed(0)} - $${currentArea.high.toFixed(0)}). Il magnete naturale (Point of Control) è a $${currentArea.poc.toFixed(0)}, che agisce come centro di gravità. Le soglie esterne ($${currentArea.low.toFixed(0)} e $${currentArea.high.toFixed(0)}) delimitano i nodi a basso volume (LVN) di rigetto strutturale.`;
+      suggestion = `Il prezzo si sta muovendo in equilibrio all'interno della zona di Fair Value ($${currentArea.low.toFixed(0)} - $${currentArea.high.toFixed(0)}). Il magnete principale (Point of Control) è a $${currentArea.poc.toFixed(0)}, che agisce come centro di gravità. Le soglie esterne ($${currentArea.low.toFixed(0)} e $${currentArea.high.toFixed(0)}) delimitano le zone LVN di rigetto strutturale.`;
     }
 
     return {
       currentArea,
-      nearestBoundary,
+      nearestBoundary: lvnZone ? { ...lvnZone, type: nearestBoundary.type, pct: nearestBoundary.pct } : null,
       suggestion,
     };
-  }, [fairValueAreas, data]);
+  }, [fairValueAreas, mergedZones, data]);
 
   // ---- Max values for bar sizing ----
   const { maxOptionsVolume, maxFuturesVolume } = useMemo(() => {
@@ -420,7 +511,9 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
               {zoomedProfile.slice().reverse().map((d) => {
                 const isClosest = Math.abs(d.strike - spot) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - spot)));
                 const isHVN = nodes.hvnStrikes.has(d.strike);
-                const isLVN = nodes.lvnStrikes.has(d.strike);
+                const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
+                const isLVN = !!lvnZone;
+                const isTrough = nodes.lvnStrikes.has(d.strike);
 
                 const optBarWidth = (d.optionsVolume / maxOptionsVolume) * 100;
                 const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.optionsVolume) / (hasFuturesData ? maxFuturesVolume : maxOptionsVolume)) * 100;
@@ -434,6 +527,8 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                         ? 'rgba(59,130,246,0.06)'
                         : isHVN
                         ? 'rgba(99,102,241,0.03)'
+                        : isLVN
+                        ? 'rgba(244,63,94,0.02)'
                         : 'transparent',
                     }}
                   >
@@ -480,9 +575,10 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                           backgroundColor: isHVN
                             ? 'rgba(129,140,248,0.45)'
                             : isLVN
-                            ? 'rgba(244,63,94,0.15)'
+                            ? 'rgba(244,63,94,0.08)'
                             : 'rgba(34,197,94,0.25)',
-                          borderLeft: isLVN ? '1px dashed rgba(244,63,94,0.5)' : 'none',
+                          borderLeft: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
+                          borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                         }}
                       >
                         {futBarWidth > 15 && (
@@ -499,9 +595,9 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                             HVN
                           </span>
                         )}
-                        {isLVN && (
+                        {isLVN && isTrough && (
                           <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase">
-                            LVN
+                            LVN Zone
                           </span>
                         )}
                       </div>
