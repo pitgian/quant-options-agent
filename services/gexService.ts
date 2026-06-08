@@ -115,13 +115,13 @@ export function computeTotalNetGEX(strikeMap: Map<number, GexStrikeData>): numbe
 }
 
 /**
- * Computes the GEX flip point — the interpolated strike where
- * cumulative net GEX crosses from positive to negative.
+ * Computes the GEX flip point — the interpolated strike where net GEX crosses zero.
  *
- * Key fixes:
- *   - Search bounded to ±5% of spot price
- *   - Requires at least 10 strikes with non-zero GEX within range
- *   - Returns null if flip can't be reliably computed
+ * Employs a 5-strike moving average to smooth out single-strike noise spikes
+ * (especially common on dense 0DTE option chains) and returns the crossing
+ * that is closest to the current spot price.
+ *
+ * Bounded to ±5% of spot price. Returns null if flip can't be reliably computed.
  *
  * @param strikeMap - per-strike GEX data
  * @param spotPrice - current spot price for bounding the search
@@ -134,39 +134,66 @@ export function computeGexFlipPoint(
   const lowerBound = spotPrice * 0.95;
   const upperBound = spotPrice * 1.05;
 
-  const netGexByStrike = new Map<number, number>();
-  for (const [strike, data] of strikeMap.entries()) {
-    if (data.netGEX !== 0 && strike >= lowerBound && strike <= upperBound) {
-      netGexByStrike.set(strike, data.netGEX);
+  // Filter and sort strikes in range
+  const strikesInRange = Array.from(strikeMap.keys())
+    .filter(s => s >= lowerBound && s <= upperBound)
+    .sort((a, b) => a - b);
+
+  // Need at least 10 strikes in range for reliable calculations
+  if (strikesInRange.length < 10) return null;
+
+  // Apply a 5-strike moving average to smooth net GEX profile
+  const smoothedGex: number[] = [];
+  const halfWindow = 2; // 2 before, 2 after + current = 5 strikes window
+  for (let i = 0; i < strikesInRange.length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = i - halfWindow; j <= i + halfWindow; j++) {
+      if (j >= 0 && j < strikesInRange.length) {
+        sum += strikeMap.get(strikesInRange[j])?.netGEX ?? 0;
+        count++;
+      }
+    }
+    smoothedGex.push(sum / count);
+  }
+
+  // Find all zero crossings (both directions)
+  const crossings: { strike: number; dist: number }[] = [];
+  for (let i = 0; i < strikesInRange.length - 1; i++) {
+    const s1 = strikesInRange[i];
+    const s2 = strikesInRange[i + 1];
+    const g1 = smoothedGex[i];
+    const g2 = smoothedGex[i + 1];
+
+    if ((g1 <= 0 && g2 > 0) || (g1 >= 0 && g2 < 0)) {
+      if (g2 !== g1) {
+        const zeroCross = s1 + (0 - g1) * (s2 - s1) / (g2 - g1);
+        crossings.push({
+          strike: zeroCross,
+          dist: Math.abs(zeroCross - spotPrice),
+        });
+      }
     }
   }
 
-  // Need at least 10 strikes with non-zero GEX for reliable interpolation
-  if (netGexByStrike.size < 10) return null;
+  if (crossings.length === 0) return null;
 
-  const sortedStrikes = Array.from(netGexByStrike.entries())
-    .sort((a, b) => a[0] - b[0]);
-
-  for (let i = 0; i < sortedStrikes.length - 1; i++) {
-    const [s1, g1] = sortedStrikes[i];
-    const [s2, g2] = sortedStrikes[i + 1];
-    if (g1 > 0 && g2 < 0) {
-      return Math.round((s1 + (0 - g1) * (s2 - s1) / (g2 - g1)) * 100) / 100;
-    }
-  }
-
-  return null;
+  // Return the crossing closest to the current spot price
+  crossings.sort((a, b) => a.dist - b.dist);
+  return Math.round(crossings[0].strike * 100) / 100;
 }
 
 /**
  * Computes the GEX regime from per-strike GEX data.
  *
  * Regime determination:
- *   - Positive net GEX → "Low Volatility" (dealer hedging suppresses vol)
- *   - Negative net GEX → "High Volatility" (dealer hedging amplifies vol)
- *   - Near zero → "Neutral"
- *
- * "Near zero" is defined as |netGEX| < 5% of total absolute GEX.
+ *   - Near zero (|netGEX| < 5% of total absolute GEX) → "Neutral"
+ *   - Local flip point available:
+ *       - Spot >= Flip Point → "Low Volatility" (Positive Gamma)
+ *       - Spot < Flip Point → "High Volatility" (Negative Gamma)
+ *   - Fallback (no local flip point):
+ *       - Positive net GEX → "Low Volatility"
+ *       - Negative net GEX → "High Volatility"
  */
 export function computeGexRegime(
   strikeMap: Map<number, GexStrikeData>,
@@ -192,12 +219,24 @@ export function computeGexRegime(
   if (ratio < NEUTRAL_THRESHOLD) {
     regime = 'neutral';
     label = 'Neutral';
-  } else if (totalNetGEX > 0) {
-    regime = 'positive';
-    label = 'Low Volatility';
+  } else if (flipPoint !== null) {
+    // Determine regime relative to the closest local flip point
+    if (spotPrice >= flipPoint) {
+      regime = 'positive';
+      label = 'Low Volatility';
+    } else {
+      regime = 'negative';
+      label = 'High Volatility';
+    }
   } else {
-    regime = 'negative';
-    label = 'High Volatility';
+    // Fallback if no flip point can be calculated
+    if (totalNetGEX > 0) {
+      regime = 'positive';
+      label = 'Low Volatility';
+    } else {
+      regime = 'negative';
+      label = 'High Volatility';
+    }
   }
 
   return { regime, label, netGEX: totalNetGEX, flipPoint };
