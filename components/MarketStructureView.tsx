@@ -56,6 +56,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
   } = state;
 
   const [zoomPct, setZoomPct] = useState(3.0);
+  const [rowHeight, setRowHeight] = useState(20);
   const [flashVisible, setFlashVisible] = useState(false);
   const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '2d' | '7d' | '30d' | '90d'>('auto');
 
@@ -428,15 +429,15 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
 
           {/* Filters */}
           <div className="flex items-center gap-3">
-            {/* Zoom selector */}
+            {/* Range Selector */}
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] text-gray-500 font-medium uppercase tracking-wider">Range:</span>
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Range:</span>
               <div className="flex items-center bg-[#1e293b] rounded-lg p-0.5 border border-gray-700">
                 {ZOOM_OPTIONS.map((zo) => (
                   <button
                     key={zo.value}
                     onClick={() => setZoomPct(zo.value)}
-                    className="px-2 py-1 rounded text-xs font-semibold transition-all duration-150"
+                    className="px-2 py-1 rounded text-[10px] font-semibold transition-all duration-150"
                     style={{
                       backgroundColor: zoomPct === zo.value ? '#334155' : 'transparent',
                       color: zoomPct === zo.value ? '#e2e8f0' : '#64748b',
@@ -445,6 +446,44 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                     {zo.label}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* Row Height Spacing Zoom Controls */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Zoom:</span>
+              <div className="flex items-center gap-1 bg-[#1e293b] rounded-lg p-1 border border-gray-700">
+                {/* Squeeze / Zoom Out (decreases height) */}
+                <button
+                  onClick={() => setRowHeight(h => Math.max(12, h - 2))}
+                  disabled={rowHeight <= 12}
+                  className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#334155] disabled:opacity-30 disabled:hover:bg-transparent font-bold text-xs"
+                  title="Stringi righe (più livelli visibili)"
+                >
+                  🔍⁻
+                </button>
+                
+                {/* Slider */}
+                <input
+                  type="range"
+                  min="12"
+                  max="36"
+                  step="2"
+                  value={rowHeight}
+                  onChange={(e) => setRowHeight(Number(e.target.value))}
+                  className="w-16 sm:w-20 accent-blue-500 cursor-pointer h-1 bg-gray-700 rounded-lg appearance-none"
+                  title={`Altezza righe: ${rowHeight}px`}
+                />
+                
+                {/* Expand / Zoom In (increases height) */}
+                <button
+                  onClick={() => setRowHeight(h => Math.min(36, h + 2))}
+                  disabled={rowHeight >= 36}
+                  className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#334155] disabled:opacity-30 disabled:hover:bg-transparent font-bold text-xs"
+                  title="Allarga righe (dettaglio)"
+                >
+                  🔍⁺
+                </button>
               </div>
             </div>
 
@@ -587,21 +626,24 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                 return (
                   <div
                     key={d.strike}
-                    className="relative grid grid-cols-[1fr_80px_1fr] gap-2 items-center py-1 transition-colors duration-150 rounded"
+                    className="relative grid grid-cols-[1fr_80px_1fr] gap-2 items-center transition-colors duration-150 rounded"
                     style={{
+                      height: `${rowHeight}px`,
                       backgroundColor: isClosest
-                        ? 'rgba(59,130,246,0.06)'
+                        ? 'rgba(59,130,246,0.18)'
                         : isHVN
                         ? 'rgba(99,102,241,0.03)'
                         : isLVN
                         ? 'rgba(244,63,94,0.02)'
                         : 'transparent',
+                      borderTop: isClosest ? '1px solid rgba(59,130,246,0.45)' : 'none',
+                      borderBottom: isClosest ? '1px solid rgba(59,130,246,0.45)' : 'none',
                     }}
                   >
                     {/* Left profile bar: Options Activity */}
-                    <div className="flex justify-end h-5 w-full pr-1">
+                    <div className="flex justify-end w-full pr-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                       <div
-                        className="h-full rounded-l transition-all duration-300 flex items-center justify-end pr-2 overflow-hidden"
+                        className="h-full rounded-l flex items-center justify-end pr-2 overflow-hidden"
                         style={{
                           width: `${Math.max(2, optBarWidth)}%`,
                           backgroundColor: isHVN
@@ -611,7 +653,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                             : 'rgba(59,130,246,0.25)',
                         }}
                       >
-                        {optBarWidth > 15 && (
+                        {optBarWidth > 15 && rowHeight >= 18 && (
                           <span className="text-[9px] font-mono text-blue-200">
                             {formatCompact(d.optionsVolume)}
                           </span>
@@ -620,26 +662,34 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                     </div>
 
                     {/* Center Strike Price & Badges */}
-                    <div className="flex flex-col items-center justify-center font-mono relative">
+                    <div className="flex flex-col items-center justify-center font-mono relative" style={{ height: `${rowHeight}px` }}>
                       <span
-                        className="text-xs font-bold transition-colors"
+                        className={`font-bold transition-colors ${
+                          rowHeight < 15 ? 'text-[9px]' :
+                          rowHeight < 20 ? 'text-[10px]' :
+                          rowHeight < 26 ? 'text-xs' : 'text-sm'
+                        }`}
                         style={{
-                          color: isClosest ? '#60a5fa' : isHVN ? '#818cf8' : isLVN ? '#fb7185' : '#94a3b8',
+                          color: isClosest ? '#ffffff' : isHVN ? '#818cf8' : isLVN ? '#fb7185' : '#94a3b8',
+                          backgroundColor: isClosest ? '#2563eb' : 'transparent',
+                          padding: isClosest ? '1px 5px' : '0',
+                          borderRadius: isClosest ? '4px' : '0',
+                          lineHeight: 1,
                         }}
                       >
                         ${d.strike.toFixed(0)}
                       </span>
-                      {isClosest && (
-                        <span className="absolute -bottom-1.5 text-[7px] text-blue-400 font-bold uppercase tracking-wider">
+                      {isClosest && rowHeight >= 24 && (
+                        <span className="absolute -bottom-2.5 text-[7px] text-blue-400 font-bold uppercase tracking-wider bg-[#0d1117] px-1 rounded border border-blue-500/30 z-10">
                           Spot
                         </span>
                       )}
                     </div>
 
                     {/* Right profile bar: Futures Volume */}
-                    <div className="flex justify-start h-5 w-full pl-1 relative">
+                    <div className="flex justify-start w-full pl-1 relative animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                       <div
-                        className="h-full rounded-r transition-all duration-300 flex items-center justify-start pl-2 overflow-hidden"
+                        className="h-full rounded-r flex items-center justify-start pl-2 overflow-hidden"
                         style={{
                           width: `${Math.max(2, futBarWidth)}%`,
                           backgroundColor: isHVN
@@ -651,7 +701,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                           borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                         }}
                       >
-                        {futBarWidth > 15 && (
+                        {futBarWidth > 15 && rowHeight >= 18 && (
                           <span className="text-[9px] font-mono text-green-200">
                             {formatCompact(hasFuturesData ? d.futuresVolume : d.optionsVolume)}
                           </span>
@@ -659,26 +709,38 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                       </div>
 
                       {/* Right-aligned node badges */}
-                      <div className="absolute right-2 top-0.5 flex gap-1">
-                        {crossLvl && (
-                          <span
-                            className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase flex items-center gap-0.5 cursor-help"
-                            title={`Confluenza Cross-Symbol con ${crossLvl.pairedSymbol} a strike $${crossLvl.pairedStrike.toFixed(0)} (Score: ${crossLvl.crossScore})`}
-                          >
-                            🔗 {crossLvl.pairedSymbol} ${crossLvl.pairedStrike.toFixed(0)}
-                          </span>
-                        )}
-                        {isHVN && (
-                          <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase">
-                            HVN
-                          </span>
-                        )}
-                        {isLVN && isTrough && (
-                          <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase">
-                            LVN Zone
-                          </span>
-                        )}
-                      </div>
+                      {rowHeight >= 16 && (
+                        <div 
+                          className="absolute right-2 top-0 flex gap-1 items-center"
+                          style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
+                        >
+                          {crossLvl && (
+                            <span
+                              className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase flex items-center gap-0.5 cursor-help"
+                              title={`Confluenza Cross-Symbol con ${crossLvl.pairedSymbol} a strike $${crossLvl.pairedStrike.toFixed(0)} (Score: ${crossLvl.crossScore})`}
+                              style={{ transform: rowHeight < 20 ? 'scale(0.85)' : 'none', transformOrigin: 'right center' }}
+                            >
+                              🔗 {crossLvl.pairedSymbol} ${crossLvl.pairedStrike.toFixed(0)}
+                            </span>
+                          )}
+                          {isHVN && (
+                            <span 
+                              className="px-1 py-0.5 rounded text-[8px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"
+                              style={{ transform: rowHeight < 20 ? 'scale(0.85)' : 'none', transformOrigin: 'right center' }}
+                            >
+                              HVN
+                            </span>
+                          )}
+                          {isLVN && isTrough && (
+                            <span 
+                              className="px-1 py-0.5 rounded text-[8px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase"
+                              style={{ transform: rowHeight < 20 ? 'scale(0.85)' : 'none', transformOrigin: 'right center' }}
+                            >
+                              LVN Zone
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
