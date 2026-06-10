@@ -12,7 +12,7 @@
 // ============================================================================
 
 /** GitHub Raw URL for the options data JSON file */
-const DATA_URL = import.meta.env.DEV
+const DATA_URL = (typeof process !== 'undefined' && process.env.NODE_ENV === 'development') || (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.DEV)
   ? '/data/options_data.json'
   : 'https://raw.githubusercontent.com/pitgian/quant-options-agent/master/data/options_data.json';
 

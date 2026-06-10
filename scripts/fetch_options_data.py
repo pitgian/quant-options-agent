@@ -976,7 +976,9 @@ def fetch_futures_volume_profile(
     """
     Fetches futures candles for a given period and interval.
     Scales the futures prices to match the symbol spot price.
-    Distributes volume of each candle across the symbol's option strikes.
+    Distributes volume of each candle across the symbol's option strikes
+    using a fixed price window (density overlap) to ensure consistency
+    regardless of option strike density.
     Returns a dict mapping strike price (string) to total volume (float).
     """
     # Map index/ETF symbols to correct futures contract
@@ -995,6 +997,9 @@ def fetch_futures_volume_profile(
         futures_last_close = hist["Close"].iloc[-1]
         ratio = spot_price / futures_last_close
         
+        # Define standard window width as 0.1% of the spot price
+        W = spot_price * 0.001
+        
         # Initialize profile
         profile = {strike: 0.0 for strike in strikes}
         
@@ -1011,17 +1016,18 @@ def fetch_futures_volume_profile(
             if pd.isna(high) or pd.isna(low) or pd.isna(volume) or volume <= 0:
                 continue
                 
-            # Find strikes within [low, high]
-            strikes_in_range = [s for s in strikes_sorted if low <= s <= high]
-            
-            if strikes_in_range:
-                vol_share = volume / len(strikes_in_range)
-                for s in strikes_in_range:
-                    profile[s] += vol_share
-            else:
-                # Assign to the single closest strike
+            R = high - low
+            if R < 1e-5:
+                # If range is zero, assign to the closest strike
                 closest_strike = min(strikes_sorted, key=lambda s: abs(s - (high + low)/2))
                 profile[closest_strike] += volume
+                continue
+                
+            # Distribute volume using the fixed price window overlap
+            for s in strikes_sorted:
+                overlap = max(0.0, min(high, s + W/2) - max(low, s - W/2))
+                if overlap > 0:
+                    profile[s] += (volume / R) * overlap
                 
         # Round volumes for clean JSON and serialize strike keys as strings
         profile_str_keys = {str(strike): round(vol, 1) for strike, vol in profile.items() if vol > 0}
