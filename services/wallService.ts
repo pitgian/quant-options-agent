@@ -129,22 +129,12 @@ export function computeWalls(
         oiWeight = 0.50;
         volWeight = 0.50;
       }
-
       const baseScore = data.oi * oiWeight + data.vol * volWeight;
-      const distancePct = spotPrice > 0
-        ? Math.abs(strike - spotPrice) / spotPrice * 100
-        : 0;
-      
-      // Exponential proximity decay (Gaussian) to prioritize strikes closer to spot
-      const PROXIMITY_SIGMA = 1.5; // standard deviation percentage
-      const proximityBoost = Math.exp(-Math.pow(distancePct / PROXIMITY_SIGMA, 2));
-      const rawScore = baseScore * proximityBoost;
+      const rawScore = baseScore; // No proximity penalty decay
       const crossData = oppositeMap.get(strike);
       const distance = spotPrice > 0
         ? Math.round((Math.abs(strike - spotPrice) / spotPrice) * 10000) / 100
-        : 0;
-
-      return {
+        : 0;      return {
         strike,
         rawScore,
         type: wallType,

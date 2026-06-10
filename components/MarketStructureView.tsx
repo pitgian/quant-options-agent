@@ -1,9 +1,11 @@
 /**
- * MarketStructureView — Premium volume profile and market structure analysis view.
+ * MarketStructureView — Premium 3-profile volume profile and market structure analysis view.
  *
- * Displays a dual horizontal volume profile (Options Activity vs. Futures Volume),
- * identifies High Volume Nodes (HVNs) and Low Volume Nodes (LVNs), defines
- * Fair Value Areas (FVAs), and provides narrative trading insights.
+ * Displays a unified horizontal layout comparing:
+ *   1. ETF Options Profile (OI + Volume)
+ *   2. Aligned Strikes (Index / ETF) and Confluent Key Level Badges
+ *   3. Index Options Profile (OI + Volume)
+ *   4. Expiry-Aligned Futures Volume Profile
  *
  * @module components/MarketStructureView
  */
@@ -11,19 +13,17 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { ExpiryFilter } from '../types';
 import { useOptionsData } from '../hooks/useOptionsData';
-import { formatCompact, formatStrike, formatGEX, formatTimestamp } from '../utils/formatting';
+import { formatCompact, formatTimestamp } from '../utils/formatting';
 import { IconRefresh } from './Icons';
 import { LoadingState } from './LoadingState';
 import { ErrorState } from './ErrorState';
-
-const SYMBOLS = ['SPY', 'QQQ', 'SPX', 'NDX'] as const;
 
 const EXPIRY_OPTIONS: { key: ExpiryFilter; label: string }[] = [
   { key: '0dte', label: '0 DTE' },
   { key: '1-7dte', label: '1-7 DTE' },
   { key: '8-30dte', label: '8-30 DTE' },
   { key: '30+dte', label: '30+ DTE' },
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'Tutte le scadenze' },
 ];
 
 const ZOOM_OPTIONS = [
@@ -32,20 +32,18 @@ const ZOOM_OPTIONS = [
   { label: '± 5.0%', value: 5.0 },
 ];
 
-interface MarketStructureViewProps {
-  sharedState?: any;
-}
-
-export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
+export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const localState = useOptionsData();
   const state = sharedState || localState;
 
   const {
-    data,
     loading,
     error,
-    symbol,
-    setSymbol,
+    market,
+    setMarket,
+    etfData,
+    indexData,
+    timeSinceUpdate,
     refreshing,
     isBackgroundRefreshing,
     showUpdatedFlash,
@@ -56,9 +54,10 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
   } = state;
 
   const [zoomPct, setZoomPct] = useState(3.0);
-  const [rowHeight, setRowHeight] = useState(20);
+  const [rowHeight, setRowHeight] = useState(22);
   const [flashVisible, setFlashVisible] = useState(false);
   const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '2d' | '7d' | '30d' | '90d'>('auto');
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   useEffect(() => {
     if (showUpdatedFlash) {
@@ -68,31 +67,34 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     }
   }, [showUpdatedFlash]);
 
-  // ---- Last updated text ----
-  const lastUpdatedText = useMemo(() => {
-    if (!data?.timestamp) return '';
-    return formatTimestamp(data.timestamp);
-  }, [data?.timestamp]);
-
   // ---- Extract and Merge Profile Data ----
   const profileData = useMemo(() => {
-    if (!data) return [];
+    if (!indexData || !etfData) return [];
 
-    const spot = data.spot;
-    const strikes = data.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
+    const indexSpot = indexData.spot;
+    const etfSpot = etfData.spot;
+    const ratio = indexSpot / etfSpot;
+
+    // Get all strikes from the Index data and sort them ascending
+    const strikes = indexData.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
     if (strikes.length === 0) return [];
 
-    // Map each strike to option metrics and futures volumes
-    const rawProfile = strikes.map(strike => {
-      const sd = data.gexStrikeData.find(d => d.strike === strike);
-      const optionsVolume = sd ? (sd.callOI + sd.putOI + sd.callVolume + sd.putVolume) : 0;
+    return strikes.map(strike => {
+      // Find corresponding ETF strike
+      const etfStrike = Math.round(strike / ratio);
 
-      // Look up in futures volume profile based on selected expiryFilter or manual override
+      const indexStrikeData = indexData.gexStrikeData.find(d => d.strike === strike);
+      const etfStrikeData = etfData.gexStrikeData.find(d => d.strike === etfStrike);
+
+      // Volume + OI for Index and ETF
+      const indexVolume = indexStrikeData ? (indexStrikeData.callOI + indexStrikeData.putOI + indexStrikeData.callVolume + indexStrikeData.putVolume) : 0;
+      const etfVolume = etfStrikeData ? (etfStrikeData.callOI + etfStrikeData.putOI + etfStrikeData.callVolume + etfStrikeData.putVolume) : 0;
+
+      // Look up in futures volume profile based on selected timeframe
       let futuresVolume = 0;
-      if (data.futuresVolumeProfiles) {
+      if (indexData.futuresVolumeProfiles) {
         let tf = '30d';
         if (selectedFuturesTf === 'auto') {
-          // Map expiryFilter ('0dte' | '1-7dte' | '8-30dte' | '30+dte' | 'all') to timeframe ('2d' | '7d' | '30d' | '90d' | '30d')
           if (expiryFilter === '0dte') tf = '2d';
           else if (expiryFilter === '1-7dte') tf = '7d';
           else if (expiryFilter === '8-30dte') tf = '30d';
@@ -102,7 +104,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
           tf = selectedFuturesTf;
         }
 
-        const profileForTf = data.futuresVolumeProfiles[tf];
+        const profileForTf = indexData.futuresVolumeProfiles[tf];
         if (profileForTf) {
           futuresVolume = profileForTf[strike.toString()]
             || profileForTf[strike.toFixed(1)]
@@ -110,45 +112,45 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
             || profileForTf[strike.toFixed(0)]
             || 0;
         }
-      } else if (data.futuresVolumeProfile) {
-        // Fallback to legacy single profile
-        const exactVal = data.futuresVolumeProfile[strike.toString()]
-          || data.futuresVolumeProfile[strike.toFixed(1)]
-          || data.futuresVolumeProfile[strike.toFixed(2)]
-          || data.futuresVolumeProfile[strike.toFixed(0)]
+      } else if (indexData.futuresVolumeProfile) {
+        const exactVal = indexData.futuresVolumeProfile[strike.toString()]
+          || indexData.futuresVolumeProfile[strike.toFixed(1)]
+          || indexData.futuresVolumeProfile[strike.toFixed(2)]
+          || indexData.futuresVolumeProfile[strike.toFixed(0)]
           || 0;
         futuresVolume = exactVal;
       }
 
-      const distancePct = ((strike - spot) / spot) * 100;
+      const distancePct = ((strike - indexSpot) / indexSpot) * 100;
 
       return {
         strike,
-        optionsVolume,
+        etfStrike,
+        indexVolume,
+        etfVolume,
         futuresVolume,
         distancePct,
       };
     });
-
-    return rawProfile;
-  }, [data, expiryFilter, selectedFuturesTf]);
+  }, [indexData, etfData, expiryFilter, selectedFuturesTf]);
 
   // ---- Filter profile based on zoom percentage around spot ----
   const zoomedProfile = useMemo(() => {
     return profileData.filter(d => Math.abs(d.distancePct) <= zoomPct);
   }, [profileData, zoomPct]);
 
-  // ---- Node detection (HVN & LVN) ----
+  const hasFuturesData = useMemo(() => {
+    return zoomedProfile.some(d => d.futuresVolume > 0);
+  }, [zoomedProfile]);
+
+  // ---- Node detection (HVN & LVN) using Futures/Combined volume ----
   const nodes = useMemo(() => {
     if (zoomedProfile.length === 0) {
       return { hvnStrikes: new Set<number>(), lvnStrikes: new Set<number>(), lvnZones: new Map<number, { low: number; high: number }>() };
     }
 
-    const hasFutures = zoomedProfile.some(d => d.futuresVolume > 0);
-
-    // Median values of target volume for significance filters (computed on raw volumes)
     const targetVolumes = zoomedProfile
-      .map(d => hasFutures ? d.futuresVolume : d.optionsVolume)
+      .map(d => hasFuturesData ? d.futuresVolume : (d.etfVolume + d.indexVolume))
       .filter(v => v > 0);
     targetVolumes.sort((a, b) => a - b);
     const medianVolume = targetVolumes.length > 0 ? targetVolumes[Math.floor(targetVolumes.length / 2)] : 0;
@@ -157,7 +159,6 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     const lvnStrikes = new Set<number>();
     const lvnZones = new Map<number, { low: number; high: number }>();
 
-    // Detect local peaks (HVNs) and local troughs (LVNs) using a 5-strike window on RAW volumes
     for (let i = 2; i < zoomedProfile.length - 2; i++) {
       const window = [
         zoomedProfile[i - 2],
@@ -165,29 +166,25 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
         zoomedProfile[i],
         zoomedProfile[i + 1],
         zoomedProfile[i + 2],
-      ].map(d => hasFutures ? d.futuresVolume : d.optionsVolume);
+      ].map(d => hasFuturesData ? d.futuresVolume : (d.etfVolume + d.indexVolume));
 
       const v_curr = window[2];
       const max_val = Math.max(...window);
       const min_val = Math.min(...window);
       const max_surrounding = Math.max(window[0], window[1], window[3], window[4]);
 
-      // Peak (HVN): must be the absolute maximum in the 5-strike window
-      // and must be higher than medianVolume * 1.15
+      // Peak (HVN)
       if (v_curr === max_val && v_curr > medianVolume * 1.15) {
         hvnStrikes.add(zoomedProfile[i].strike);
       }
 
-      // Trough (LVN): deepest valley in the 5-strike neighborhood
-      // Must be a deep drop (<= 50% of surrounding peaks), and must be low volume overall (< medianVolume * 0.8)
-      // Also ensure there is some non-zero volume surrounding it (max_surrounding > 0) to avoid tagging empty strikes
+      // Trough (LVN)
       if (v_curr === min_val && max_surrounding > 0 && v_curr <= max_surrounding * 0.5 && v_curr < medianVolume * 0.8) {
         lvnStrikes.add(zoomedProfile[i].strike);
 
-        // Expand left to define the transition zone
         let leftIdx = i;
         while (leftIdx > 0) {
-          const v_left = hasFutures ? zoomedProfile[leftIdx - 1].futuresVolume : zoomedProfile[leftIdx - 1].optionsVolume;
+          const v_left = hasFuturesData ? zoomedProfile[leftIdx - 1].futuresVolume : (zoomedProfile[leftIdx - 1].etfVolume + zoomedProfile[leftIdx - 1].indexVolume);
           if (v_left <= v_curr * 1.5 && v_left < medianVolume * 0.7) {
             leftIdx--;
           } else {
@@ -195,10 +192,9 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
           }
         }
 
-        // Expand right to define the transition zone
         let rightIdx = i;
         while (rightIdx < zoomedProfile.length - 1) {
-          const v_right = hasFutures ? zoomedProfile[rightIdx + 1].futuresVolume : zoomedProfile[rightIdx + 1].optionsVolume;
+          const v_right = hasFuturesData ? zoomedProfile[rightIdx + 1].futuresVolume : (zoomedProfile[rightIdx + 1].etfVolume + zoomedProfile[rightIdx + 1].indexVolume);
           if (v_right <= v_curr * 1.5 && v_right < medianVolume * 0.7) {
             rightIdx++;
           } else {
@@ -227,7 +223,6 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       const last = merged[merged.length - 1];
 
       if (current.low <= last.high) {
-        // Overlap: merge
         last.high = Math.max(last.high, current.high);
       } else {
         merged.push({ ...current });
@@ -238,10 +233,10 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
 
   // ---- Value Area / Fair Value Areas (FVAs) Grouping ----
   const fairValueAreas = useMemo(() => {
-    if (!data || zoomedProfile.length === 0) return [];
+    if (!indexData || zoomedProfile.length === 0) return [];
 
     const strikes = zoomedProfile.map(d => d.strike).sort((a, b) => a - b);
-    const spot = data.spot;
+    const indexSpot = indexData.spot;
 
     const areas: {
       id: number;
@@ -252,18 +247,15 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       status: 'current' | 'above' | 'below';
     }[] = [];
 
-    // FVA low and high bounds are defined by the spaces between merged LVN zones
     const ranges: { low: number; high: number }[] = [];
 
     if (mergedZones.length === 0) {
       ranges.push({ low: strikes[0], high: strikes[strikes.length - 1] });
     } else {
-      // First range: from min strike to first zone low
       if (strikes[0] < mergedZones[0].low) {
         ranges.push({ low: strikes[0], high: mergedZones[0].low });
       }
 
-      // Middle ranges: from zone[i].high to zone[i+1].low
       for (let i = 0; i < mergedZones.length - 1; i++) {
         const low = mergedZones[i].high;
         const high = mergedZones[i + 1].low;
@@ -272,14 +264,12 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
         }
       }
 
-      // Last range: from last zone high to max strike
       const lastZone = mergedZones[mergedZones.length - 1];
       if (lastZone.high < strikes[strikes.length - 1]) {
         ranges.push({ low: lastZone.high, high: strikes[strikes.length - 1] });
       }
     }
 
-    // Now populate FVA details for each range
     ranges.forEach((range, idx) => {
       const strikesInArea = zoomedProfile.filter(d => d.strike >= range.low && d.strike <= range.high);
       if (strikesInArea.length === 0) return;
@@ -289,7 +279,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       const hasFutures = strikesInArea.some(d => d.futuresVolume > 0);
 
       for (const d of strikesInArea) {
-        const vol = hasFutures ? d.futuresVolume : d.optionsVolume;
+        const vol = hasFutures ? d.futuresVolume : (d.etfVolume + d.indexVolume);
         if (vol > maxVol) {
           maxVol = vol;
           poc = d.strike;
@@ -297,9 +287,9 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       }
 
       let status: 'current' | 'above' | 'below' = 'above';
-      if (spot >= range.low && spot <= range.high) {
+      if (indexSpot >= range.low && indexSpot <= range.high) {
         status = 'current';
-      } else if (spot < range.low) {
+      } else if (indexSpot < range.low) {
         status = 'above';
       } else {
         status = 'below';
@@ -316,24 +306,21 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
     });
 
     return areas;
-  }, [mergedZones, zoomedProfile, data]);
+  }, [mergedZones, zoomedProfile, indexData]);
 
   // ---- Actionable Trading Analysis Card ----
   const analysis = useMemo(() => {
-    if (!data || fairValueAreas.length === 0) return null;
-    const spot = data.spot;
+    if (!indexData || fairValueAreas.length === 0) return null;
+    const indexSpot = indexData.spot;
 
-    // Find if spot is inside a Fair Value Area
     const currentArea = fairValueAreas.find(a => a.status === 'current');
-
-    // Or check if spot is inside an LVN transition zone
-    const currentLvnZone = mergedZones.find(z => spot >= z.low && spot <= z.high);
+    const currentLvnZone = mergedZones.find(z => indexSpot >= z.low && indexSpot <= z.high);
 
     if (currentLvnZone) {
       return {
         isInsideLvn: true,
         lvnZone: currentLvnZone,
-        suggestion: `Il prezzo si trova all'interno di una Zona di Transizione a basso volume ($${currentLvnZone.low.toFixed(0)} - $${currentLvnZone.high.toFixed(0)}). I volumi in questa fascia sono molto scarsi. Questo indica instabilità: il prezzo tende ad attraversare rapidamente quest'area per raggiungere una zona di Fair Value adiacente o subire un netto rigetto verso la zona precedente. Monitorare la forza dei volumi per identificare un breakout confermato.`,
+        suggestion: `Il prezzo dell'indice si trova all'interno di una Zona di Transizione a basso volume ($${currentLvnZone.low.toFixed(0)} - $${currentLvnZone.high.toFixed(0)}). I volumi in questa fascia sono molto scarsi. Questo indica instabilità: il prezzo tende ad attraversare rapidamente quest'area per raggiungere una zona di Fair Value adiacente o subire un netto rigetto verso la zona precedente. Monitorare la forza dei volumi per identificare un breakout confermato.`,
       };
     }
 
@@ -344,12 +331,12 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       };
     }
 
-    const distanceToUpper = currentArea.high - spot;
-    const distanceToLower = spot - currentArea.low;
+    const distanceToUpper = currentArea.high - indexSpot;
+    const distanceToLower = indexSpot - currentArea.low;
 
     const nearestBoundary = distanceToUpper < distanceToLower
-      ? { low: currentArea.high, high: currentArea.high, type: 'Confine Superiore (LVN)', dist: distanceToUpper, pct: (distanceToUpper / spot) * 100 }
-      : { low: currentArea.low, high: currentArea.low, type: 'Confine Inferiore (LVN)', dist: distanceToLower, pct: (distanceToLower / spot) * 100 };
+      ? { low: currentArea.high, high: currentArea.high, type: 'Confine Superiore (LVN)', dist: distanceToUpper, pct: (distanceToUpper / indexSpot) * 100 }
+      : { low: currentArea.low, high: currentArea.low, type: 'Confine Inferiore (LVN)', dist: distanceToLower, pct: (distanceToLower / indexSpot) * 100 };
 
     const lvnZone = mergedZones.find(z => z.low === nearestBoundary.low || z.high === nearestBoundary.high);
     const boundaryText = lvnZone
@@ -358,9 +345,9 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
 
     let suggestion = "";
     if (nearestBoundary.pct < 0.6) {
-      suggestion = `Il prezzo spot è in prossimità del limite critico (${nearestBoundary.type}) definito dalla ${boundaryText} (distanza: ${nearestBoundary.pct.toFixed(2)}%). Un rifiuto dei volumi su questa soglia suggerisce una reazione di rimbalzo (Mean Reversion) verso il POC interno a $${currentArea.poc.toFixed(0)}. Al contrario, una rottura decisa dei volumi (Breakout) indicherà una rapida transizione attraverso la zona di rifiuto verso l'FVA adiacente.`;
+      suggestion = `Il prezzo spot dell'indice è in prossimità del limite critico (${nearestBoundary.type}) definito dalla ${boundaryText} (distanza: ${nearestBoundary.pct.toFixed(2)}%). Un rifiuto dei volumi su questa soglia suggerisce una reazione di rimbalzo (Mean Reversion) verso il POC interno a $${currentArea.poc.toFixed(0)}. Al contrario, una rottura decisa dei volumi (Breakout) indicherà una rapida transizione attraverso la zona di rifiuto verso l'FVA adiacente.`;
     } else {
-      suggestion = `Il prezzo si sta muovendo in equilibrio all'interno della zona di Fair Value ($${currentArea.low.toFixed(0)} - $${currentArea.high.toFixed(0)}). Il magnete principale (Point of Control) è a $${currentArea.poc.toFixed(0)}, che agisce come centro di gravità. Le soglie esterne ($${currentArea.low.toFixed(0)} e $${currentArea.high.toFixed(0)}) delimitano le zone LVN di rigetto strutturale.`;
+      suggestion = `Il prezzo dell'indice si sta muovendo in equilibrio all'interno della zona di Fair Value ($${currentArea.low.toFixed(0)} - $${currentArea.high.toFixed(0)}). Il magnete principale (Point of Control) è a $${currentArea.poc.toFixed(0)}, che agisce come centro di gravità. Le soglie esterne ($${currentArea.low.toFixed(0)} e $${currentArea.high.toFixed(0)}) delimitano le zone LVN di rigetto strutturale.`;
     }
 
     return {
@@ -368,103 +355,446 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       nearestBoundary: lvnZone ? { ...lvnZone, type: nearestBoundary.type, pct: nearestBoundary.pct } : null,
       suggestion,
     };
-  }, [fairValueAreas, mergedZones, data]);
+  }, [fairValueAreas, mergedZones, indexData]);
 
   // ---- Max values for bar sizing ----
-  const { maxOptionsVolume, maxFuturesVolume } = useMemo(() => {
-    let maxOpt = 1;
+  const { maxEtfVolume, maxIndexVolume, maxFuturesVolume } = useMemo(() => {
+    let maxEtf = 1;
+    let maxIdx = 1;
     let maxFut = 1;
     for (const d of zoomedProfile) {
-      if (d.optionsVolume > maxOpt) maxOpt = d.optionsVolume;
+      if (d.etfVolume > maxEtf) maxEtf = d.etfVolume;
+      if (d.indexVolume > maxIdx) maxIdx = d.indexVolume;
       if (d.futuresVolume > maxFut) maxFut = d.futuresVolume;
     }
-    return { maxOptionsVolume: maxOpt, maxFuturesVolume: maxFut };
+    return { maxEtfVolume: maxEtf, maxIndexVolume: maxIdx, maxFuturesVolume: maxFut };
   }, [zoomedProfile]);
 
-  // ---- Cross-Symbol Level mapping for chart visualization ----
-  const crossSymbolLevelsMap = useMemo(() => {
-    const map = new Map<number, any>();
-    if (!data || !data.crossSymbolConfluence) return map;
+  // ---- Map Key Levels by strike for badges ----
+  const mergedLevelsMap = useMemo(() => {
+    const map = new Map<number, { label: string; type: 'support' | 'resistance'; isConfluent: boolean }>();
+    if (!indexData || !etfData || profileData.length === 0) return map;
 
-    const upperSymbol = symbol.toUpperCase();
-    const pairKey = (upperSymbol === 'SPY' || upperSymbol === 'SPX') ? 'SPY_SPX' : 'QQQ_NDX';
-    const pair = data.crossSymbolConfluence[pairKey as keyof typeof data.crossSymbolConfluence];
-    if (!pair) return map;
+    const indexSpot = indexData.spot;
+    const etfSpot = etfData.spot;
+    const ratio = indexSpot / etfSpot;
 
-    for (const level of pair.levels) {
-      const etfIsPrimary = level.etf.symbol.toUpperCase() === upperSymbol;
-      const indexIsPrimary = level.index.symbol.toUpperCase() === upperSymbol;
-      if (!etfIsPrimary && !indexIsPrimary) continue;
+    // Helper to calculate POC, VAH, VAL for a given volume list using AMT 70% Value Area
+    const calculateAMT = (volumes: number[]) => {
+      let totalVolume = 0;
+      let maxVol = -1;
+      let pocIdx = -1;
+      
+      volumes.forEach((v, idx) => {
+        totalVolume += v;
+        if (v > maxVol) {
+          maxVol = v;
+          pocIdx = idx;
+        }
+      });
 
-      const primary = etfIsPrimary ? level.etf : level.index;
-      const paired = etfIsPrimary ? level.index : level.etf;
+      if (pocIdx === -1 || totalVolume === 0) {
+        return { pocStrike: -1, valStrike: -1, vahStrike: -1 };
+      }
 
-      // Only include cross-symbol levels with meaningful confluence score
-      if (level.cross_score < 60) continue;
+      const pocStrike = profileData[pocIdx].strike;
+      let currentVolume = maxVol;
+      let lowIdx = pocIdx;
+      let highIdx = pocIdx;
 
-      map.set(primary.strike, {
-        strike: primary.strike,
-        type: level.type,
-        crossScore: Math.min(100, Math.round(level.cross_score)),
-        pairedSymbol: paired.symbol,
-        pairedStrike: paired.strike,
-        pairedScore: paired.score,
-        pairedWallType: paired.wall_type,
-        pairedOI: paired.total_oi,
-        pairedVol: paired.total_vol,
-        combinedOI: level.combined_oi,
-        combinedVol: level.combined_vol,
-        combinedActivity: level.combined_activity,
+      while (currentVolume < totalVolume * 0.70 && (lowIdx > 0 || highIdx < profileData.length - 1)) {
+        const volBelow = lowIdx > 0 ? volumes[lowIdx - 1] : 0;
+        const volAbove = highIdx < profileData.length - 1 ? volumes[highIdx + 1] : 0;
+
+        if (volBelow >= volAbove && lowIdx > 0) {
+          currentVolume += volBelow;
+          lowIdx--;
+        } else if (highIdx < profileData.length - 1) {
+          currentVolume += volAbove;
+          highIdx++;
+        } else {
+          break;
+        }
+      }
+
+      return {
+        pocStrike,
+        valStrike: profileData[lowIdx].strike,
+        vahStrike: profileData[highIdx].strike,
+      };
+    };
+
+    // Detect nodes (peaks & troughs) for a specific volume profile
+    const detectNodesForProfile = (volumes: number[]) => {
+      const hvns = new Set<number>();
+      const lvns = new Set<number>();
+      
+      const sorted = [...volumes].filter(v => v > 0).sort((a, b) => a - b);
+      const median = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0;
+
+      for (let i = 2; i < volumes.length - 2; i++) {
+        const v_curr = volumes[i];
+        const window = [volumes[i-2], volumes[i-1], v_curr, volumes[i+1], volumes[i+2]];
+        const max_val = Math.max(...window);
+        const min_val = Math.min(...window);
+        const max_surrounding = Math.max(window[0], window[1], window[3], window[4]);
+
+        // Peak (HVN)
+        if (v_curr === max_val && v_curr > median * 1.15) {
+          hvns.add(profileData[i].strike);
+        }
+        // Trough (LVN)
+        if (v_curr === min_val && max_surrounding > 0 && v_curr <= max_surrounding * 0.5 && v_curr < median * 0.8) {
+          lvns.add(profileData[i].strike);
+        }
+      }
+      return { hvns, lvns };
+    };
+
+    // Calculate structures for the 3 profiles in parallel
+    const futuresAMT = hasFuturesData ? calculateAMT(profileData.map(d => d.futuresVolume)) : null;
+    const indexAMT = calculateAMT(profileData.map(d => d.indexVolume));
+    const etfAMT = calculateAMT(profileData.map(d => d.etfVolume));
+
+    const futuresNodes = hasFuturesData ? detectNodesForProfile(profileData.map(d => d.futuresVolume)) : null;
+    const indexNodes = detectNodesForProfile(profileData.map(d => d.indexVolume));
+    const etfNodes = detectNodesForProfile(profileData.map(d => d.etfVolume));
+
+    // Gather Index options levels (Support, Resistance, Gamma Flip)
+    const indexPuts = indexData.support.filter(l => l.label.includes('Put') || l.label.includes('Gamma Wall'));
+    const indexCalls = indexData.resistance.filter(l => l.label.includes('Call') || l.label.includes('Gamma Wall'));
+    const indexPutWall = indexPuts.length > 0 ? [...indexPuts].sort((a, b) => b.strength - a.strength)[0] : null;
+    const indexCallWall = indexCalls.length > 0 ? [...indexCalls].sort((a, b) => b.strength - a.strength)[0] : null;
+    const indexFlip = [...indexData.support, ...indexData.resistance].find(l => l.label.includes('Flip') || l.label.includes('Pivot'));
+
+    // Gather ETF options levels (Support, Resistance, Gamma Flip)
+    const etfPuts = etfData.support.filter(l => l.label.includes('Put') || l.label.includes('Gamma Wall'));
+    const etfCalls = etfData.resistance.filter(l => l.label.includes('Call') || l.label.includes('Gamma Wall'));
+    const etfPutWall = etfPuts.length > 0 ? [...etfPuts].sort((a, b) => b.strength - a.strength)[0] : null;
+    const etfCallWall = etfCalls.length > 0 ? [...etfCalls].sort((a, b) => b.strength - a.strength)[0] : null;
+    const etfFlip = [...etfData.support, ...etfData.resistance].find(l => l.label.includes('Flip') || l.label.includes('Pivot'));
+
+    // Scoring Engine
+    const candidates = profileData.map(d => {
+      const strike = d.strike;
+      const etfStrike = d.etfStrike;
+
+      // Check Options Walls matches
+      const isIndexPutWall = indexPutWall && Math.abs(indexPutWall.strike - strike) < 1.0;
+      const isIndexCallWall = indexCallWall && Math.abs(indexCallWall.strike - strike) < 1.0;
+      const isIndexFlip = indexFlip && Math.abs(indexFlip.strike - strike) < 1.0;
+
+      const isEtfPutWall = etfPutWall && Math.abs(etfPutWall.strike - etfStrike) <= 0.6;
+      const isEtfCallWall = etfCallWall && Math.abs(etfCallWall.strike - etfStrike) <= 0.6;
+      const isEtfFlip = etfFlip && Math.abs(etfFlip.strike - etfStrike) <= 0.6;
+
+      const isFuturesPOC = futuresAMT ? (strike === futuresAMT.pocStrike) : false;
+      const isFuturesVAL = futuresAMT ? (strike === futuresAMT.valStrike) : false;
+      const isFuturesVAH = futuresAMT ? (strike === futuresAMT.vahStrike) : false;
+
+      const isIndexPOC = strike === indexAMT.pocStrike;
+      const isIndexVAL = strike === indexAMT.valStrike;
+      const isIndexVAH = strike === indexAMT.vahStrike;
+
+      const isEtfPOC = strike === etfAMT.pocStrike;
+      const isEtfVAL = strike === etfAMT.valStrike;
+      const isEtfVAH = strike === etfAMT.vahStrike;
+
+      const isFuturesHVN = futuresNodes ? futuresNodes.hvns.has(strike) : false;
+      const isFuturesLVN = futuresNodes ? futuresNodes.lvns.has(strike) : false;
+      
+      const isIndexHVN = indexNodes.hvns.has(strike);
+      const isIndexLVN = indexNodes.lvns.has(strike);
+
+      const isEtfHVN = etfNodes.hvns.has(strike);
+      const isEtfLVN = etfNodes.lvns.has(strike);
+
+      let score = 0;
+      const markers = new Set<string>();
+
+      const isConfluentPutWall = isIndexPutWall && isEtfPutWall;
+      const isConfluentCallWall = isIndexCallWall && isEtfCallWall;
+      const isConfluentFlip = isIndexFlip && isEtfFlip;
+
+      if (isConfluentPutWall) { score += 35; markers.add('ConfluentPutWall'); }
+      else if (isIndexPutWall || isEtfPutWall) { score += 20; markers.add('PutWall'); }
+
+      if (isConfluentCallWall) { score += 35; markers.add('ConfluentCallWall'); }
+      else if (isIndexCallWall || isEtfCallWall) { score += 20; markers.add('CallWall'); }
+
+      if (isConfluentFlip) { score += 35; markers.add('ConfluentFlip'); }
+      else if (isIndexFlip || isEtfFlip) { score += 20; markers.add('GexFlip'); }
+
+      const isPrimaryPOC = hasFuturesData ? isFuturesPOC : isIndexPOC;
+      const isPrimaryVAL = hasFuturesData ? isFuturesVAL : isIndexVAL;
+      const isPrimaryVAH = hasFuturesData ? isFuturesVAH : isIndexVAH;
+
+      if (isPrimaryPOC) { score += 30; markers.add('PrimaryPOC'); }
+      if (isPrimaryVAL) { score += 25; markers.add('PrimaryVAL'); }
+      if (isPrimaryVAH) { score += 25; markers.add('PrimaryVAH'); }
+
+      if (hasFuturesData) {
+        if (isIndexPOC) { score += 15; markers.add('IndexPOC'); }
+        if (isEtfPOC) { score += 15; markers.add('EtfPOC'); }
+        if (isIndexVAL) { score += 10; markers.add('IndexVAL'); }
+        if (isIndexVAH) { score += 10; markers.add('IndexVAH'); }
+        if (isEtfVAL) { score += 10; markers.add('EtfVAL'); }
+        if (isEtfVAH) { score += 10; markers.add('EtfVAH'); }
+      }
+
+      const hvnCount = (isFuturesHVN ? 1 : 0) + (isIndexHVN ? 1 : 0) + (isEtfHVN ? 1 : 0);
+      const lvnCount = (isFuturesLVN ? 1 : 0) + (isIndexLVN ? 1 : 0) + (isEtfLVN ? 1 : 0);
+
+      if (hvnCount >= 2) { score += 20; markers.add('ConfluentHVN'); }
+      else if (hvnCount === 1) { score += 5; markers.add('SingleHVN'); }
+
+      if (lvnCount >= 2) { score += 20; markers.add('ConfluentLVN'); }
+      else if (lvnCount === 1) { score += 5; markers.add('SingleLVN'); }
+
+      return {
+        strike,
+        etfStrike,
+        score,
+        markers,
+        distancePct: d.distancePct,
+        isSupport: strike <= indexSpot,
+        
+        isPutWall: isIndexPutWall || isEtfPutWall,
+        isCallWall: isIndexCallWall || isEtfCallWall,
+        isGexFlip: isIndexFlip || isEtfFlip,
+        isConfluentWall: isConfluentPutWall || isConfluentCallWall || isConfluentFlip,
+        isCrossSymbol: (indexPutWall?.isCrossSymbol && isIndexPutWall) ||
+                       (indexCallWall?.isCrossSymbol && isIndexCallWall) ||
+                       (indexFlip?.isCrossSymbol && isIndexFlip),
+        
+        isPrimaryPOC,
+        isPrimaryVAL,
+        isPrimaryVAH,
+        
+        isHVN: hvnCount > 0,
+        isLVN: lvnCount > 0,
+        isConfluentNode: hvnCount >= 2 || lvnCount >= 2
+      };
+    });
+
+    const selectedStrikes = new Set<number>();
+    
+    // 1. Mandatory structures (POC, VAL, VAH, Walls, score >= 30)
+    candidates.forEach(c => {
+      if (
+        c.isPrimaryPOC ||
+        c.isPrimaryVAL ||
+        c.isPrimaryVAH ||
+        c.markers.has('ConfluentPutWall') ||
+        c.markers.has('ConfluentCallWall') ||
+        c.markers.has('ConfluentFlip') ||
+        c.markers.has('PutWall') ||
+        c.markers.has('CallWall') ||
+        c.markers.has('GexFlip') ||
+        c.score >= 30
+      ) {
+        selectedStrikes.add(c.strike);
+      }
+    });
+
+    // 2. Filtered HVNs and LVNs (within 3% of spot, max 1 of each per side)
+    const proximityCandidates = candidates.filter(c => Math.abs(c.distancePct) <= 3.0 && !selectedStrikes.has(c.strike));
+    
+    const hvnSupport = proximityCandidates.filter(c => c.isSupport && c.isHVN)
+      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
+      .slice(0, 1);
+      
+    const hvnResistance = proximityCandidates.filter(c => !c.isSupport && c.isHVN)
+      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
+      .slice(0, 1);
+
+    const lvnSupport = proximityCandidates.filter(c => c.isSupport && c.isLVN)
+      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
+      .slice(0, 1);
+
+    const lvnResistance = proximityCandidates.filter(c => !c.isSupport && c.isLVN)
+      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
+      .slice(0, 1);
+
+    hvnSupport.forEach(c => selectedStrikes.add(c.strike));
+    hvnResistance.forEach(c => selectedStrikes.add(c.strike));
+    lvnSupport.forEach(c => selectedStrikes.add(c.strike));
+    lvnResistance.forEach(c => selectedStrikes.add(c.strike));
+
+    // 3. Populate final map with premium confluent label strings
+    candidates.forEach(c => {
+      if (!selectedStrikes.has(c.strike)) return;
+
+      const strike = c.strike;
+      let labelParts: string[] = [];
+      let isConfluent = c.isConfluentWall || c.isConfluentNode || c.isCrossSymbol;
+
+      // Primary POC
+      if (c.isPrimaryPOC) {
+        labelParts.push(hasFuturesData ? 'POC' : 'POC Magnete');
+      }
+
+      // VAL / VAH
+      if (c.isPrimaryVAL) labelParts.push('VAL');
+      if (c.isPrimaryVAH) labelParts.push('VAH');
+
+      // Put Walls
+      if (c.markers.has('ConfluentPutWall')) {
+        labelParts.push('Put Wall');
+        isConfluent = true;
+      } else if (c.markers.has('PutWall')) {
+        const hasIdx = indexPutWall && Math.abs(indexPutWall.strike - strike) < 1.0;
+        labelParts.push(hasIdx ? `Put Wall (${indexData.symbol})` : `Put Wall (${etfData.symbol})`);
+      }
+
+      // Call Walls
+      if (c.markers.has('ConfluentCallWall')) {
+        labelParts.push('Call Wall');
+        isConfluent = true;
+      } else if (c.markers.has('CallWall')) {
+        const hasIdx = indexCallWall && Math.abs(indexCallWall.strike - strike) < 1.0;
+        labelParts.push(hasIdx ? `Call Wall (${indexData.symbol})` : `Call Wall (${etfData.symbol})`);
+      }
+
+      // GEX Flip
+      if (c.markers.has('ConfluentFlip')) {
+        labelParts.push('GEX Flip');
+        isConfluent = true;
+      } else if (c.markers.has('GexFlip')) {
+        labelParts.push('GEX Flip');
+      }
+
+      // HVN/LVN fallback if no primary structures
+      if (labelParts.length === 0) {
+        if (c.isHVN) {
+          if (c.markers.has('ConfluentHVN')) {
+            labelParts.push('HVN Confluenza');
+            isConfluent = true;
+          } else {
+            labelParts.push('HVN');
+          }
+        } else if (c.isLVN) {
+          if (c.markers.has('ConfluentLVN')) {
+            labelParts.push('LVN Confluenza');
+            isConfluent = true;
+          } else {
+            labelParts.push('LVN Zone');
+          }
+        }
+      } else {
+        // If it has primary structures AND is an HVN/LVN, it is confluent
+        if (c.isHVN || c.isLVN) {
+          isConfluent = true;
+        }
+      }
+
+      if (labelParts.length === 0 && c.isCrossSymbol) {
+        labelParts.push('Confluenza');
+        isConfluent = true;
+      }
+
+      let label = labelParts.join(' / ');
+      if (label === 'VAL') label = 'VAL (Area Low)';
+      if (label === 'VAH') label = 'VAH (Area High)';
+      if (label === 'HVN') {
+        label = c.isSupport ? 'HVN (Supporto)' : 'HVN (Resistenza)';
+      }
+      if (label === 'LVN Zone') {
+        label = c.isSupport ? 'LVN (Supporto)' : 'LVN (Resistenza)';
+      }
+
+      if (label) {
+        if (isConfluent && !label.includes('🔗')) {
+          label += ' 🔗';
+        }
+
+        map.set(strike, {
+          label,
+          type: c.isSupport ? 'support' : 'resistance',
+          isConfluent: !!isConfluent,
+        });
+      }
+    });
+
+    // 4. Fallback: Extract raw cross-symbol confluences directly from python data if not already mapped
+    const pairKey = market === 'SP500' ? 'SPY_SPX' : 'QQQ_NDX';
+    const pair = indexData.crossSymbolConfluence?.[pairKey as keyof typeof indexData.crossSymbolConfluence];
+    if (pair && pair.levels) {
+      pair.levels.forEach(level => {
+        if (level.cross_score >= 85 && !map.has(level.index.strike)) {
+          let label = 'Confluenza 🔗';
+          const hasMajor = level.etf.wall_type.includes('major') || level.index.wall_type.includes('major');
+          if (hasMajor) {
+            label = 'Major Wall 🔗';
+          } else if (level.etf.wall_type === 'put' && level.index.wall_type === 'put') {
+            label = 'Put Wall 🔗';
+          } else if (level.etf.wall_type === 'call' && level.index.wall_type === 'call') {
+            label = 'Call Wall 🔗';
+          }
+          
+          map.set(level.index.strike, {
+            label,
+            type: level.type as 'support' | 'resistance',
+            isConfluent: true,
+          });
+        }
       });
     }
+
     return map;
-  }, [data, symbol]);
+  }, [indexData, etfData, market, profileData, nodes, hasFuturesData]);
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={handleRefresh} />;
-  if (!data) return <ErrorState message="No data available" onRetry={handleRefresh} />;
+  if (!indexData || !etfData) return <ErrorState message="Dati non disponibili" onRetry={handleRefresh} />;
 
-  const { spot, gexRegime } = data;
-  const hasFuturesData = zoomedProfile.some(d => d.futuresVolume > 0);
+  const indexSpot = indexData.spot;
+  const etfSpot = etfData.spot;
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#0d1117' }}>
+    <div className="min-h-screen flex flex-col bg-[#0d1117]">
       {/* ================================================================== */}
       {/* CONTROL HEADER                                                     */}
       {/* ================================================================== */}
-      <header className="border-b border-gray-800 px-4 py-3">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4 flex-wrap">
-          {/* Symbols */}
-          <div className="flex items-center gap-1">
-            {SYMBOLS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setSymbol(s)}
-                className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-all duration-150"
-                style={{
-                  backgroundColor: symbol === s ? '#1e293b' : 'transparent',
-                  color: symbol === s ? '#e2e8f0' : '#64748b',
-                  border: symbol === s ? '1px solid #334155' : '1px solid transparent',
-                }}
-              >
-                {s}
-              </button>
-            ))}
+      <header className="border-b border-gray-800 bg-[#161b22]/50 backdrop-blur px-4 py-3 sticky top-0 z-20">
+        <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 flex-wrap">
+          {/* Market selector (S&P 500 vs Nasdaq 100) */}
+          <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-800">
+            <button
+              onClick={() => setMarket('SP500')}
+              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-150"
+              style={{
+                backgroundColor: market === 'SP500' ? '#1e293b' : 'transparent',
+                color: market === 'SP500' ? '#e2e8f0' : '#64748b',
+              }}
+            >
+              🇺🇸 S&P 500
+            </button>
+            <button
+              onClick={() => setMarket('NASDAQ100')}
+              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-150"
+              style={{
+                backgroundColor: market === 'NASDAQ100' ? '#1e293b' : 'transparent',
+                color: market === 'NASDAQ100' ? '#e2e8f0' : '#64748b',
+              }}
+            >
+              💻 Nasdaq 100
+            </button>
           </div>
 
-          {/* Filters */}
-          <div className="flex items-center gap-3">
-            {/* Range Selector */}
+          {/* Controls & Zooms */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Range selector */}
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Range:</span>
-              <div className="flex items-center bg-[#1e293b] rounded-lg p-0.5 border border-gray-700">
+              <div className="flex items-center bg-slate-900 rounded-lg p-0.5 border border-slate-800">
                 {ZOOM_OPTIONS.map((zo) => (
                   <button
                     key={zo.value}
                     onClick={() => setZoomPct(zo.value)}
-                    className="px-2 py-1 rounded text-[10px] font-semibold transition-all duration-150"
+                    className="px-2.5 py-1 rounded text-[10px] font-semibold transition-all duration-150"
                     style={{
-                      backgroundColor: zoomPct === zo.value ? '#334155' : 'transparent',
+                      backgroundColor: zoomPct === zo.value ? '#1e293b' : 'transparent',
                       color: zoomPct === zo.value ? '#e2e8f0' : '#64748b',
                     }}
                   >
@@ -474,51 +804,46 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
               </div>
             </div>
 
-            {/* Row Height Spacing Zoom Controls */}
+            {/* Row Height Spacing Control */}
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Zoom:</span>
-              <div className="flex items-center gap-1 bg-[#1e293b] rounded-lg p-1 border border-gray-700">
-                {/* Squeeze / Zoom Out (decreases height) */}
+              <div className="flex items-center gap-1.5 bg-[#161b22] rounded-lg px-2 py-1 border border-slate-800">
                 <button
-                  onClick={() => setRowHeight(h => Math.max(12, h - 2))}
-                  disabled={rowHeight <= 12}
-                  className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#334155] disabled:opacity-30 disabled:hover:bg-transparent font-bold text-xs"
+                  onClick={() => setRowHeight(h => Math.max(14, h - 2))}
+                  disabled={rowHeight <= 14}
+                  className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#1e293b] disabled:opacity-30 disabled:hover:bg-transparent font-bold text-xs"
                   title="Stringi righe (più livelli visibili)"
                 >
-                  🔍⁻
+                  -
                 </button>
-                
-                {/* Slider */}
                 <input
                   type="range"
-                  min="12"
+                  min="14"
                   max="36"
                   step="2"
                   value={rowHeight}
                   onChange={(e) => setRowHeight(Number(e.target.value))}
-                  className="w-16 sm:w-20 accent-blue-500 cursor-pointer h-1 bg-gray-700 rounded-lg appearance-none"
+                  className="w-16 accent-blue-500 cursor-pointer h-1 bg-gray-800 rounded-lg appearance-none"
                   title={`Altezza righe: ${rowHeight}px`}
                 />
-                
-                {/* Expand / Zoom In (increases height) */}
                 <button
                   onClick={() => setRowHeight(h => Math.min(36, h + 2))}
                   disabled={rowHeight >= 36}
-                  className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#334155] disabled:opacity-30 disabled:hover:bg-transparent font-bold text-xs"
-                  title="Allarga righe (dettaglio)"
+                  className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#1e293b] disabled:opacity-30 disabled:hover:bg-transparent font-bold text-xs"
+                  title="Allarga righe (maggior dettaglio)"
                 >
-                  🔍⁺
+                  +
                 </button>
               </div>
             </div>
 
-            {/* DTE Selector */}
+            {/* Expiry filter */}
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Opzioni:</span>
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Scadenza:</span>
               <select
                 value={expiryFilter}
                 onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
-                className="bg-[#1e293b] border border-gray-700 text-gray-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
+                className="bg-slate-900 border border-slate-850 text-gray-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
               >
                 {EXPIRY_OPTIONS.map((opt) => (
                   <option key={opt.key} value={opt.key}>{opt.label}</option>
@@ -526,13 +851,13 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
               </select>
             </div>
 
-            {/* Futures Timeframe Selector */}
+            {/* Futures Timeframe selector */}
             <div className="flex items-center gap-1">
               <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Futures:</span>
               <select
                 value={selectedFuturesTf}
                 onChange={(e) => setSelectedFuturesTf(e.target.value as 'auto' | '2d' | '7d' | '30d' | '90d')}
-                className="bg-[#1e293b] border border-gray-700 text-gray-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
+                className="bg-slate-900 border border-slate-850 text-gray-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
               >
                 <option value="auto">Auto (Allineato)</option>
                 <option value="2d">2 Giorni (15m)</option>
@@ -547,11 +872,11 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
               onClick={handleRefresh}
               disabled={refreshing}
               className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-              title={lastUpdatedText ? `Last updated: ${lastUpdatedText}` : 'Refresh'}
+              title={timeSinceUpdate ? `Aggiornato: ${timeSinceUpdate}` : 'Aggiorna'}
             >
               <IconRefresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-              {lastUpdatedText && (
-                <span className="text-[11px] text-gray-500">{lastUpdatedText}</span>
+              {timeSinceUpdate && (
+                <span className="text-[11px] text-gray-500">{timeSinceUpdate}</span>
               )}
             </button>
 
@@ -559,14 +884,14 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
             {isBackgroundRefreshing && (
               <span className="inline-flex items-center gap-1 text-[11px] text-blue-400/80 animate-pulse">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400 animate-ping" />
-                Refreshing…
+                Aggiornamento in corso…
               </span>
             )}
 
             {/* Success flash */}
             {flashVisible && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-500/15 text-green-400 animate-pulse">
-                ✓ Aggiornato
+                ✓ Dati aggiornati
               </span>
             )}
           </div>
@@ -577,14 +902,102 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       {/* MAIN CONTENT AREA                                                 */}
       {/* ================================================================== */}
       <main className="flex-1 px-4 py-6">
-        <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
+        <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col gap-6 w-full animate-fadeIn">
           
-          {/* ---- PROFILE CHART CARD ---- */}
-          <div className="bg-slate-900/40 border border-gray-800 rounded-2xl p-5 flex flex-col">
+          {/* ================================================================== */}
+          {/* TOP PANEL: METRICS & SPOT                                          */}
+          {/* ================================================================== */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            
+            {/* Spot Prices */}
+            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-center">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Prezzi Spot</span>
+              <div className="mt-1 flex items-baseline justify-between">
+                <div>
+                  <span className="text-[10px] text-gray-400 font-medium">Indice ({indexData.symbol}):</span>
+                  <div className="text-lg font-mono font-bold text-white">${indexSpot.toFixed(2)}</div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-gray-400 font-medium">ETF ({etfData.symbol}):</span>
+                  <div className="text-lg font-mono font-bold text-white">${etfSpot.toFixed(2)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* GEX Regimes */}
+            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-center">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Regime GEX</span>
+              <div className="mt-1 grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-[9px] text-gray-400 font-medium block">Indice ({indexData.symbol})</span>
+                  <span
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold"
+                    style={{
+                      backgroundColor: indexData.gexRegime.regime === 'positive' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                      color: indexData.gexRegime.regime === 'positive' ? '#4ade80' : '#f87171',
+                    }}
+                  >
+                    {indexData.gexRegime.regime === 'positive' ? '▲ Positivo' : '▼ Negativo'}
+                  </span>
+                  {indexData.gexRegime.flipPoint && (
+                    <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
+                      Flip: ${indexData.gexRegime.flipPoint.toFixed(0)}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <span className="text-[9px] text-gray-400 font-medium block">ETF ({etfData.symbol})</span>
+                  <span
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold"
+                    style={{
+                      backgroundColor: etfData.gexRegime.regime === 'positive' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                      color: etfData.gexRegime.regime === 'positive' ? '#4ade80' : '#f87171',
+                    }}
+                  >
+                    {etfData.gexRegime.regime === 'positive' ? '▲ Positivo' : '▼ Negativo'}
+                  </span>
+                  {etfData.gexRegime.flipPoint && (
+                    <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
+                      Flip: ${etfData.gexRegime.flipPoint.toFixed(1)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Market State */}
+            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-center">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Stato di Mercato</span>
+              {analysis && (
+                <div className="mt-1 text-xs leading-snug">
+                  {analysis.currentArea ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Fair Value Area:</span>
+                      <span className="font-mono font-bold text-gray-200">${analysis.currentArea.low.toFixed(0)} - ${analysis.currentArea.high.toFixed(0)}</span>
+                    </div>
+                  ) : (
+                    <div className="text-gray-400">Prezzo fuori dai nodi principali</div>
+                  )}
+                  {analysis.nearestBoundary && (
+                    <div className="flex items-center justify-between mt-0.5">
+                      <span className="text-gray-400">Confine {analysis.nearestBoundary.type.split(' ')[0]}:</span>
+                      <span className="font-mono font-bold text-rose-400">${analysis.nearestBoundary.low.toFixed(0)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* ================================================================== */}
+          {/* PROFILE CHART (WIDESCREEN FULL WIDTH)                              */}
+          {/* ================================================================== */}
+          <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5 flex flex-col w-full">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-lg font-bold text-gray-100 flex items-center gap-2">
-                  📊 Profilo dei Volumi Incrociato
+                  📊 Profilo Volumi Unificato (3-Profile Chart)
                   {!hasFuturesData && (
                     <span className="text-xs font-normal text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
                       Fallback Opzioni
@@ -592,17 +1005,21 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                   )}
                 </h2>
                 <p className="text-xs text-gray-400 mt-1">
-                  Distribuzione dell'Open Interest + Volume delle Opzioni (sinistra) e dei Volumi dei Futures (destra).
+                  Analisi incrociata delle opzioni retail (ETF) a sinistra, opzioni istituzionali (Indice) al centro-destra e volumi futures a destra.
                 </p>
-                <div className="flex flex-wrap gap-4 mt-3 pt-3 border-t border-gray-800/60 text-[11px] text-gray-400">
+                <div className="flex flex-wrap gap-4 mt-3 pt-3 border-t border-slate-850 text-[10px] text-gray-400">
                   <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500/50"></span>
-                    <span><strong>Profilo Opzioni:</strong> Posizionamento corrente (Open Interest + Volume Intraday)</span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500/40"></span>
+                    <span><strong>Opzioni ETF:</strong> {etfData.symbol} OI+Vol</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-500/50"></span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500/40"></span>
+                    <span><strong>Opzioni Indice:</strong> {indexData.symbol} OI+Vol</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
                     <span>
-                      <strong>Profilo Futures:</strong> Storico {
+                      <strong>Volumi Futures:</strong> Storico {
                         selectedFuturesTf === 'auto' ? 'allineato alla scadenza' : 'personalizzato'
                       } ({
                         (() => {
@@ -615,13 +1032,11 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                           } else {
                             tf = selectedFuturesTf;
                           }
-                          return tf === '2d' ? '2 Giorni, candele a 15m' :
-                                 tf === '7d' ? '7 Giorni, candele a 30m' :
-                                 tf === '30d' ? '30 Giorni, candele a 1h' :
-                                 tf === '90d' ? '90 Giorni, candele a 1d' :
-                                 '30 Giorni, candele a 1h';
+                          return tf === '2d' ? '2 Giorni' :
+                                 tf === '7d' ? '7 Giorni' :
+                                 tf === '30d' ? '30 Giorni' : '90 Giorni';
                         })()
-                      }, indicizzato allo spot)
+                      })
                     </span>
                   </div>
                 </div>
@@ -629,70 +1044,73 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
             </div>
 
             {/* Header labels for profiles */}
-            <div className="grid grid-cols-[1fr_80px_1fr] gap-2 mb-2 px-2 text-[10px] font-bold tracking-wider text-gray-500 uppercase">
-              <span className="text-right">Profilo Opzioni (OI + Vol)</span>
+            <div className="grid grid-cols-[1fr_110px_140px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
+              <span className="text-right">Opzioni ETF (OI+Vol)</span>
               <span className="text-center">Strike</span>
-              <span className="text-left">{hasFuturesData ? 'Profilo Futures (Vol)' : 'Profilo Opzioni (Vol)'}</span>
+              <span className="text-center">Livelli Quant</span>
+              <span className="text-left">Opzioni Indice (OI+Vol)</span>
+              <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
             </div>
 
             {/* Chart rows */}
             <div className="flex flex-col gap-0.5">
               {zoomedProfile.slice().reverse().map((d) => {
-                const isClosest = Math.abs(d.strike - spot) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - spot)));
+                const isClosest = Math.abs(d.strike - indexSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - indexSpot)));
                 const isHVN = nodes.hvnStrikes.has(d.strike);
                 const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                 const isLVN = !!lvnZone;
                 const isTrough = nodes.lvnStrikes.has(d.strike);
-                const crossLvl = crossSymbolLevelsMap.get(d.strike);
+                const mergedLvl = mergedLevelsMap.get(d.strike);
 
-                const optBarWidth = (d.optionsVolume / maxOptionsVolume) * 100;
-                const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.optionsVolume) / (hasFuturesData ? maxFuturesVolume : maxOptionsVolume)) * 100;
+                const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
+                const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
+                const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
 
                 return (
                   <div
                     key={d.strike}
-                    className="relative grid grid-cols-[1fr_80px_1fr] gap-2 items-center transition-colors duration-150 rounded"
+                    className="relative grid grid-cols-[1fr_110px_140px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
                     style={{
                       height: `${rowHeight}px`,
                       backgroundColor: isClosest
-                        ? 'rgba(59,130,246,0.18)'
+                        ? 'rgba(59,130,246,0.12)'
                         : isHVN
-                        ? 'rgba(99,102,241,0.03)'
+                        ? 'rgba(99,102,241,0.02)'
                         : isLVN
                         ? 'rgba(244,63,94,0.02)'
                         : 'transparent',
-                      borderTop: isClosest ? '1px solid rgba(59,130,246,0.45)' : 'none',
-                      borderBottom: isClosest ? '1px solid rgba(59,130,246,0.45)' : 'none',
+                      borderTop: isClosest ? '1px solid rgba(59,130,246,0.3)' : 'none',
+                      borderBottom: isClosest ? '1px solid rgba(59,130,246,0.3)' : 'none',
                     }}
                   >
-                    {/* Left profile bar: Options Activity */}
+                    {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
                     <div className="flex justify-end w-full pr-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                       <div
-                        className="h-full rounded-l flex items-center justify-end pr-2 overflow-hidden"
+                        className="h-full rounded-l flex items-center justify-end pr-1.5 overflow-hidden"
                         style={{
-                          width: `${Math.max(2, optBarWidth)}%`,
+                          width: `${Math.max(2, etfBarWidth)}%`,
                           backgroundColor: isHVN
-                            ? 'rgba(99,102,241,0.45)'
+                            ? 'rgba(99,102,241,0.35)'
                             : isLVN
-                            ? 'rgba(244,63,94,0.08)'
-                            : 'rgba(59,130,246,0.25)',
+                            ? 'rgba(244,63,94,0.06)'
+                            : 'rgba(59,130,246,0.22)',
                         }}
                       >
-                        {optBarWidth > 15 && rowHeight >= 18 && (
-                          <span className="text-[9px] font-mono text-blue-200">
-                            {formatCompact(d.optionsVolume)}
+                        {etfBarWidth > 18 && rowHeight >= 18 && (
+                          <span className="text-[8px] font-mono text-blue-200">
+                            {formatCompact(d.etfVolume)}
                           </span>
                         )}
                       </div>
                     </div>
 
-                    {/* Center Strike Price & Badges */}
-                    <div className="flex flex-col items-center justify-center font-mono relative" style={{ height: `${rowHeight}px` }}>
+                    {/* Column 2: Center Strike Price */}
+                    <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
                       <span
-                        className={`font-bold transition-colors ${
-                          rowHeight < 15 ? 'text-[9px]' :
-                          rowHeight < 20 ? 'text-[10px]' :
-                          rowHeight < 26 ? 'text-xs' : 'text-sm'
+                        className={`font-bold transition-colors shrink-0 ${
+                          rowHeight < 15 ? 'text-[8px]' :
+                          rowHeight < 20 ? 'text-[9px]' :
+                          rowHeight < 26 ? 'text-[10px]' : 'text-xs'
                         }`}
                         style={{
                           color: isClosest ? '#ffffff' : isHVN ? '#818cf8' : isLVN ? '#fb7185' : '#94a3b8',
@@ -702,64 +1120,95 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
                           lineHeight: 1,
                         }}
                       >
-                        ${d.strike.toFixed(0)}
+                        ${d.strike.toFixed(0)} / ${d.etfStrike.toFixed(0)}
                       </span>
-                      {isClosest && rowHeight >= 24 && (
-                        <span className="absolute -bottom-2.5 text-[7px] text-blue-400 font-bold uppercase tracking-wider bg-[#0d1117] px-1 rounded border border-blue-500/30 z-10">
+                      {isClosest && rowHeight >= 28 && (
+                        <span className="absolute -bottom-2 text-[7px] text-blue-400 font-bold uppercase tracking-wider bg-[#0d1117] px-1 rounded border border-blue-500/30 z-10">
                           Spot
                         </span>
                       )}
                     </div>
 
-                    {/* Right profile bar: Futures Volume */}
+                    {/* Column 3: Badges (Dedicated column!) */}
+                    <div className="flex items-center justify-center relative w-full" style={{ height: `${rowHeight}px` }}>
+                      {mergedLvl && rowHeight >= 14 && (
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[7px] font-extrabold uppercase tracking-wider border whitespace-nowrap shrink-0 animate-fadeIn"
+                          style={{
+                            backgroundColor: mergedLvl.type === 'resistance' ? 'rgba(239,68,68,0.18)' : mergedLvl.type === 'support' ? 'rgba(34,197,94,0.18)' : 'rgba(148,163,184,0.18)',
+                            color: mergedLvl.type === 'resistance' ? '#f87171' : mergedLvl.type === 'support' ? '#4ade80' : '#e2e8f0',
+                            borderColor: mergedLvl.isConfluent ? 'rgba(245,158,11,0.6)' : 'rgba(255,255,255,0.06)',
+                            boxShadow: mergedLvl.isConfluent ? '0 0 6px rgba(245,158,11,0.35)' : 'none',
+                            transform: `scale(${rowHeight < 18 ? 0.8 : 1.0})`,
+                            transformOrigin: 'center center'
+                          }}
+                        >
+                          {mergedLvl.label}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Column 4: Index Options profile (oriented left) */}
+                    <div className="flex justify-start w-full pl-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                      <div
+                        className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
+                        style={{
+                          width: `${Math.max(2, indexBarWidth)}%`,
+                          backgroundColor: isHVN
+                            ? 'rgba(99,102,241,0.35)'
+                            : isLVN
+                            ? 'rgba(244,63,94,0.06)'
+                            : 'rgba(129,140,248,0.22)',
+                        }}
+                      >
+                        {indexBarWidth > 18 && rowHeight >= 18 && (
+                          <span className="text-[8px] font-mono text-indigo-200">
+                            {formatCompact(d.indexVolume)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Column 5: Futures Volume profile (oriented left) */}
                     <div className="flex justify-start w-full pl-1 relative animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                       <div
-                        className="h-full rounded-r flex items-center justify-start pl-2 overflow-hidden"
+                        className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
                         style={{
                           width: `${Math.max(2, futBarWidth)}%`,
                           backgroundColor: isHVN
-                            ? 'rgba(129,140,248,0.45)'
+                            ? 'rgba(129,140,248,0.35)'
                             : isLVN
-                            ? 'rgba(244,63,94,0.08)'
-                            : 'rgba(34,197,94,0.25)',
+                            ? 'rgba(244,63,94,0.06)'
+                            : 'rgba(34,197,94,0.22)',
                           borderLeft: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                           borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                         }}
                       >
-                        {futBarWidth > 15 && rowHeight >= 18 && (
-                          <span className="text-[9px] font-mono text-green-200">
-                            {formatCompact(hasFuturesData ? d.futuresVolume : d.optionsVolume)}
+                        {futBarWidth > 18 && rowHeight >= 18 && (
+                          <span className="text-[8px] font-mono text-green-200">
+                            {formatCompact(hasFuturesData ? d.futuresVolume : d.indexVolume)}
                           </span>
                         )}
                       </div>
 
-                      {/* Right-aligned node badges */}
-                      {rowHeight >= 16 && (
+                      {/* Right-aligned node badges overlay */}
+                      {rowHeight >= 14 && (
                         <div 
                           className="absolute right-2 top-0 flex gap-1 items-center"
                           style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
                         >
-                          {crossLvl && (
-                            <span
-                              className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase flex items-center gap-0.5 cursor-help"
-                              title={`Confluenza Cross-Symbol con ${crossLvl.pairedSymbol} a strike $${crossLvl.pairedStrike.toFixed(0)} (Score: ${crossLvl.crossScore})`}
-                              style={{ transform: rowHeight < 20 ? 'scale(0.85)' : 'none', transformOrigin: 'right center' }}
-                            >
-                              🔗 {crossLvl.pairedSymbol} ${crossLvl.pairedStrike.toFixed(0)}
-                            </span>
-                          )}
                           {isHVN && (
                             <span 
-                              className="px-1 py-0.5 rounded text-[8px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"
-                              style={{ transform: rowHeight < 20 ? 'scale(0.85)' : 'none', transformOrigin: 'right center' }}
+                              className="px-1 py-0.5 rounded text-[7px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"
+                              style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
                             >
                               HVN
                             </span>
                           )}
                           {isLVN && isTrough && (
                             <span 
-                              className="px-1 py-0.5 rounded text-[8px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase"
-                              style={{ transform: rowHeight < 20 ? 'scale(0.85)' : 'none', transformOrigin: 'right center' }}
+                              className="px-1 py-0.5 rounded text-[7px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase"
+                              style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
                             >
                               LVN Zone
                             </span>
@@ -773,73 +1222,33 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
             </div>
           </div>
 
-          {/* ---- INSIGHTS & STRUCTURAL TABLES ---- */}
-          <div className="flex flex-col gap-6">
+          {/* ================================================================== */}
+          {/* BOTTOM PANEL: STRUCTURAL ANALYSIS, FVA LIST, AND COLLAPSIBLE LEGEND */}
+          {/* ================================================================== */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
-            {/* Spot & Regime Card */}
-            <div className="bg-[#161b22] border border-gray-800 rounded-2xl p-5">
-              <div className="flex items-baseline justify-between mb-4">
-                <div>
-                  <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Spot Price</span>
-                  <div className="text-2xl font-mono font-bold text-white">${spot.toFixed(2)}</div>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">GEX Regime</span>
-                  <div className="mt-1">
-                    <span
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold"
-                      style={{
-                        backgroundColor: gexRegime.regime === 'positive' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
-                        color: gexRegime.regime === 'positive' ? '#4ade80' : '#f87171',
-                      }}
-                    >
-                      {gexRegime.regime === 'positive' ? '▲ Positive' : '▼ Negative'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {gexRegime.flipPoint && (
-                <div className="border-t border-gray-800 pt-3 flex items-center justify-between text-xs text-gray-400">
-                  <span>Soglia Gamma Flip:</span>
-                  <span className="font-mono font-bold text-gray-200">${gexRegime.flipPoint.toFixed(0)}</span>
-                </div>
-              )}
-            </div>
-
             {/* Structural Analysis Card */}
             {analysis && (
-              <div className="bg-[#161b22] border border-gray-800 rounded-2xl p-5">
+              <div className="bg-[#161b22] border border-gray-800 rounded-2xl p-5 h-full">
                 <h3 className="text-sm font-bold text-gray-200 mb-3 flex items-center gap-2">
                   <span>💡</span> Analisi di Struttura
                 </h3>
-                
                 {analysis.currentArea && (
-                  <div className="mb-4">
-                    <span className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Zona Fair Value Attuale:</span>
-                    <div className="text-sm text-gray-300 font-medium mt-1">
+                  <div className="mb-3">
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Zona Fair Value Attuale:</span>
+                    <div className="text-sm text-gray-300 font-medium mt-0.5">
                       ${analysis.currentArea.low.toFixed(0)} - ${analysis.currentArea.high.toFixed(0)}
                     </div>
                   </div>
                 )}
-
                 <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 text-xs leading-relaxed text-gray-400">
                   {analysis.suggestion}
                 </div>
-
                 {analysis.nearestBoundary && (
-                  <div className="mt-4 border-t border-gray-850 pt-3 space-y-2">
+                  <div className="mt-4 border-t border-slate-800 pt-3 space-y-2">
                     <div className="flex items-center justify-between text-[11px] text-gray-400">
                       <span>Confine più vicino:</span>
                       <span className="font-semibold text-rose-400">{analysis.nearestBoundary.type.split(' ')[0]}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-gray-400">
-                      <span>Prezzo Confine:</span>
-                      <span className="font-mono font-bold text-gray-200 text-right">
-                        {analysis.nearestBoundary.low === analysis.nearestBoundary.high
-                          ? `$${analysis.nearestBoundary.low.toFixed(0)}`
-                          : `$${analysis.nearestBoundary.low.toFixed(0)} - $${analysis.nearestBoundary.high.toFixed(0)}`}
-                      </span>
                     </div>
                     <div className="flex items-center justify-between text-[11px] text-gray-400">
                       <span>Distanza dallo Spot:</span>
@@ -853,7 +1262,7 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
             )}
 
             {/* Fair Value Areas List */}
-            <div className="bg-[#161b22] border border-gray-800 rounded-2xl p-5">
+            <div className="bg-[#161b22] border border-gray-800 rounded-2xl p-5 h-full">
               <h3 className="text-xs font-bold tracking-wider text-gray-400 uppercase mb-4">
                 Aree di Fair Value (FVA)
               </h3>
@@ -892,6 +1301,75 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
               </div>
             </div>
 
+            {/* Legend Card */}
+            <div className="bg-[#161b22] border border-gray-800 rounded-2xl overflow-hidden transition-all duration-300 h-full flex flex-col">
+              <button
+                onClick={() => setIsGuideOpen(!isGuideOpen)}
+                className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-800/20 transition-colors shrink-0"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-400 text-sm">💡</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-gray-300">Significato dei Livelli (Legenda)</span>
+                </div>
+                <span className={`text-xs text-gray-500 transition-transform duration-300 ${isGuideOpen ? 'rotate-180' : ''}`}>
+                  ▼
+                </span>
+              </button>
+              
+              <div className="flex-1 overflow-y-auto px-5 pb-5 pt-2 border-t border-slate-800/50 text-xs text-gray-400 space-y-3.5">
+                {isGuideOpen ? (
+                  <>
+                    <div>
+                      <h4 className="font-bold text-red-400 mb-0.5">Call Wall / Put Wall</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        I picchi assoluti di posizionamento delle opzioni (Call e Put Open Interest). Agiscono come barriere primarie (soffitto e pavimento) a causa delle attività di copertura (hedging) dei market maker.
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-amber-500 mb-0.5">POC Magnete (Point of Control)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        Il livello con la massima concentrazione di contratti scambiati sul profilo volumi. Rappresenta il "prezzo più equo" accettato dal mercato e agisce come baricentro o magnete del prezzo.
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-blue-400 mb-0.5">VAL / VAH (Value Area Boundaries)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        VAL (Value Area Low) e VAH (Value Area High) delimitano la zona in cui è stato scambiato il 70% dei volumi della sessione (la Value Area). L'uscita da questo range segnala la ricerca di nuove aree di valore e innesca breakout veloci.
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-indigo-400 mb-0.5">GEX Flip (Pivot)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        La soglia neutrale del mercato: sopra prevale la stabilità (mean reversion), sotto prevale la forte volatilità e accelerazione del trend.
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-purple-400 mb-0.5">HVN (High Volume Node)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        Nodi ad alto volume. Zone di forte transazione e accettazione del prezzo, dove il mercato tende a consolidare lateralmente (supporti/resistenze statiche).
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-rose-400 mb-0.5">LVN Zone (Low Volume Node)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        Nodi a basso volume. Aree di vuoto di liquidità e rifiuto strutturale del prezzo, che agiscono come barriere di rimbalzo o acceleratori per breakout rapidi.
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-amber-400 mb-0.5">Icona Confluenza (🔗)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        Indica una confluenza ad alta affidabilità: lo stesso livello operativo è attivo sia sul mercato retail (ETF) che istituzionale (Indice), oppure un livello opzioni (Put/Call Wall, GEX Flip) coincide esattamente con un livello volumetrico chiave dell'Auction Market Theory (POC, VAL, VAH).
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-gray-500 italic flex items-center justify-center h-24">
+                    Clicca su "Significato dei Livelli" per visualizzare le spiegazioni operative.
+                  </div>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
       </main>
@@ -900,10 +1378,10 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
       {/* FOOTER                                                             */}
       {/* ================================================================== */}
       <footer className="border-t border-gray-800/50 px-4 py-2 mt-auto">
-        <div className="max-w-5xl mx-auto flex items-center justify-between text-[10px] text-gray-600">
+        <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between text-[10px] text-gray-600">
           <span>Market Structure & Volume Profile</span>
           {lastRefreshed && (
-            <span>Data dell'ultimo aggiornamento: {lastRefreshed.toLocaleTimeString()}</span>
+            <span>Aggiornato il: {lastRefreshed.toLocaleTimeString()}</span>
           )}
         </div>
       </footer>

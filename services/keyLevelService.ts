@@ -222,7 +222,9 @@ function extractCrossSymbolLevels(
         totalOI: primary.total_oi,
         totalVolume: primary.total_vol,
         distance: primary.distance_pct,
-        label: `Cross-Symbol ${level.type === 'support' ? 'Support' : 'Resistance'}`,
+        label: (primary.wall_type.includes('major') || paired.wall_type.includes('major'))
+          ? (level.type === 'support' ? 'Major Put Wall' : 'Major Call Wall')
+          : (level.type === 'support' ? 'Put Wall' : 'Call Wall'),
         isCrossSymbol: true,
         crossScore: Math.min(100, Math.round(level.cross_score)),
         pairedSymbol: paired.symbol,
@@ -264,12 +266,36 @@ function mergeLevels(
     return true;
   });
 
-  // Deduplicate: remove regular levels that overlap with cross-symbol levels
-  const crossStrikes = new Set(validCross.map(l => l.strike));
-  const dedupedRegular = regular.filter(l => !crossStrikes.has(l.strike));
+  // Create a map of strike -> level from regular
+  const mergedMap = new Map<number, DayTradingLevel>();
+  regular.forEach(l => {
+    mergedMap.set(l.strike, { ...l });
+  });
 
-  // Combine and sort by absolute distance from spot
-  const merged = [...dedupedRegular, ...validCross].sort(
+  // Merge the cross-symbol levels
+  validCross.forEach(cl => {
+    const existing = mergedMap.get(cl.strike);
+    if (existing) {
+      // Merge! Keep the descriptive regular level's label (like 'Put Wall' or 'GEX Flip'), but mark it as cross symbol
+      existing.isCrossSymbol = true;
+      existing.strength = Math.max(existing.strength, cl.strength);
+      existing.pairedSymbol = cl.pairedSymbol;
+      existing.pairedStrike = cl.pairedStrike;
+      existing.pairedScore = cl.pairedScore;
+      existing.pairedWallType = cl.pairedWallType;
+      existing.pairedOI = cl.pairedOI;
+      existing.pairedVol = cl.pairedVol;
+      existing.combinedOI = cl.combinedOI;
+      existing.combinedVol = cl.combinedVol;
+      existing.combinedActivity = cl.combinedActivity;
+    } else {
+      // Just add it
+      mergedMap.set(cl.strike, cl);
+    }
+  });
+
+  // Sort by absolute distance from spot
+  const merged = Array.from(mergedMap.values()).sort(
     (a, b) => Math.abs(a.distance) - Math.abs(b.distance)
   );
 
