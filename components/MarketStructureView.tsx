@@ -384,16 +384,41 @@ export function MarketStructureView({ sharedState }: MarketStructureViewProps) {
   // ---- Cross-Symbol Level mapping for chart visualization ----
   const crossSymbolLevelsMap = useMemo(() => {
     const map = new Map<number, any>();
-    if (!data) return map;
+    if (!data || !data.crossSymbolConfluence) return map;
 
-    const allLevels = [...data.support, ...data.resistance];
-    for (const lvl of allLevels) {
-      if (lvl.isCrossSymbol) {
-        map.set(lvl.strike, lvl);
-      }
+    const upperSymbol = symbol.toUpperCase();
+    const pairKey = (upperSymbol === 'SPY' || upperSymbol === 'SPX') ? 'SPY_SPX' : 'QQQ_NDX';
+    const pair = data.crossSymbolConfluence[pairKey as keyof typeof data.crossSymbolConfluence];
+    if (!pair) return map;
+
+    for (const level of pair.levels) {
+      const etfIsPrimary = level.etf.symbol.toUpperCase() === upperSymbol;
+      const indexIsPrimary = level.index.symbol.toUpperCase() === upperSymbol;
+      if (!etfIsPrimary && !indexIsPrimary) continue;
+
+      const primary = etfIsPrimary ? level.etf : level.index;
+      const paired = etfIsPrimary ? level.index : level.etf;
+
+      // Only include cross-symbol levels with meaningful confluence score
+      if (level.cross_score < 60) continue;
+
+      map.set(primary.strike, {
+        strike: primary.strike,
+        type: level.type,
+        crossScore: Math.min(100, Math.round(level.cross_score)),
+        pairedSymbol: paired.symbol,
+        pairedStrike: paired.strike,
+        pairedScore: paired.score,
+        pairedWallType: paired.wall_type,
+        pairedOI: paired.total_oi,
+        pairedVol: paired.total_vol,
+        combinedOI: level.combined_oi,
+        combinedVol: level.combined_vol,
+        combinedActivity: level.combined_activity,
+      });
     }
     return map;
-  }, [data]);
+  }, [data, symbol]);
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={handleRefresh} />;
