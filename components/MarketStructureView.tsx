@@ -697,14 +697,14 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                     style={{
                       height: `${rowHeight}px`,
                       backgroundColor: isClosest
-                        ? 'rgba(59,130,246,0.12)'
+                        ? 'rgba(234,179,8,0.15)'
                         : isHVN
                         ? 'rgba(99,102,241,0.02)'
                         : isLVN
                         ? 'rgba(244,63,94,0.02)'
                         : 'transparent',
-                      borderTop: isClosest ? '1px solid rgba(59,130,246,0.3)' : 'none',
-                      borderBottom: isClosest ? '1px solid rgba(59,130,246,0.3)' : 'none',
+                      borderTop: isClosest ? '1px solid rgba(234,179,8,0.45)' : 'none',
+                      borderBottom: isClosest ? '1px solid rgba(234,179,8,0.45)' : 'none',
                     }}
                   >
                     {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
