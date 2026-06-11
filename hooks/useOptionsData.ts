@@ -232,16 +232,29 @@ export function useOptionsData(): UseOptionsDataReturn {
   // Overridden etfData and indexData with live spot prices
   const finalEtfData = useMemo(() => {
     if (!etfData) return null;
-    const symbol = etfData.symbol.toUpperCase();
-    const livePrice = liveSpot[symbol as keyof typeof liveSpot];
+    
+    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
+    const etfSymbol = market === 'SP500' ? 'SPY' : 'QQQ';
+    
+    const liveIndexPrice = liveSpot[indexSymbol as keyof typeof liveSpot];
+    let livePrice: number | null = null;
+    
+    if (liveIndexPrice && indexData && indexData.spot && etfData.spot) {
+      const ratio = indexData.spot / etfData.spot;
+      livePrice = Number((liveIndexPrice / ratio).toFixed(2));
+    } else {
+      livePrice = liveSpot[etfSymbol as keyof typeof liveSpot];
+    }
+    
     if (!livePrice) return etfData;
+    const finalPrice = livePrice;
 
     // Keep GEX regime in sync with new price and pre-calculated flip point
     const flipPoint = etfData.gexRegime.flipPoint;
     let regime = etfData.gexRegime.regime;
     let label = etfData.gexRegime.label;
     if (flipPoint !== null) {
-      if (livePrice >= flipPoint) {
+      if (finalPrice >= flipPoint) {
         regime = 'positive';
         label = 'Low Volatility';
       } else {
@@ -252,7 +265,7 @@ export function useOptionsData(): UseOptionsDataReturn {
 
     return {
       ...etfData,
-      spot: livePrice,
+      spot: finalPrice,
       gexRegime: {
         ...etfData.gexRegime,
         regime,
@@ -260,19 +273,19 @@ export function useOptionsData(): UseOptionsDataReturn {
       },
       resistance: etfData.resistance.map(r => ({
         ...r,
-        distance: Math.round((Math.abs(r.strike - livePrice) / livePrice) * 10000) / 100
+        distance: Math.round((Math.abs(r.strike - finalPrice) / finalPrice) * 10000) / 100
       })),
       support: etfData.support.map(s => ({
         ...s,
-        distance: Math.round((Math.abs(s.strike - livePrice) / livePrice) * 10000) / 100
+        distance: Math.round((Math.abs(s.strike - finalPrice) / finalPrice) * 10000) / 100
       }))
     };
-  }, [etfData, liveSpot]);
+  }, [etfData, indexData, liveSpot, market]);
 
   const finalIndexData = useMemo(() => {
     if (!indexData) return null;
-    const symbol = indexData.symbol.toUpperCase();
-    const livePrice = liveSpot[symbol as keyof typeof liveSpot];
+    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
+    const livePrice = liveSpot[indexSymbol as keyof typeof liveSpot];
     if (!livePrice) return indexData;
 
     // Keep GEX regime in sync with new price and pre-calculated flip point
@@ -306,7 +319,7 @@ export function useOptionsData(): UseOptionsDataReturn {
         distance: Math.round((Math.abs(s.strike - livePrice) / livePrice) * 10000) / 100
       }))
     };
-  }, [indexData, liveSpot]);
+  }, [indexData, liveSpot, market]);
 
   return {
     loading,

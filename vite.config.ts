@@ -21,11 +21,13 @@ export default defineConfig(({ mode }) => {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 try {
-                  const symbols = ['SPY', 'QQQ', '^SPX', '^NDX'];
+                  // Fetch ES=F and NQ=F quotes in parallel
+                  const symbols = ['ES=F', 'NQ=F'];
                   const quotes = await Promise.all(
                     symbols.map(async (symbol) => {
                       try {
                         const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`);
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         const data = await response.json();
                         const meta = data?.chart?.result?.[0]?.meta;
                         return { symbol, price: meta?.regularMarketPrice || null };
@@ -36,11 +38,18 @@ export default defineConfig(({ mode }) => {
                     })
                   );
 
+                  const esPrice = quotes.find(q => q.symbol === 'ES=F')?.price || null;
+                  const nqPrice = quotes.find(q => q.symbol === 'NQ=F')?.price || null;
+
+                  // Map ETF prices using standard ratios
+                  const SPY_RATIO = 10.09;
+                  const QQQ_RATIO = 41.57;
+
                   const spotData = {
-                    SPY: quotes.find(q => q.symbol === 'SPY')?.price || null,
-                    QQQ: quotes.find(q => q.symbol === 'QQQ')?.price || null,
-                    SPX: quotes.find(q => q.symbol === '^SPX')?.price || null,
-                    NDX: quotes.find(q => q.symbol === '^NDX')?.price || null,
+                    SPX: esPrice,
+                    NDX: nqPrice,
+                    SPY: esPrice ? Number((esPrice / SPY_RATIO).toFixed(2)) : null,
+                    QQQ: nqPrice ? Number((nqPrice / QQQ_RATIO).toFixed(2)) : null,
                     timestamp: new Date().toISOString()
                   };
 
