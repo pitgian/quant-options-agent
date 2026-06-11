@@ -12,9 +12,8 @@
 // ============================================================================
 
 /** GitHub Raw URL for the options data JSON file */
-const DATA_URL = (typeof process !== 'undefined' && process.env.NODE_ENV === 'development') || (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.DEV)
-  ? '/data/options_data.json'
-  : 'https://raw.githubusercontent.com/pitgian/quant-options-agent/master/data/options_data.json';
+const GITHUB_DATA_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/master/data/options_data.json';
+const LOCAL_DATA_URL = '/data/options_data.json';
 
 /** Cache duration in milliseconds (3 minutes — must be shorter than cron interval) */
 const CACHE_DURATION_MS = 3 * 60 * 1000;
@@ -141,8 +140,9 @@ let cache: CacheEntry | null = null;
 /**
  * Fetches the raw JSON data with in-memory caching.
  *
- * - Returns cached data if less than 15 minutes old
- * - Falls back to stale cache on network errors
+ * - Tries to fetch the latest data from GitHub Raw URL first (works in both dev and prod)
+ * - Falls back to the local JSON file if offline or GitHub is down
+ * - Falls back to stale in-memory cache as last resort
  */
 export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJson | null> {
   const now = Date.now();
@@ -152,34 +152,61 @@ export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJs
     return cache.data;
   }
 
+  // 1. Try fetching from GitHub Raw URL first
   try {
-    const response = await fetch(`${DATA_URL}?t=${Date.now()}`, {
+    const response = await fetch(`${GITHUB_DATA_URL}?t=${Date.now()}`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       cache: 'no-cache',
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`GitHub raw HTTP ${response.status}: ${response.statusText}`);
     }
 
     const data: RawJson = await response.json();
 
     if (!data.version || !data.symbols) {
-      throw new Error('Invalid data structure: missing version or symbols');
+      throw new Error('Invalid data structure from GitHub raw');
     }
 
     // Update cache
     cache = { timestamp: now, data };
-
     return data;
-  } catch (error) {
-    // Fall back to stale cache
-    if (cache) {
-      return cache.data;
-    }
+  } catch (ghError) {
+    console.warn('Failed to fetch from GitHub Raw, falling back to local file:', ghError);
 
-    return null;
+    // 2. Fallback to local /data/options_data.json file
+    try {
+      const response = await fetch(`${LOCAL_DATA_URL}?t=${Date.now()}`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-cache',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Local file HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data: RawJson = await response.json();
+
+      if (!data.version || !data.symbols) {
+        throw new Error('Invalid data structure from local file');
+      }
+
+      // Update cache
+      cache = { timestamp: now, data };
+      return data;
+    } catch (localError) {
+      console.error('All options data sources failed:', localError);
+
+      // 3. Fall back to stale in-memory cache if available
+      if (cache) {
+        return cache.data;
+      }
+
+      return null;
+    }
   }
 }
 
