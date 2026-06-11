@@ -9,6 +9,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import yahooFinance from 'yahoo-finance2';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -24,6 +25,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Only allow GET
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Handle live spot prices request
+  if (req.query.action === 'spot') {
+    try {
+      const symbols = ['SPY', 'QQQ', '^SPX', '^NDX'];
+      const quotes = await Promise.all(
+        symbols.map(async (symbol) => {
+          try {
+            const quote = await yahooFinance.quote(symbol);
+            return { symbol, price: quote.regularMarketPrice || quote.navPrice || null };
+          } catch (err) {
+            console.error(`Error fetching ${symbol}:`, err);
+            return { symbol, price: null };
+          }
+        })
+      );
+
+      const spotData = {
+        SPY: quotes.find(q => q.symbol === 'SPY')?.price || null,
+        QQQ: quotes.find(q => q.symbol === 'QQQ')?.price || null,
+        SPX: quotes.find(q => q.symbol === '^SPX')?.price || null,
+        NDX: quotes.find(q => q.symbol === '^NDX')?.price || null,
+        timestamp: new Date().toISOString()
+      };
+
+      return res.status(200).json(spotData);
+    } catch (error) {
+      return res.status(500).json({ error: 'Failed to fetch spot prices', details: String(error) });
+    }
   }
 
   // Health check / status endpoint

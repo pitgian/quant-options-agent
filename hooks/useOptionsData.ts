@@ -7,7 +7,7 @@
  * @module hooks/useOptionsData
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DayTradingData, ExpiryFilter } from '../types';
 import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/dataService';
 
@@ -64,6 +64,43 @@ export function useOptionsData(): UseOptionsDataReturn {
   const [showUpdatedFlash, setShowUpdatedFlash] = useState(false);
   const [isBackgroundRefreshing, setIsBackgroundRefreshing] = useState(false);
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('0dte');
+
+  const [liveSpot, setLiveSpot] = useState<{
+    SPX: number | null;
+    NDX: number | null;
+    SPY: number | null;
+    QQQ: number | null;
+  }>({ SPX: null, NDX: null, SPY: null, QQQ: null });
+
+  // Fetch live spot prices every 15 seconds (runs as free serverless action, no git push)
+  useEffect(() => {
+    let active = true;
+    const fetchLiveSpot = async () => {
+      try {
+        const response = await fetch('/api?action=spot');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data && active) {
+          setLiveSpot({
+            SPX: data.SPX,
+            NDX: data.NDX,
+            SPY: data.SPY,
+            QQQ: data.QQQ,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to fetch live spot prices:', err);
+      }
+    };
+
+    fetchLiveSpot();
+    const intervalId = setInterval(fetchLiveSpot, 15000);
+
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   const prevTimestampRef = useRef<string | null>(null);
   const marketRef = useRef(market);
@@ -192,13 +229,92 @@ export function useOptionsData(): UseOptionsDataReturn {
     setRefreshing(false);
   };
 
+  // Overridden etfData and indexData with live spot prices
+  const finalEtfData = useMemo(() => {
+    if (!etfData) return null;
+    const symbol = etfData.symbol.toUpperCase();
+    const livePrice = liveSpot[symbol as keyof typeof liveSpot];
+    if (!livePrice) return etfData;
+
+    // Keep GEX regime in sync with new price and pre-calculated flip point
+    const flipPoint = etfData.gexRegime.flipPoint;
+    let regime = etfData.gexRegime.regime;
+    let label = etfData.gexRegime.label;
+    if (flipPoint !== null) {
+      if (livePrice >= flipPoint) {
+        regime = 'positive';
+        label = 'Low Volatility';
+      } else {
+        regime = 'negative';
+        label = 'High Volatility';
+      }
+    }
+
+    return {
+      ...etfData,
+      spot: livePrice,
+      gexRegime: {
+        ...etfData.gexRegime,
+        regime,
+        label,
+      },
+      resistance: etfData.resistance.map(r => ({
+        ...r,
+        distance: Math.round((Math.abs(r.strike - livePrice) / livePrice) * 10000) / 100
+      })),
+      support: etfData.support.map(s => ({
+        ...s,
+        distance: Math.round((Math.abs(s.strike - livePrice) / livePrice) * 10000) / 100
+      }))
+    };
+  }, [etfData, liveSpot]);
+
+  const finalIndexData = useMemo(() => {
+    if (!indexData) return null;
+    const symbol = indexData.symbol.toUpperCase();
+    const livePrice = liveSpot[symbol as keyof typeof liveSpot];
+    if (!livePrice) return indexData;
+
+    // Keep GEX regime in sync with new price and pre-calculated flip point
+    const flipPoint = indexData.gexRegime.flipPoint;
+    let regime = indexData.gexRegime.regime;
+    let label = indexData.gexRegime.label;
+    if (flipPoint !== null) {
+      if (livePrice >= flipPoint) {
+        regime = 'positive';
+        label = 'Low Volatility';
+      } else {
+        regime = 'negative';
+        label = 'High Volatility';
+      }
+    }
+
+    return {
+      ...indexData,
+      spot: livePrice,
+      gexRegime: {
+        ...indexData.gexRegime,
+        regime,
+        label,
+      },
+      resistance: indexData.resistance.map(r => ({
+        ...r,
+        distance: Math.round((Math.abs(r.strike - livePrice) / livePrice) * 10000) / 100
+      })),
+      support: indexData.support.map(s => ({
+        ...s,
+        distance: Math.round((Math.abs(s.strike - livePrice) / livePrice) * 10000) / 100
+      }))
+    };
+  }, [indexData, liveSpot]);
+
   return {
     loading,
     error,
     market,
     setMarket,
-    etfData,
-    indexData,
+    etfData: finalEtfData,
+    indexData: finalIndexData,
     timeSinceUpdate,
     refreshing,
     isBackgroundRefreshing,
