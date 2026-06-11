@@ -152,53 +152,57 @@ export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJs
     return cache.data;
   }
 
-  // 1. Try fetching from GitHub Raw URL first
+  const isDev = import.meta.env.DEV;
+  const url1 = isDev ? LOCAL_DATA_URL : GITHUB_DATA_URL;
+  const url2 = isDev ? GITHUB_DATA_URL : LOCAL_DATA_URL;
+
+  // 1. Try fetching from primary URL
   try {
-    const response = await fetch(`${GITHUB_DATA_URL}?t=${Date.now()}`, {
+    const response = await fetch(`${url1}?t=${Date.now()}`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       cache: 'no-cache',
     });
 
     if (!response.ok) {
-      throw new Error(`GitHub raw HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`Primary HTTP ${response.status}: ${response.statusText}`);
     }
 
     const data: RawJson = await response.json();
 
     if (!data.version || !data.symbols) {
-      throw new Error('Invalid data structure from GitHub raw');
+      throw new Error('Invalid data structure from primary source');
     }
 
     // Update cache
     cache = { timestamp: now, data };
     return data;
-  } catch (ghError) {
-    console.warn('Failed to fetch from GitHub Raw, falling back to local file:', ghError);
+  } catch (primaryError) {
+    console.warn(`Failed to fetch from primary source, falling back to secondary:`, primaryError);
 
-    // 2. Fallback to local /data/options_data.json file
+    // 2. Fallback to secondary URL
     try {
-      const response = await fetch(`${LOCAL_DATA_URL}?t=${Date.now()}`, {
+      const response = await fetch(`${url2}?t=${Date.now()}`, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
         cache: 'no-cache',
       });
 
       if (!response.ok) {
-        throw new Error(`Local file HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`Secondary HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data: RawJson = await response.json();
 
       if (!data.version || !data.symbols) {
-        throw new Error('Invalid data structure from local file');
+        throw new Error('Invalid data structure from secondary source');
       }
 
       // Update cache
       cache = { timestamp: now, data };
       return data;
-    } catch (localError) {
-      console.error('All options data sources failed:', localError);
+    } catch (secondaryError) {
+      console.error('All options data sources failed:', secondaryError);
 
       // 3. Fall back to stale in-memory cache if available
       if (cache) {
