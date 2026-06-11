@@ -579,49 +579,22 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
     const selectedStrikes = new Set<number>();
     
-    // 1. Mandatory structures (POC, VAL, VAH, Walls, score >= 30)
+    // 1. Mandatory structures (POC, Walls)
     candidates.forEach(c => {
       if (
         c.isPrimaryPOC ||
-        c.isPrimaryVAL ||
-        c.isPrimaryVAH ||
         c.markers.has('ConfluentPutWall') ||
         c.markers.has('ConfluentCallWall') ||
         c.markers.has('ConfluentFlip') ||
         c.markers.has('PutWall') ||
         c.markers.has('CallWall') ||
-        c.markers.has('GexFlip') ||
-        c.score >= 30
+        c.markers.has('GexFlip')
       ) {
         selectedStrikes.add(c.strike);
       }
     });
 
-    // 2. Filtered HVNs and LVNs (within 3% of spot, max 1 of each per side)
-    const proximityCandidates = candidates.filter(c => Math.abs(c.distancePct) <= 3.0 && !selectedStrikes.has(c.strike));
-    
-    const hvnSupport = proximityCandidates.filter(c => c.isSupport && c.isHVN)
-      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
-      .slice(0, 1);
-      
-    const hvnResistance = proximityCandidates.filter(c => !c.isSupport && c.isHVN)
-      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
-      .slice(0, 1);
-
-    const lvnSupport = proximityCandidates.filter(c => c.isSupport && c.isLVN)
-      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
-      .slice(0, 1);
-
-    const lvnResistance = proximityCandidates.filter(c => !c.isSupport && c.isLVN)
-      .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
-      .slice(0, 1);
-
-    hvnSupport.forEach(c => selectedStrikes.add(c.strike));
-    hvnResistance.forEach(c => selectedStrikes.add(c.strike));
-    lvnSupport.forEach(c => selectedStrikes.add(c.strike));
-    lvnResistance.forEach(c => selectedStrikes.add(c.strike));
-
-    // 3. Populate final map with premium confluent label strings
+    // 2. Populate final map with premium confluent label strings (no generic HVN/LVN/VAL/VAH badges)
     candidates.forEach(c => {
       if (!selectedStrikes.has(c.strike)) return;
 
@@ -633,10 +606,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       if (c.isPrimaryPOC) {
         labelParts.push(hasFuturesData ? 'POC' : 'POC Magnete');
       }
-
-      // VAL / VAH
-      if (c.isPrimaryVAL) labelParts.push('VAL');
-      if (c.isPrimaryVAH) labelParts.push('VAH');
 
       // Put Walls
       if (c.markers.has('ConfluentPutWall')) {
@@ -664,28 +633,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
         labelParts.push('GEX Flip');
       }
 
-      // HVN/LVN fallback if no primary structures
-      if (labelParts.length === 0) {
-        if (c.isHVN) {
-          if (c.markers.has('ConfluentHVN')) {
-            labelParts.push('HVN Confluenza');
-            isConfluent = true;
-          } else {
-            labelParts.push('HVN');
-          }
-        } else if (c.isLVN) {
-          if (c.markers.has('ConfluentLVN')) {
-            labelParts.push('LVN Confluenza');
-            isConfluent = true;
-          } else {
-            labelParts.push('LVN Zone');
-          }
-        }
-      } else {
-        // If it has primary structures AND is an HVN/LVN, it is confluent
-        if (c.isHVN || c.isLVN) {
-          isConfluent = true;
-        }
+      // If we have primary structures AND it's a volume/AMT level (VAL, VAH, HVN, LVN), mark it confluent
+      if (labelParts.length > 0 && (c.isPrimaryVAL || c.isPrimaryVAH || c.isHVN || c.isLVN)) {
+        isConfluent = true;
       }
 
       if (labelParts.length === 0 && c.isCrossSymbol) {
@@ -694,14 +644,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       }
 
       let label = labelParts.join(' / ');
-      if (label === 'VAL') label = 'VAL (Area Low)';
-      if (label === 'VAH') label = 'VAH (Area High)';
-      if (label === 'HVN') {
-        label = c.isSupport ? 'HVN (Supporto)' : 'HVN (Resistenza)';
-      }
-      if (label === 'LVN Zone') {
-        label = c.isSupport ? 'LVN (Supporto)' : 'LVN (Resistenza)';
-      }
 
       if (label) {
         if (isConfluent && !label.includes('🔗')) {
