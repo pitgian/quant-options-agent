@@ -1122,10 +1122,10 @@ def fetch_symbol_data(
         logger.error(f"❌ No option chains could be fetched for {symbol}")
         return None
 
-    # Sort by contract count descending (most contracts first)
-    expiry_contract_counts.sort(key=lambda x: x[1], reverse=True)
+    # Sort chronologically (nearest dates first) to prioritize near-term DTEs
+    expiry_contract_counts.sort(key=lambda x: x[0])
 
-    # Select top N by contract count
+    # Select top N nearest expirations
     selected_counts = expiry_contract_counts[:max_expirations]
 
     logger.info(

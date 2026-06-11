@@ -370,352 +370,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     return { maxEtfVolume: maxEtf, maxIndexVolume: maxIdx, maxFuturesVolume: maxFut };
   }, [zoomedProfile]);
 
-  // ---- Map Key Levels by strike for badges ----
-  const mergedLevelsMap = useMemo(() => {
-    const map = new Map<number, { label: string; type: 'support' | 'resistance'; isConfluent: boolean }>();
-    if (!indexData || !etfData || profileData.length === 0) return map;
-
-    const indexSpot = indexData.spot;
-    const etfSpot = etfData.spot;
-    const ratio = indexSpot / etfSpot;
-
-    // Helper to calculate POC, VAH, VAL for a given volume list using AMT 70% Value Area
-    const calculateAMT = (volumes: number[]) => {
-      let totalVolume = 0;
-      let maxVol = -1;
-      let pocIdx = -1;
-      
-      volumes.forEach((v, idx) => {
-        totalVolume += v;
-        if (v > maxVol) {
-          maxVol = v;
-          pocIdx = idx;
-        }
-      });
-
-      if (pocIdx === -1 || totalVolume === 0) {
-        return { pocStrike: -1, valStrike: -1, vahStrike: -1 };
-      }
-
-      const pocStrike = profileData[pocIdx].strike;
-      let currentVolume = maxVol;
-      let lowIdx = pocIdx;
-      let highIdx = pocIdx;
-
-      while (currentVolume < totalVolume * 0.70 && (lowIdx > 0 || highIdx < profileData.length - 1)) {
-        const volBelow = lowIdx > 0 ? volumes[lowIdx - 1] : 0;
-        const volAbove = highIdx < profileData.length - 1 ? volumes[highIdx + 1] : 0;
-
-        if (volBelow >= volAbove && lowIdx > 0) {
-          currentVolume += volBelow;
-          lowIdx--;
-        } else if (highIdx < profileData.length - 1) {
-          currentVolume += volAbove;
-          highIdx++;
-        } else {
-          break;
-        }
-      }
-
-      return {
-        pocStrike,
-        valStrike: profileData[lowIdx].strike,
-        vahStrike: profileData[highIdx].strike,
-      };
-    };
-
-    // Detect nodes (peaks & troughs) for a specific volume profile
-    const detectNodesForProfile = (volumes: number[]) => {
-      const hvns = new Set<number>();
-      const lvns = new Set<number>();
-      
-      const sorted = [...volumes].filter(v => v > 0).sort((a, b) => a - b);
-      const median = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0;
-
-      for (let i = 2; i < volumes.length - 2; i++) {
-        const v_curr = volumes[i];
-        const window = [volumes[i-2], volumes[i-1], v_curr, volumes[i+1], volumes[i+2]];
-        const max_val = Math.max(...window);
-        const min_val = Math.min(...window);
-        const max_surrounding = Math.max(window[0], window[1], window[3], window[4]);
-
-        // Peak (HVN)
-        if (v_curr === max_val && v_curr > median * 1.15) {
-          hvns.add(profileData[i].strike);
-        }
-        // Trough (LVN)
-        if (v_curr === min_val && max_surrounding > 0 && v_curr <= max_surrounding * 0.5 && v_curr < median * 0.8) {
-          lvns.add(profileData[i].strike);
-        }
-      }
-      return { hvns, lvns };
-    };
-
-    // Calculate structures for the 3 profiles in parallel
-    const futuresAMT = hasFuturesData ? calculateAMT(profileData.map(d => d.futuresVolume)) : null;
-    const indexAMT = calculateAMT(profileData.map(d => d.indexVolume));
-    const etfAMT = calculateAMT(profileData.map(d => d.etfVolume));
-
-    const futuresNodes = hasFuturesData ? detectNodesForProfile(profileData.map(d => d.futuresVolume)) : null;
-    const indexNodes = detectNodesForProfile(profileData.map(d => d.indexVolume));
-    const etfNodes = detectNodesForProfile(profileData.map(d => d.etfVolume));
-
-    // Gather Index options levels (Support, Resistance, Gamma Flip)
-    const indexPuts = indexData.support.filter(l => l.label.includes('Put') || l.label.includes('Gamma Wall'));
-    const indexCalls = indexData.resistance.filter(l => l.label.includes('Call') || l.label.includes('Gamma Wall'));
-    const indexPutWall = indexPuts.length > 0 ? [...indexPuts].sort((a, b) => b.strength - a.strength)[0] : null;
-    const indexCallWall = indexCalls.length > 0 ? [...indexCalls].sort((a, b) => b.strength - a.strength)[0] : null;
-    const indexFlip = [...indexData.support, ...indexData.resistance].find(l => l.label.includes('Flip') || l.label.includes('Pivot'));
-
-    // Gather ETF options levels (Support, Resistance, Gamma Flip)
-    const etfPuts = etfData.support.filter(l => l.label.includes('Put') || l.label.includes('Gamma Wall'));
-    const etfCalls = etfData.resistance.filter(l => l.label.includes('Call') || l.label.includes('Gamma Wall'));
-    const etfPutWall = etfPuts.length > 0 ? [...etfPuts].sort((a, b) => b.strength - a.strength)[0] : null;
-    const etfCallWall = etfCalls.length > 0 ? [...etfCalls].sort((a, b) => b.strength - a.strength)[0] : null;
-    const etfFlip = [...etfData.support, ...etfData.resistance].find(l => l.label.includes('Flip') || l.label.includes('Pivot'));
-
-    // Find the closest index strike for ETF Put Wall
-    let etfPutWallIndexStrike = -1;
-    if (etfPutWall) {
-      const equiv = etfPutWall.strike * ratio;
-      let minDiff = Infinity;
-      profileData.forEach(d => {
-        const diff = Math.abs(d.strike - equiv);
-        if (diff < minDiff) {
-          minDiff = diff;
-          etfPutWallIndexStrike = d.strike;
-        }
-      });
-    }
-
-    // Find the closest index strike for ETF Call Wall
-    let etfCallWallIndexStrike = -1;
-    if (etfCallWall) {
-      const equiv = etfCallWall.strike * ratio;
-      let minDiff = Infinity;
-      profileData.forEach(d => {
-        const diff = Math.abs(d.strike - equiv);
-        if (diff < minDiff) {
-          minDiff = diff;
-          etfCallWallIndexStrike = d.strike;
-        }
-      });
-    }
-
-    // Find the closest index strike for ETF GEX Flip
-    let etfFlipIndexStrike = -1;
-    if (etfFlip) {
-      const equiv = etfFlip.strike * ratio;
-      let minDiff = Infinity;
-      profileData.forEach(d => {
-        const diff = Math.abs(d.strike - equiv);
-        if (diff < minDiff) {
-          minDiff = diff;
-          etfFlipIndexStrike = d.strike;
-        }
-      });
-    }
-
-    // Scoring Engine
-    const candidates = profileData.map(d => {
-      const strike = d.strike;
-      const etfStrike = d.etfStrike;
-
-      // Check Options Walls matches
-      const isIndexPutWall = indexPutWall && Math.abs(indexPutWall.strike - strike) < 1.0;
-      const isIndexCallWall = indexCallWall && Math.abs(indexCallWall.strike - strike) < 1.0;
-      const isIndexFlip = indexFlip && Math.abs(indexFlip.strike - strike) < 1.0;
-
-      const isEtfPutWall = strike === etfPutWallIndexStrike;
-      const isEtfCallWall = strike === etfCallWallIndexStrike;
-      const isEtfFlip = strike === etfFlipIndexStrike;
-
-      const isFuturesPOC = futuresAMT ? (strike === futuresAMT.pocStrike) : false;
-      const isFuturesVAL = futuresAMT ? (strike === futuresAMT.valStrike) : false;
-      const isFuturesVAH = futuresAMT ? (strike === futuresAMT.vahStrike) : false;
-
-      const isIndexPOC = strike === indexAMT.pocStrike;
-      const isIndexVAL = strike === indexAMT.valStrike;
-      const isIndexVAH = strike === indexAMT.vahStrike;
-
-      const isEtfPOC = strike === etfAMT.pocStrike;
-      const isEtfVAL = strike === etfAMT.valStrike;
-      const isEtfVAH = strike === etfAMT.vahStrike;
-
-      const isFuturesHVN = futuresNodes ? futuresNodes.hvns.has(strike) : false;
-      const isFuturesLVN = futuresNodes ? futuresNodes.lvns.has(strike) : false;
-      
-      const isIndexHVN = indexNodes.hvns.has(strike);
-      const isIndexLVN = indexNodes.lvns.has(strike);
-
-      const isEtfHVN = etfNodes.hvns.has(strike);
-      const isEtfLVN = etfNodes.lvns.has(strike);
-
-      let score = 0;
-      const markers = new Set<string>();
-
-      const isConfluentPutWall = isIndexPutWall && isEtfPutWall;
-      const isConfluentCallWall = isIndexCallWall && isEtfCallWall;
-      const isConfluentFlip = isIndexFlip && isEtfFlip;
-
-      if (isConfluentPutWall) { score += 35; markers.add('ConfluentPutWall'); }
-      else if (isIndexPutWall || isEtfPutWall) { score += 20; markers.add('PutWall'); }
-
-      if (isConfluentCallWall) { score += 35; markers.add('ConfluentCallWall'); }
-      else if (isIndexCallWall || isEtfCallWall) { score += 20; markers.add('CallWall'); }
-
-      if (isConfluentFlip) { score += 35; markers.add('ConfluentFlip'); }
-      else if (isIndexFlip || isEtfFlip) { score += 20; markers.add('GexFlip'); }
-
-      // Check secondary level confluences (any support/resistance level aligning between Index & ETF, but not the primary walls)
-      const hasIndexSupport = indexData.support.some(l => Math.abs(l.strike - strike) < 1.0);
-      const hasEtfSupport = etfData.support.some(l => Math.abs(l.strike - Math.round(strike / ratio)) <= 0.6);
-      const isConfluentSupport = hasIndexSupport && hasEtfSupport && !isConfluentPutWall;
-
-      const hasIndexResistance = indexData.resistance.some(l => Math.abs(l.strike - strike) < 1.0);
-      const hasEtfResistance = etfData.resistance.some(l => Math.abs(l.strike - Math.round(strike / ratio)) <= 0.6);
-      const isConfluentResistance = hasIndexResistance && hasEtfResistance && !isConfluentCallWall;
-
-      if (isConfluentSupport) { score += 25; markers.add('ConfluentSupport'); }
-      if (isConfluentResistance) { score += 25; markers.add('ConfluentResistance'); }
-
-      const isPrimaryPOC = hasFuturesData ? isFuturesPOC : isIndexPOC;
-      const isPrimaryVAL = hasFuturesData ? isFuturesVAL : isIndexVAL;
-      const isPrimaryVAH = hasFuturesData ? isFuturesVAH : isIndexVAH;
-
-      if (isPrimaryPOC) { score += 30; markers.add('PrimaryPOC'); }
-      if (isPrimaryVAL) { score += 25; markers.add('PrimaryVAL'); }
-      if (isPrimaryVAH) { score += 25; markers.add('PrimaryVAH'); }
-
-      if (hasFuturesData) {
-        if (isIndexPOC) { score += 15; markers.add('IndexPOC'); }
-        if (isEtfPOC) { score += 15; markers.add('EtfPOC'); }
-        if (isIndexVAL) { score += 10; markers.add('IndexVAL'); }
-        if (isIndexVAH) { score += 10; markers.add('IndexVAH'); }
-        if (isEtfVAL) { score += 10; markers.add('EtfVAL'); }
-        if (isEtfVAH) { score += 10; markers.add('EtfVAH'); }
-      }
-
-      const hvnCount = (isFuturesHVN ? 1 : 0) + (isIndexHVN ? 1 : 0) + (isEtfHVN ? 1 : 0);
-      const lvnCount = (isFuturesLVN ? 1 : 0) + (isIndexLVN ? 1 : 0) + (isEtfLVN ? 1 : 0);
-
-      if (hvnCount >= 2) { score += 20; markers.add('ConfluentHVN'); }
-      else if (hvnCount === 1) { score += 5; markers.add('SingleHVN'); }
-
-      if (lvnCount >= 2) { score += 20; markers.add('ConfluentLVN'); }
-      else if (lvnCount === 1) { score += 5; markers.add('SingleLVN'); }
-
-      return {
-        strike,
-        etfStrike,
-        score,
-        markers,
-        distancePct: d.distancePct,
-        isSupport: strike <= indexSpot,
-        
-        isPutWall: isIndexPutWall || isEtfPutWall,
-        isCallWall: isIndexCallWall || isEtfCallWall,
-        isGexFlip: isIndexFlip || isEtfFlip,
-        isConfluentWall: isConfluentPutWall || isConfluentCallWall || isConfluentFlip,
-        isConfluentSecondary: isConfluentSupport || isConfluentResistance,
-        
-        isPrimaryPOC,
-        isPrimaryVAL,
-        isPrimaryVAH,
-        
-        isHVN: hvnCount > 0,
-        isLVN: lvnCount > 0,
-        isConfluentNode: hvnCount >= 2 || lvnCount >= 2
-      };
-    });
-
-    const selectedStrikes = new Set<number>();
-    
-    // 1. Mandatory structures (POC, Walls)
-    candidates.forEach(c => {
-      if (
-        c.isPrimaryPOC ||
-        c.markers.has('ConfluentPutWall') ||
-        c.markers.has('ConfluentCallWall') ||
-        c.markers.has('ConfluentFlip') ||
-        c.markers.has('PutWall') ||
-        c.markers.has('CallWall') ||
-        c.markers.has('GexFlip') ||
-        c.markers.has('ConfluentSupport') ||
-        c.markers.has('ConfluentResistance')
-      ) {
-        selectedStrikes.add(c.strike);
-      }
-    });
-
-    // 2. Populate final map with premium confluent label strings (no generic HVN/LVN/VAL/VAH badges)
-    candidates.forEach(c => {
-      if (!selectedStrikes.has(c.strike)) return;
-
-      const strike = c.strike;
-      let labelParts: string[] = [];
-      let isConfluent = c.isConfluentWall || c.isConfluentNode || c.isConfluentSecondary;
-
-      // Primary POC
-      if (c.isPrimaryPOC) {
-        labelParts.push(hasFuturesData ? 'POC' : 'POC Magnete');
-      }
-
-      // Put Walls / Support
-      if (c.markers.has('ConfluentPutWall')) {
-        labelParts.push('Put Wall');
-        isConfluent = true;
-      } else if (c.markers.has('PutWall')) {
-        const hasIdx = indexPutWall && Math.abs(indexPutWall.strike - strike) < 1.0;
-        labelParts.push(hasIdx ? `Put Wall (${indexData.symbol})` : `Put Wall (${etfData.symbol})`);
-      } else if (c.markers.has('ConfluentSupport')) {
-        labelParts.push('Supporto');
-        isConfluent = true;
-      }
-
-      // Call Walls / Resistance
-      if (c.markers.has('ConfluentCallWall')) {
-        labelParts.push('Call Wall');
-        isConfluent = true;
-      } else if (c.markers.has('CallWall')) {
-        const hasIdx = indexCallWall && Math.abs(indexCallWall.strike - strike) < 1.0;
-        labelParts.push(hasIdx ? `Call Wall (${indexData.symbol})` : `Call Wall (${etfData.symbol})`);
-      } else if (c.markers.has('ConfluentResistance')) {
-        labelParts.push('Resistenza');
-        isConfluent = true;
-      }
-
-      // GEX Flip
-      if (c.markers.has('ConfluentFlip')) {
-        labelParts.push('GEX Flip');
-        isConfluent = true;
-      } else if (c.markers.has('GexFlip')) {
-        labelParts.push('GEX Flip');
-      }
-
-      // If we have primary structures AND it's a volume/AMT level (VAL, VAH, HVN, LVN), mark it confluent
-      if (labelParts.length > 0 && (c.isPrimaryVAL || c.isPrimaryVAH || c.isHVN || c.isLVN)) {
-        isConfluent = true;
-      }
-
-      let label = labelParts.join(' / ');
-
-      if (label) {
-        if (isConfluent && !label.includes('🔗')) {
-          label += ' 🔗';
-        }
-
-        map.set(strike, {
-          label,
-          type: c.isSupport ? 'support' : 'resistance',
-          isConfluent: !!isConfluent,
-        });
-      }
-    });
-
-    return map;
-  }, [indexData, etfData, market, profileData, nodes, hasFuturesData]);
-
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={handleRefresh} />;
   if (!indexData || !etfData) return <ErrorState message="Dati non disponibili" onRetry={handleRefresh} />;
@@ -1016,10 +670,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             </div>
 
             {/* Header labels for profiles */}
-            <div className="grid grid-cols-[1fr_110px_140px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
+            <div className="grid grid-cols-[1fr_110px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
               <span className="text-right">Opzioni ETF (OI+Vol)</span>
               <span className="text-center">Strike</span>
-              <span className="text-center">Livelli Quant</span>
               <span className="text-left">Opzioni Indice (OI+Vol)</span>
               <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
             </div>
@@ -1032,7 +685,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                 const isLVN = !!lvnZone;
                 const isTrough = nodes.lvnStrikes.has(d.strike);
-                const mergedLvl = mergedLevelsMap.get(d.strike);
 
                 const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
                 const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
@@ -1041,7 +693,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 return (
                   <div
                     key={d.strike}
-                    className="relative grid grid-cols-[1fr_110px_140px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
+                    className="relative grid grid-cols-[1fr_110px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
                     style={{
                       height: `${rowHeight}px`,
                       backgroundColor: isClosest
@@ -1097,25 +749,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       {isClosest && rowHeight >= 28 && (
                         <span className="absolute -bottom-2 text-[7px] text-blue-400 font-bold uppercase tracking-wider bg-[#0d1117] px-1 rounded border border-blue-500/30 z-10">
                           Spot
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Column 3: Badges (Dedicated column!) */}
-                    <div className="flex items-center justify-center relative w-full" style={{ height: `${rowHeight}px` }}>
-                      {mergedLvl && rowHeight >= 14 && (
-                        <span
-                          className="px-1.5 py-0.5 rounded text-[7px] font-extrabold uppercase tracking-wider border whitespace-nowrap shrink-0 animate-fadeIn"
-                          style={{
-                            backgroundColor: mergedLvl.type === 'resistance' ? 'rgba(239,68,68,0.18)' : mergedLvl.type === 'support' ? 'rgba(34,197,94,0.18)' : 'rgba(148,163,184,0.18)',
-                            color: mergedLvl.type === 'resistance' ? '#f87171' : mergedLvl.type === 'support' ? '#4ade80' : '#e2e8f0',
-                            borderColor: mergedLvl.isConfluent ? 'rgba(245,158,11,0.6)' : 'rgba(255,255,255,0.06)',
-                            boxShadow: mergedLvl.isConfluent ? '0 0 6px rgba(245,158,11,0.35)' : 'none',
-                            transform: `scale(${rowHeight < 18 ? 0.8 : 1.0})`,
-                            transformOrigin: 'center center'
-                          }}
-                        >
-                          {mergedLvl.label}
                         </span>
                       )}
                     </div>
@@ -1292,18 +925,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 {isGuideOpen ? (
                   <>
                     <div>
-                      <h4 className="font-bold text-red-400 mb-0.5">Call Wall / Put Wall</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        I picchi assoluti (globali) di posizionamento delle opzioni (Call e Put Open Interest). Viene indicato un solo muro principale per lato. Agiscono come barriere primarie (soffitto e pavimento) a causa delle attività di copertura (hedging) dei market maker.
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-gray-300 mb-0.5">Supporto / Resistenza</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        Livelli chiave secondari di posizionamento delle opzioni (Put e Call minori) che agiscono come zone di reazione del prezzo, di supporto o resistenza intraday.
-                      </p>
-                    </div>
-                    <div>
                       <h4 className="font-bold text-amber-500 mb-0.5">POC Magnete (Point of Control)</h4>
                       <p className="leading-relaxed text-[11px] text-gray-400">
                         Il livello con la massima concentrazione di contratti scambiati sul profilo volumi. Rappresenta il "prezzo più equo" accettato dal mercato e agisce come baricentro o magnete del prezzo.
@@ -1316,12 +937,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       </p>
                     </div>
                     <div>
-                      <h4 className="font-bold text-indigo-400 mb-0.5">GEX Flip (Pivot)</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        La soglia neutrale del mercato: sopra prevale la stabilità (mean reversion), sotto prevale la forte volatilità e accelerazione del trend.
-                      </p>
-                    </div>
-                    <div>
                       <h4 className="font-bold text-purple-400 mb-0.5">HVN (High Volume Node)</h4>
                       <p className="leading-relaxed text-[11px] text-gray-400">
                         Nodi ad alto volume. Zone di forte transazione e accettazione del prezzo, dove il mercato tende a consolidare lateralmente (supporti/resistenze statiche).
@@ -1331,12 +946,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       <h4 className="font-bold text-rose-400 mb-0.5">LVN Zone (Low Volume Node)</h4>
                       <p className="leading-relaxed text-[11px] text-gray-400">
                         Nodi a basso volume. Aree di vuoto di liquidità e rifiuto strutturale del prezzo, che agiscono come barriere di rimbalzo o acceleratori per breakout rapidi.
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-amber-400 mb-0.5">Icona Confluenza (🔗)</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        Indica una confluenza ad alta affidabilità: lo stesso livello operativo è attivo sia sul mercato retail (ETF) che istituzionale (Indice), oppure un livello opzioni (Put/Call Wall, GEX Flip) coincide esattamente con un livello volumetrico chiave dell'Auction Market Theory (POC, VAL, VAH).
                       </p>
                     </div>
                   </>
