@@ -53,6 +53,10 @@ export function buildDayTradingData(
     }
   }
 
+  // Identify the absolute strongest (global) Put Wall and Call Wall strikes
+  const primaryPutWallStrike = putWalls.length > 0 ? putWalls[0].strike : null;
+  const primaryCallWallStrike = callWalls.length > 0 ? callWalls[0].strike : null;
+
   // Convert put walls to support levels (below spot)
   const support: DayTradingLevel[] = putWalls
     .filter(w => w.strike <= spot)
@@ -60,6 +64,7 @@ export function buildDayTradingData(
     .filter(w => w.distance <= DAY_TRADING_MAX_DISTANCE_PCT)
     .map(w => {
       const isGammaPeak = w.strike === maxNegativeGexStrike;
+      const isPrimaryWall = w.strike === primaryPutWallStrike;
       return {
         strike: w.strike,
         type: 'support' as const,
@@ -67,7 +72,7 @@ export function buildDayTradingData(
         totalOI: w.totalOI,
         totalVolume: w.totalVolume,
         distance: w.distance,
-        label: isGammaPeak ? 'Major Gamma Wall' : 'Put Wall',
+        label: isGammaPeak ? 'Major Gamma Wall' : (isPrimaryWall ? 'Put Wall' : 'Supporto'),
       };
     })
     .sort((a, b) => a.distance - b.distance);
@@ -79,6 +84,7 @@ export function buildDayTradingData(
     .filter(w => w.distance <= DAY_TRADING_MAX_DISTANCE_PCT)
     .map(w => {
       const isGammaPeak = w.strike === maxPositiveGexStrike;
+      const isPrimaryWall = w.strike === primaryCallWallStrike;
       return {
         strike: w.strike,
         type: 'resistance' as const,
@@ -86,7 +92,7 @@ export function buildDayTradingData(
         totalOI: w.totalOI,
         totalVolume: w.totalVolume,
         distance: w.distance,
-        label: isGammaPeak ? 'Major Gamma Wall' : 'Call Wall',
+        label: isGammaPeak ? 'Major Gamma Wall' : (isPrimaryWall ? 'Call Wall' : 'Resistenza'),
       };
     })
     .sort((a, b) => a.distance - b.distance);
@@ -125,19 +131,9 @@ export function buildDayTradingData(
     }
   }
 
-  // Merge cross-symbol confluence levels
-  const crossLevels = extractCrossSymbolLevels(symbol, crossSymbolConfluence, spot);
-  // Re-classify based on current spot position (not stale Python backend classification)
-  const crossSupport = crossLevels.filter(l => l.strike <= spot);
-  const crossResistance = crossLevels.filter(l => l.strike > spot);
-
-  // Insert cross-symbol levels into the appropriate arrays
-  const mergedSupport = mergeLevels(support, crossSupport, spot, 'support');
-  const mergedResistance = mergeLevels(resistance, crossResistance, spot, 'resistance');
-
   // Filter out clustered levels (minimum 0.4% distance from each other)
-  const spacedSupport = filterSpacedLevels(mergedSupport, spot, 0.4);
-  const spacedResistance = filterSpacedLevels(mergedResistance, spot, 0.4);
+  const spacedSupport = filterSpacedLevels(support, spot, 0.4);
+  const spacedResistance = filterSpacedLevels(resistance, spot, 0.4);
 
   // Keep top 5 closest to spot
   const finalSupport = spacedSupport

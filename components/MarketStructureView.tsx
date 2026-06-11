@@ -474,6 +474,48 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     const etfCallWall = etfCalls.length > 0 ? [...etfCalls].sort((a, b) => b.strength - a.strength)[0] : null;
     const etfFlip = [...etfData.support, ...etfData.resistance].find(l => l.label.includes('Flip') || l.label.includes('Pivot'));
 
+    // Find the closest index strike for ETF Put Wall
+    let etfPutWallIndexStrike = -1;
+    if (etfPutWall) {
+      const equiv = etfPutWall.strike * ratio;
+      let minDiff = Infinity;
+      profileData.forEach(d => {
+        const diff = Math.abs(d.strike - equiv);
+        if (diff < minDiff) {
+          minDiff = diff;
+          etfPutWallIndexStrike = d.strike;
+        }
+      });
+    }
+
+    // Find the closest index strike for ETF Call Wall
+    let etfCallWallIndexStrike = -1;
+    if (etfCallWall) {
+      const equiv = etfCallWall.strike * ratio;
+      let minDiff = Infinity;
+      profileData.forEach(d => {
+        const diff = Math.abs(d.strike - equiv);
+        if (diff < minDiff) {
+          minDiff = diff;
+          etfCallWallIndexStrike = d.strike;
+        }
+      });
+    }
+
+    // Find the closest index strike for ETF GEX Flip
+    let etfFlipIndexStrike = -1;
+    if (etfFlip) {
+      const equiv = etfFlip.strike * ratio;
+      let minDiff = Infinity;
+      profileData.forEach(d => {
+        const diff = Math.abs(d.strike - equiv);
+        if (diff < minDiff) {
+          minDiff = diff;
+          etfFlipIndexStrike = d.strike;
+        }
+      });
+    }
+
     // Scoring Engine
     const candidates = profileData.map(d => {
       const strike = d.strike;
@@ -484,9 +526,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       const isIndexCallWall = indexCallWall && Math.abs(indexCallWall.strike - strike) < 1.0;
       const isIndexFlip = indexFlip && Math.abs(indexFlip.strike - strike) < 1.0;
 
-      const isEtfPutWall = etfPutWall && Math.abs(etfPutWall.strike - etfStrike) <= 0.6;
-      const isEtfCallWall = etfCallWall && Math.abs(etfCallWall.strike - etfStrike) <= 0.6;
-      const isEtfFlip = etfFlip && Math.abs(etfFlip.strike - etfStrike) <= 0.6;
+      const isEtfPutWall = strike === etfPutWallIndexStrike;
+      const isEtfCallWall = strike === etfCallWallIndexStrike;
+      const isEtfFlip = strike === etfFlipIndexStrike;
 
       const isFuturesPOC = futuresAMT ? (strike === futuresAMT.pocStrike) : false;
       const isFuturesVAL = futuresAMT ? (strike === futuresAMT.valStrike) : false;
@@ -524,6 +566,18 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
       if (isConfluentFlip) { score += 35; markers.add('ConfluentFlip'); }
       else if (isIndexFlip || isEtfFlip) { score += 20; markers.add('GexFlip'); }
+
+      // Check secondary level confluences (any support/resistance level aligning between Index & ETF, but not the primary walls)
+      const hasIndexSupport = indexData.support.some(l => Math.abs(l.strike - strike) < 1.0);
+      const hasEtfSupport = etfData.support.some(l => Math.abs(l.strike - Math.round(strike / ratio)) <= 0.6);
+      const isConfluentSupport = hasIndexSupport && hasEtfSupport && !isConfluentPutWall;
+
+      const hasIndexResistance = indexData.resistance.some(l => Math.abs(l.strike - strike) < 1.0);
+      const hasEtfResistance = etfData.resistance.some(l => Math.abs(l.strike - Math.round(strike / ratio)) <= 0.6);
+      const isConfluentResistance = hasIndexResistance && hasEtfResistance && !isConfluentCallWall;
+
+      if (isConfluentSupport) { score += 25; markers.add('ConfluentSupport'); }
+      if (isConfluentResistance) { score += 25; markers.add('ConfluentResistance'); }
 
       const isPrimaryPOC = hasFuturesData ? isFuturesPOC : isIndexPOC;
       const isPrimaryVAL = hasFuturesData ? isFuturesVAL : isIndexVAL;
@@ -563,9 +617,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
         isCallWall: isIndexCallWall || isEtfCallWall,
         isGexFlip: isIndexFlip || isEtfFlip,
         isConfluentWall: isConfluentPutWall || isConfluentCallWall || isConfluentFlip,
-        isCrossSymbol: (indexPutWall?.isCrossSymbol && isIndexPutWall) ||
-                       (indexCallWall?.isCrossSymbol && isIndexCallWall) ||
-                       (indexFlip?.isCrossSymbol && isIndexFlip),
+        isConfluentSecondary: isConfluentSupport || isConfluentResistance,
         
         isPrimaryPOC,
         isPrimaryVAL,
@@ -588,7 +640,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
         c.markers.has('ConfluentFlip') ||
         c.markers.has('PutWall') ||
         c.markers.has('CallWall') ||
-        c.markers.has('GexFlip')
+        c.markers.has('GexFlip') ||
+        c.markers.has('ConfluentSupport') ||
+        c.markers.has('ConfluentResistance')
       ) {
         selectedStrikes.add(c.strike);
       }
@@ -600,29 +654,35 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
       const strike = c.strike;
       let labelParts: string[] = [];
-      let isConfluent = c.isConfluentWall || c.isConfluentNode || c.isCrossSymbol;
+      let isConfluent = c.isConfluentWall || c.isConfluentNode || c.isConfluentSecondary;
 
       // Primary POC
       if (c.isPrimaryPOC) {
         labelParts.push(hasFuturesData ? 'POC' : 'POC Magnete');
       }
 
-      // Put Walls
+      // Put Walls / Support
       if (c.markers.has('ConfluentPutWall')) {
         labelParts.push('Put Wall');
         isConfluent = true;
       } else if (c.markers.has('PutWall')) {
         const hasIdx = indexPutWall && Math.abs(indexPutWall.strike - strike) < 1.0;
         labelParts.push(hasIdx ? `Put Wall (${indexData.symbol})` : `Put Wall (${etfData.symbol})`);
+      } else if (c.markers.has('ConfluentSupport')) {
+        labelParts.push('Supporto');
+        isConfluent = true;
       }
 
-      // Call Walls
+      // Call Walls / Resistance
       if (c.markers.has('ConfluentCallWall')) {
         labelParts.push('Call Wall');
         isConfluent = true;
       } else if (c.markers.has('CallWall')) {
         const hasIdx = indexCallWall && Math.abs(indexCallWall.strike - strike) < 1.0;
         labelParts.push(hasIdx ? `Call Wall (${indexData.symbol})` : `Call Wall (${etfData.symbol})`);
+      } else if (c.markers.has('ConfluentResistance')) {
+        labelParts.push('Resistenza');
+        isConfluent = true;
       }
 
       // GEX Flip
@@ -635,11 +695,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
       // If we have primary structures AND it's a volume/AMT level (VAL, VAH, HVN, LVN), mark it confluent
       if (labelParts.length > 0 && (c.isPrimaryVAL || c.isPrimaryVAH || c.isHVN || c.isLVN)) {
-        isConfluent = true;
-      }
-
-      if (labelParts.length === 0 && c.isCrossSymbol) {
-        labelParts.push('Confluenza');
         isConfluent = true;
       }
 
@@ -657,31 +712,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
         });
       }
     });
-
-    // 4. Fallback: Extract raw cross-symbol confluences directly from python data if not already mapped
-    const pairKey = market === 'SP500' ? 'SPY_SPX' : 'QQQ_NDX';
-    const pair = indexData.crossSymbolConfluence?.[pairKey as keyof typeof indexData.crossSymbolConfluence];
-    if (pair && pair.levels) {
-      pair.levels.forEach(level => {
-        if (level.cross_score >= 85 && !map.has(level.index.strike)) {
-          let label = 'Confluenza 🔗';
-          const hasMajor = level.etf.wall_type.includes('major') || level.index.wall_type.includes('major');
-          if (hasMajor) {
-            label = 'Major Wall 🔗';
-          } else if (level.etf.wall_type === 'put' && level.index.wall_type === 'put') {
-            label = 'Put Wall 🔗';
-          } else if (level.etf.wall_type === 'call' && level.index.wall_type === 'call') {
-            label = 'Call Wall 🔗';
-          }
-          
-          map.set(level.index.strike, {
-            label,
-            type: level.type as 'support' | 'resistance',
-            isConfluent: true,
-          });
-        }
-      });
-    }
 
     return map;
   }, [indexData, etfData, market, profileData, nodes, hasFuturesData]);
@@ -1264,7 +1294,13 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                     <div>
                       <h4 className="font-bold text-red-400 mb-0.5">Call Wall / Put Wall</h4>
                       <p className="leading-relaxed text-[11px] text-gray-400">
-                        I picchi assoluti di posizionamento delle opzioni (Call e Put Open Interest). Agiscono come barriere primarie (soffitto e pavimento) a causa delle attività di copertura (hedging) dei market maker.
+                        I picchi assoluti (globali) di posizionamento delle opzioni (Call e Put Open Interest). Viene indicato un solo muro principale per lato. Agiscono come barriere primarie (soffitto e pavimento) a causa delle attività di copertura (hedging) dei market maker.
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-300 mb-0.5">Supporto / Resistenza</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        Livelli chiave secondari di posizionamento delle opzioni (Put e Call minori) che agiscono come zone di reazione del prezzo, di supporto o resistenza intraday.
                       </p>
                     </div>
                     <div>
