@@ -8,6 +8,7 @@
     }
   },
   "rewrites": [
+    { "source": "/api-spot", "destination": "/api/index?action=spot" },
     { "source": "/api", "destination": "/api/index" },
     { "source": "/api/", "destination": "/api/index" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }

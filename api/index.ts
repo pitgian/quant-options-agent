@@ -9,7 +9,6 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import yahooFinance from 'yahoo-finance2';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -34,8 +33,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const quotes = await Promise.all(
         symbols.map(async (symbol) => {
           try {
-            const quote = await yahooFinance.quote(symbol);
-            return { symbol, price: quote.regularMarketPrice || quote.navPrice || null };
+            const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const data = await response.json();
+            const meta = data?.chart?.result?.[0]?.meta;
+            return { symbol, price: meta?.regularMarketPrice || null };
           } catch (err) {
             console.error(`Error fetching ${symbol}:`, err);
             return { symbol, price: null };
