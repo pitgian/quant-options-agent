@@ -51,6 +51,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     setExpiryFilter,
     handleRefresh,
     lastRefreshed,
+    kronosForecast,
   } = state;
 
   const [zoomPct, setZoomPct] = useState(3.0);
@@ -58,6 +59,17 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const [flashVisible, setFlashVisible] = useState(false);
   const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '2d' | '7d' | '30d' | '90d'>('auto');
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [showKronosDetails, setShowKronosDetails] = useState(false);
+  const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD'>('1h');
+
+  const TIMEFRAMES: { key: typeof kronosTimeframe; label: string }[] = [
+    { key: '15m', label: '15m' },
+    { key: '30m', label: '30m' },
+    { key: '1h', label: '1h' },
+    { key: '2h', label: '2h' },
+    { key: '4h', label: '4h' },
+    { key: 'EOD', label: 'EOD' },
+  ];
 
   useEffect(() => {
     if (showUpdatedFlash) {
@@ -138,6 +150,78 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const zoomedProfile = useMemo(() => {
     return profileData.filter(d => Math.abs(d.distancePct) <= zoomPct);
   }, [profileData, zoomPct]);
+
+  // ---- Active Kronos Forecast based on timeframe selection ----
+  const activeKronosForecast = useMemo(() => {
+    if (!kronosForecast) return null;
+    const biasItem = market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
+    if (!biasItem || !biasItem.candles || biasItem.candles.length === 0) return null;
+
+    const lastPrice = biasItem.last_price;
+
+    let candleCount = 4;
+    if (kronosTimeframe === '15m') candleCount = 1;
+    else if (kronosTimeframe === '30m') candleCount = 2;
+    else if (kronosTimeframe === '1h') candleCount = 4;
+    else if (kronosTimeframe === '2h') candleCount = 8;
+    else if (kronosTimeframe === '4h') candleCount = 16;
+    else if (kronosTimeframe === 'EOD') candleCount = 26;
+
+    const sliced = biasItem.candles.slice(0, candleCount);
+    if (sliced.length === 0) return null;
+
+    const targetPrice = sliced[sliced.length - 1].close;
+    const expectedHigh = Math.max(...sliced.map(c => c.high));
+    const expectedLow = Math.min(...sliced.map(c => c.low));
+    const volatilityPct = ((expectedHigh - expectedLow) / lastPrice) * 100;
+    const deltaPct = ((targetPrice - lastPrice) / lastPrice) * 100;
+
+    let trendBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    if (deltaPct > 0.05) {
+      trendBias = 'BULLISH';
+    } else if (deltaPct < -0.05) {
+      trendBias = 'BEARISH';
+    }
+
+    return {
+      lastPrice,
+      targetPrice,
+      expectedHigh,
+      expectedLow,
+      volatilityPct,
+      trendBias,
+      strengthPct: deltaPct,
+      candles: sliced
+    };
+  }, [kronosForecast, market, kronosTimeframe]);
+
+  // ---- Kronos expected price range in Index terms ----
+  const kronosRange = useMemo(() => {
+    if (!activeKronosForecast || !indexData || !etfData) return null;
+
+    const indexSpot = indexData.spot;
+    const etfSpot = etfData.spot;
+    if (indexSpot && etfSpot) {
+      const ratio = indexSpot / etfSpot;
+      return {
+        low: activeKronosForecast.expectedLow * ratio,
+        high: activeKronosForecast.expectedHigh * ratio
+      };
+    }
+    return null;
+  }, [activeKronosForecast, indexData, etfData]);
+
+  // ---- Calculate visual boundaries for Kronos expected range ----
+  const kronosBoundaries = useMemo(() => {
+    if (!kronosRange || zoomedProfile.length === 0) return null;
+    const strikesInRange = zoomedProfile.filter(d => d.strike >= kronosRange.low && d.strike <= kronosRange.high);
+    if (strikesInRange.length === 0) return null;
+    const strikes = strikesInRange.map(d => d.strike);
+    return {
+      max: Math.max(...strikes),
+      min: Math.min(...strikes)
+    };
+  }, [kronosRange, zoomedProfile]);
 
   const hasFuturesData = useMemo(() => {
     return zoomedProfile.some(d => d.futuresVolume > 0);
@@ -376,6 +460,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
   const indexSpot = indexData.spot;
   const etfSpot = etfData.spot;
+  const ratio = indexSpot / etfSpot;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117]">
@@ -533,7 +618,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
           {/* ================================================================== */}
           {/* TOP PANEL: METRICS & SPOT                                          */}
           {/* ================================================================== */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             
             {/* Spot Prices */}
             <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-center">
@@ -614,6 +699,201 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
               )}
             </div>
 
+            {/* Kronos Predictor */}
+            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-between min-h-[140px] relative">
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Kronos AI Predictor</span>
+                    {kronosForecast && (
+                      <span 
+                        className="text-[8px] text-gray-650 font-mono"
+                        title={`Aggiornato: ${new Date(kronosForecast.updated_at).toLocaleString()}`}
+                      >
+                        ({new Date(kronosForecast.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex bg-slate-900/80 rounded-lg p-0.5 border border-slate-800 shrink-0">
+                    {TIMEFRAMES.map((tf) => (
+                      <button
+                        key={tf.key}
+                        onClick={() => setKronosTimeframe(tf.key)}
+                        className="px-1.5 py-0.5 rounded text-[8px] font-bold transition-all duration-150"
+                        style={{
+                          backgroundColor: kronosTimeframe === tf.key ? '#1e293b' : 'transparent',
+                          color: kronosTimeframe === tf.key ? '#e2e8f0' : '#64748b',
+                        }}
+                      >
+                        {tf.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {(() => {
+                  if (!kronosForecast) {
+                    return <div className="text-xs text-gray-500 mt-2">Caricamento previsioni...</div>;
+                  }
+                  if (!activeKronosForecast) {
+                    return <div className="text-xs text-gray-500 mt-2">Dati non disponibili</div>;
+                  }
+                  
+                  const isBullish = activeKronosForecast.trendBias === 'BULLISH';
+                  const isBearish = activeKronosForecast.trendBias === 'BEARISH';
+                  const trendColor = isBullish ? '#4ade80' : isBearish ? '#f87171' : '#94a3b8';
+                  const trendBg = isBullish ? 'rgba(34,197,94,0.12)' : isBearish ? 'rgba(239,68,68,0.12)' : 'rgba(148,163,184,0.12)';
+                  
+                  // Volatility Classification
+                  let volLabel = "Moderata";
+                  let volColor = "#eab308"; // yellow
+                  let volBg = "rgba(234,179,8,0.1)";
+                  if (activeKronosForecast.volatilityPct < 0.2) {
+                    volLabel = "Bassa";
+                    volColor = "#4ade80"; // green
+                    volBg = "rgba(34,197,94,0.1)";
+                  } else if (activeKronosForecast.volatilityPct >= 0.5) {
+                    volLabel = "Elevata";
+                    volColor = "#f87171"; // red
+                    volBg = "rgba(239,68,68,0.1)";
+                  }
+
+                  // Sparkline path math
+                  let sparklineSvg = null;
+                  if (activeKronosForecast.candles && activeKronosForecast.candles.length > 0) {
+                    const prices = [activeKronosForecast.lastPrice, ...activeKronosForecast.candles.map(c => c.close)];
+                    const minP = Math.min(...prices);
+                    const maxP = Math.max(...prices);
+                    const pRange = maxP - minP || 1;
+                    
+                    const w = 180;
+                    const h = 32;
+                    const padding = 3;
+                    
+                    const points = prices.map((p, i) => {
+                      const x = (i / (prices.length - 1)) * (w - 20) + 10;
+                      const y = h - ((p - minP) / pRange) * (h - 2 * padding) - padding;
+                      return { x, y, price: p };
+                    });
+                    
+                    const pointsStr = points.map(pt => `${pt.x},${pt.y}`).join(' ');
+                    
+                    sparklineSvg = (
+                      <div className="flex flex-col items-center mt-2 p-1.5 bg-slate-900/30 rounded-lg border border-slate-800/40">
+                        <span className="text-[8px] text-gray-500 mb-1 font-semibold uppercase tracking-wider">Traiettoria prezzi (Sparkline)</span>
+                        <svg width={w} height={h} className="overflow-visible">
+                          <polyline
+                            fill="none"
+                            stroke={trendColor}
+                            strokeWidth="1.5"
+                            strokeDasharray="1 1"
+                            points={pointsStr}
+                          />
+                          {points.map((pt, i) => (
+                            <g key={i}>
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r={i === 0 ? "2.5" : i === points.length - 1 ? "3" : "2"}
+                                fill={i === 0 ? "#ffffff" : trendColor}
+                                stroke={i === 0 ? "#3b82f6" : "none"}
+                                strokeWidth={i === 0 ? "1" : "0"}
+                              />
+                              <title>Step {i}: ${pt.price.toFixed(2)}</title>
+                            </g>
+                          ))}
+                        </svg>
+                        <div className="flex justify-between w-full text-[7px] text-gray-500 px-1 mt-1 font-mono">
+                          <span>Spot</span>
+                          {kronosTimeframe !== '15m' && (
+                            <span>
+                              {kronosTimeframe === '30m' ? '+15m' :
+                               kronosTimeframe === '1h' ? '+30m' :
+                               kronosTimeframe === '2h' ? '+1h' :
+                               kronosTimeframe === '4h' ? '+2h' : '+3h'}
+                            </span>
+                          )}
+                          <span>+{kronosTimeframe}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="mt-1.5 text-xs leading-tight">
+                      {/* Bias and Strength */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Bias:</span>
+                        <span
+                          className="font-bold px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+                          style={{ backgroundColor: trendBg, color: trendColor }}
+                        >
+                          {isBullish ? '🟢 Rialzista' : isBearish ? '🔴 Ribassista' : '⚪ Neutrale'}
+                        </span>
+                      </div>
+
+                      {/* Expected Price Range */}
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-gray-400 font-medium">Range Atteso ({kronosTimeframe}):</span>
+                        <span className="font-mono font-semibold text-gray-200">
+                          ${activeKronosForecast.expectedLow.toFixed(1)} - ${activeKronosForecast.expectedHigh.toFixed(1)}
+                        </span>
+                      </div>
+
+                      {/* Expected Volatility */}
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-gray-400 font-medium">Volatilità Prevista:</span>
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono"
+                          style={{ backgroundColor: volBg, color: volColor }}
+                          title={`Volatilità stimata sul range: ${activeKronosForecast.volatilityPct.toFixed(3)}%`}
+                        >
+                          {activeKronosForecast.volatilityPct.toFixed(2)}% ({volLabel})
+                        </span>
+                      </div>
+
+                      {sparklineSvg}
+
+                      {/* Expandable detailed timeline */}
+                      <div className="mt-2 pt-2 border-t border-slate-800/40">
+                        <button
+                          onClick={() => setShowKronosDetails(!showKronosDetails)}
+                          className="w-full text-center text-[9px] text-blue-400 hover:text-blue-300 font-semibold tracking-wider uppercase transition-colors"
+                        >
+                          {showKronosDetails ? '▲ Nascondi Timeline' : `▼ Mostra Proiezioni 15m (${kronosTimeframe})`}
+                        </button>
+                        
+                        {showKronosDetails && activeKronosForecast.candles && (
+                          <div className="mt-1.5 max-h-[120px] overflow-y-auto pr-0.5 custom-scrollbar text-[10px] bg-slate-900/50 rounded-lg p-2 border border-slate-800/60 font-mono">
+                            <div className="grid grid-cols-3 text-[8px] text-gray-500 font-bold uppercase pb-1 border-b border-slate-800">
+                              <span>Candela</span>
+                              <span className="text-center">Prezzo</span>
+                              <span className="text-right">Var.</span>
+                            </div>
+                            {activeKronosForecast.candles.map((candle, idx) => {
+                              const stepDelta = ((candle.close - activeKronosForecast.lastPrice) / activeKronosForecast.lastPrice) * 100;
+                              return (
+                                <div key={idx} className="grid grid-cols-3 py-0.5 text-gray-300 border-b border-slate-850/40 last:border-b-0">
+                                  <span className="text-gray-400 font-sans">+{15 * (idx + 1)}m</span>
+                                  <span className="text-center font-bold">${candle.close.toFixed(2)}</span>
+                                  <span 
+                                    className="text-right font-bold" 
+                                    style={{ color: stepDelta > 0 ? '#4ade80' : stepDelta < 0 ? '#f87171' : '#94a3b8' }}
+                                  >
+                                    {stepDelta > 0 ? '+' : ''}{stepDelta.toFixed(2)}%
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
           </div>
 
           {/* ================================================================== */}
@@ -685,26 +965,57 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                 const isLVN = !!lvnZone;
                 const isTrough = nodes.lvnStrikes.has(d.strike);
+                const isInKronosRange = !!(kronosRange && d.strike >= kronosRange.low && d.strike <= kronosRange.high);
 
                 const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
                 const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
                 const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
 
+                // Blend backgrounds
+                let rowBg = 'transparent';
+                if (isClosest) {
+                  rowBg = 'rgba(234,179,8,0.2)'; // Yellow highlight for spot price
+                } else if (isInKronosRange) {
+                  if (isHVN) {
+                    rowBg = 'rgba(59,130,246,0.12)'; // Soft blue base + indigo HVN blend
+                  } else if (isLVN) {
+                    rowBg = 'rgba(244,63,94,0.12)'; // Rose blend
+                  } else {
+                    rowBg = 'rgba(59,130,246,0.08)'; // Soft blue fill for general Kronos range
+                  }
+                } else if (isHVN) {
+                  rowBg = 'rgba(99,102,241,0.03)';
+                } else if (isLVN) {
+                  rowBg = 'rgba(244,63,94,0.02)';
+                }
+
+                let borderTopStyle = 'none';
+                let borderBottomStyle = 'none';
+
+                if (isClosest) {
+                  borderTopStyle = '1px solid rgba(234,179,8,0.45)';
+                  borderBottomStyle = '1px solid rgba(234,179,8,0.45)';
+                } else {
+                  if (kronosBoundaries && d.strike === kronosBoundaries.max) {
+                    borderTopStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
+                  }
+                  if (kronosBoundaries && d.strike === kronosBoundaries.min) {
+                    borderBottomStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
+                  }
+                }
+
                 return (
                   <div
                     key={d.strike}
                     className="relative grid grid-cols-[1fr_110px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
+                    title={isInKronosRange ? `All'interno del Range Atteso di Kronos AI (${kronosTimeframe})` : undefined}
                     style={{
                       height: `${rowHeight}px`,
-                      backgroundColor: isClosest
-                        ? 'rgba(234,179,8,0.15)'
-                        : isHVN
-                        ? 'rgba(99,102,241,0.02)'
-                        : isLVN
-                        ? 'rgba(244,63,94,0.02)'
-                        : 'transparent',
-                      borderTop: isClosest ? '1px solid rgba(234,179,8,0.45)' : 'none',
-                      borderBottom: isClosest ? '1px solid rgba(234,179,8,0.45)' : 'none',
+                      backgroundColor: rowBg,
+                      borderTop: borderTopStyle,
+                      borderBottom: borderBottomStyle,
+                      borderLeft: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
+                      borderRight: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
                     }}
                   >
                     {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
@@ -713,11 +1024,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                         className="h-full rounded-l flex items-center justify-end pr-1.5 overflow-hidden"
                         style={{
                           width: `${Math.max(2, etfBarWidth)}%`,
-                          backgroundColor: isHVN
-                            ? 'rgba(99,102,241,0.35)'
-                            : isLVN
-                            ? 'rgba(244,63,94,0.06)'
-                            : 'rgba(59,130,246,0.22)',
+                          backgroundColor: isInKronosRange
+                            ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(59,130,246,0.45)')
+                            : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(59,130,246,0.22)'),
                         }}
                       >
                         {etfBarWidth > 18 && rowHeight >= 18 && (
@@ -751,6 +1060,16 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                           Spot
                         </span>
                       )}
+                      {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
+                        <span className="absolute -top-3.5 left-1/2 transform -translate-x-1/2 text-[7px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1 py-0.5 rounded shadow-lg shadow-blue-500/30 border border-blue-400 whitespace-nowrap z-25">
+                          🎯 Kronos High: ${kronosRange.high.toFixed(0)} / ${(kronosRange.high / ratio).toFixed(1)}
+                        </span>
+                      )}
+                      {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
+                        <span className="absolute -bottom-3.5 left-1/2 transform -translate-x-1/2 text-[7px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1 py-0.5 rounded shadow-lg shadow-blue-500/30 border border-blue-400 whitespace-nowrap z-25">
+                          🎯 Kronos Low: ${kronosRange.low.toFixed(0)} / ${(kronosRange.low / ratio).toFixed(1)}
+                        </span>
+                      )}
                     </div>
 
                     {/* Column 4: Index Options profile (oriented left) */}
@@ -759,11 +1078,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                         className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
                         style={{
                           width: `${Math.max(2, indexBarWidth)}%`,
-                          backgroundColor: isHVN
-                            ? 'rgba(99,102,241,0.35)'
-                            : isLVN
-                            ? 'rgba(244,63,94,0.06)'
-                            : 'rgba(129,140,248,0.22)',
+                          backgroundColor: isInKronosRange
+                            ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(129,140,248,0.45)')
+                            : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(129,140,248,0.22)'),
                         }}
                       >
                         {indexBarWidth > 18 && rowHeight >= 18 && (
@@ -780,11 +1097,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                         className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
                         style={{
                           width: `${Math.max(2, futBarWidth)}%`,
-                          backgroundColor: isHVN
-                            ? 'rgba(129,140,248,0.35)'
-                            : isLVN
-                            ? 'rgba(244,63,94,0.06)'
-                            : 'rgba(34,197,94,0.22)',
+                          backgroundColor: isInKronosRange
+                            ? (isHVN ? 'rgba(129,140,248,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(34,197,94,0.45)')
+                            : (isHVN ? 'rgba(129,140,248,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(34,197,94,0.22)'),
                           borderLeft: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                           borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                         }}
@@ -940,6 +1255,12 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       <h4 className="font-bold text-purple-400 mb-0.5">HVN (High Volume Node)</h4>
                       <p className="leading-relaxed text-[11px] text-gray-400">
                         Nodi ad alto volume. Zone di forte transazione e accettazione del prezzo, dove il mercato tende a consolidare lateralmente (supporti/resistenze statiche).
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-blue-400 mb-0.5">🎯 Range Atteso Kronos AI</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-400">
+                        Evidenziato sul grafico da un'area sfumata blu racchiusa da parentesi verticali blu e linee orizzontali tratteggiate. Indica la fascia di oscillazione attesa stimata dal modello di intelligenza artificiale per il timeframe selezionato (da 15m a EOD). Consente di verificare a colpo d'occhio se i target attesi coincidono con livelli elevati di Open Interest o volumi storici.
                       </p>
                     </div>
                     <div>

@@ -233,3 +233,37 @@ export interface OptionsData {
 
 /** @deprecated Use ExpiryFilter instead */
 export type ExpirationFilterPreset = ExpiryFilter;
+
+// ============================================================================
+// KRONOS FORECAST TYPES
+// ============================================================================
+
+export interface KronosPredictedCandle {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface KronosForecastItem {
+  ticker: string;
+  last_price: number;
+  predicted_price_1h: number;
+  expected_high: number;
+  expected_low: number;
+  predicted_volatility_pct: number;
+  trend_bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  strength_pct: number;
+  candles: KronosPredictedCandle[];
+  error?: string;
+}
+
+export interface KronosForecast {
+  updated_at: string;
+  SP500_bias: KronosForecastItem;
+  NASDAQ_bias: KronosForecastItem;
+}
+
+

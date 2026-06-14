@@ -46,6 +46,7 @@ jobs:
         timeout-minutes: 20
         run: |
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
+          python scripts/run_kronos.py
         env:
           TZ: America/New_York
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
@@ -58,7 +59,7 @@ jobs:
           git config --local user.name "github-actions[bot]"
           
           # Aggiungi il file
-          git add data/options_data.json
+          git add data/options_data.json data/kronos_forecast.json
           
           # Verifica se ci sono cambiamenti
           if git diff --quiet && git diff --staged --quiet; then
@@ -81,7 +82,7 @@ jobs:
             # Reset hard to remote e ri-applica le modifiche
             git reset --hard origin/master
             # Ri-aggiungi il file generato
-            git add data/options_data.json
+            git add data/options_data.json data/kronos_forecast.json
             git commit -m "chore: update options data" || true
           }
           
@@ -96,7 +97,7 @@ jobs:
             git rebase --autostash origin/master || {
               git rebase --abort 2>/dev/null || true
               git reset --hard origin/master
-              git add data/options_data.json
+              git add data/options_data.json data/kronos_forecast.json
               git commit -m "chore: update options data" || true
             }
           done
