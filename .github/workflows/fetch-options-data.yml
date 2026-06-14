@@ -55,48 +55,53 @@ jobs:
           
       - name: Commit and push changes
         run: |
+          # 1. Back up generated data files
+          mkdir -p /tmp/options_data_backup
+          cp data/options_data.json data/kronos_forecast.json /tmp/options_data_backup/
+          
+          # 2. Configure Git
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # Aggiungi il file
+          # 3. Fetch remote data branch to check if it exists
+          git fetch origin data || true
+          
+          # 4. Checkout or create data branch
+          if git show-ref --quiet refs/remotes/origin/data; then
+            git checkout -B data origin/data
+          else
+            git checkout --orphan data
+            git rm -rf .
+          fi
+          
+          # 5. Restore generated data files
+          mkdir -p data
+          cp /tmp/options_data_backup/* data/
+          
+          # 6. Commit and push
           git add data/options_data.json data/kronos_forecast.json
           
-          # Verifica se ci sono cambiamenti
+          # Check if there are differences to commit
           if git diff --quiet && git diff --staged --quiet; then
             echo "Nessun cambiamento da committare"
             exit 0
           fi
           
-          # Commit
           git commit -m "chore: update options data"
           
-          # Fetch latest from remote first
-          git fetch origin master
-          
-          # Rebase onto remote master to avoid conflicts
-          # Usa --autostash per gestire eventuali modifiche non committed
-          git rebase --autostash origin/master || {
-            echo "Conflitto rilevato, risoluzione automatica..."
-            # Se rebase fallisce, abort
-            git rebase --abort 2>/dev/null || true
-            # Reset hard to remote e ri-applica le modifiche
-            git reset --hard origin/master
-            # Ri-aggiungi il file generato
-            git add data/options_data.json data/kronos_forecast.json
-            git commit -m "chore: update options data" || true
-          }
-          
-          # Push con retry e force-with-lease per sicurezza
+          # Push to origin data branch
           for i in 1 2 3; do
-            if git push origin master; then
+            if git push origin data; then
               echo "Push successful"
               exit 0
             fi
             echo "Push failed, attempt $i. Fetching and rebasing..."
-            git fetch origin master
-            git rebase --autostash origin/master || {
+            git fetch origin data
+            git rebase --autostash origin/data || {
               git rebase --abort 2>/dev/null || true
-              git reset --hard origin/master
+              git reset --hard origin/data
+              mkdir -p data
+              cp /tmp/options_data_backup/* data/
               git add data/options_data.json data/kronos_forecast.json
               git commit -m "chore: update options data" || true
             }

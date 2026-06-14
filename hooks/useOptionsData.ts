@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DayTradingData, ExpiryFilter, KronosForecast } from '../types';
 import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/dataService';
 
-const KRONOS_GITHUB_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/master/data/kronos_forecast.json';
+const KRONOS_GITHUB_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
 const getKronosUrl = () => {
