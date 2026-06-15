@@ -19,11 +19,24 @@ OUTPUT_PATH = os.path.join(scripts_dir, "../data/kronos_forecast.json")
 def get_market_bias(ticker, model, tokenizer, device):
     print(f"\n--- Fetching historical data for {ticker} ---")
     
-    # Download last 5 days of 15m data
-    df = yf.download(ticker, period="5d", interval="15m")
+    # Use futures (ES=F / NQ=F) to support 24/5 continuous session (including London session)
+    futures_map = {
+        "SPY": "ES=F",
+        "QQQ": "NQ=F"
+    }
+    ratio_map = {
+        "SPY": 10.09,
+        "QQQ": 41.57
+    }
+    
+    fetch_ticker = futures_map.get(ticker, ticker)
+    ratio = ratio_map.get(ticker, 1.0)
+    
+    # Download last 5 days of 15m data for the mapped ticker
+    df = yf.download(fetch_ticker, period="5d", interval="15m")
     
     if df.empty:
-        raise ValueError(f"No data returned for ticker {ticker}")
+        raise ValueError(f"No data returned for ticker {fetch_ticker}")
 
     # Keep only columns of interest and convert to lowercase
     # If columns are MultiIndex (can happen with newer yfinance versions), flatten/select
@@ -33,6 +46,12 @@ def get_market_bias(ticker, model, tokenizer, device):
     df = df.rename(columns=lambda x: x.lower())
     df = df[['open', 'high', 'low', 'close', 'volume']]
     df = df.dropna()
+
+    # Scale futures prices to match ETF (SPY/QQQ) price levels
+    if ratio != 1.0:
+        print(f"Scaling futures prices for {ticker} by dividing by {ratio}...")
+        for col in ['open', 'high', 'low', 'close']:
+            df[col] = df[col] / ratio
 
     # KronosTokenizer needs a context history. We will feed the last 128 candles (approx 2 days of 15m K-lines)
     # the mini model supports up to 2048 context, but 128 is plenty for immediate trends and faster on CPU.
