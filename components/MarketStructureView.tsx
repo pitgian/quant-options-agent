@@ -591,6 +591,26 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
               </select>
             </div>
 
+            {/* Kronos AI Timeframe selector */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Kronos:</span>
+              <div className="flex items-center bg-slate-900 rounded-lg p-0.5 border border-slate-800">
+                {TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf.key}
+                    onClick={() => setKronosTimeframe(tf.key)}
+                    className="px-2 py-0.5 rounded text-[10px] font-semibold transition-all duration-150"
+                    style={{
+                      backgroundColor: kronosTimeframe === tf.key ? '#1e293b' : 'transparent',
+                      color: kronosTimeframe === tf.key ? '#e2e8f0' : '#64748b',
+                    }}
+                  >
+                    {tf.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Refresh */}
             <button
               onClick={handleRefresh}
@@ -726,21 +746,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                         ({new Date(kronosForecast.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
                       </span>
                     )}
-                  </div>
-                  <div className="flex bg-slate-900/80 rounded-lg p-0.5 border border-slate-800 shrink-0">
-                    {TIMEFRAMES.map((tf) => (
-                      <button
-                        key={tf.key}
-                        onClick={() => setKronosTimeframe(tf.key)}
-                        className="px-1.5 py-0.5 rounded text-[8px] font-bold transition-all duration-150"
-                        style={{
-                          backgroundColor: kronosTimeframe === tf.key ? '#1e293b' : 'transparent',
-                          color: kronosTimeframe === tf.key ? '#e2e8f0' : '#64748b',
-                        }}
-                      >
-                        {tf.label}
-                      </button>
-                    ))}
                   </div>
                 </div>
                 {(() => {
