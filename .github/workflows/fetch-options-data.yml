@@ -77,12 +77,13 @@ jobs:
             git rm -rf .
           fi
           
-          # 5. Restore generated data files
+          # 6. Restore generated data files and create vercel.json to ignore Vercel builds on data branch
           mkdir -p data
           cp /tmp/options_data_backup/* data/
+          echo '{"ignoreCommand": "true"}' > vercel.json
           
-          # 6. Commit and push
-          git add data/options_data.json data/kronos_forecast.json
+          # 7. Commit and push
+          git add data/options_data.json data/kronos_forecast.json vercel.json
           
           # Check if there are differences to commit
           if git diff --quiet && git diff --staged --quiet; then
