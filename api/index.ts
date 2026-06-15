@@ -34,7 +34,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const quotes = await Promise.all(
         symbols.map(async (symbol) => {
           try {
-            const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`);
+            const response = await fetch(
+              `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`,
+              {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+              }
+            );
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             const meta = data?.chart?.result?.[0]?.meta;

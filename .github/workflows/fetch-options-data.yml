@@ -63,14 +63,17 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 3. Fetch remote data branch to check if it exists
+          # 3. Clean master working tree to prevent checkout conflicts
+          git reset --hard HEAD
+          
+          # 4. Fetch remote data branch to check if it exists
           git fetch origin data || true
           
-          # 4. Checkout or create data branch
+          # 5. Checkout or create data branch
           if git show-ref --quiet refs/remotes/origin/data; then
-            git checkout -B data origin/data
+            git checkout -f -B data origin/data
           else
-            git checkout --orphan data
+            git checkout -f --orphan data
             git rm -rf .
           fi
           
