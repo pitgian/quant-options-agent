@@ -2,6 +2,11 @@
   "buildCommand": "npm run build",
   "ignoreCommand": "git diff HEAD^ HEAD --quiet -- . ':!data'",
   "outputDirectory": "dist",
+  "git": {
+    "deploymentEnabled": {
+      "master": true
+    }
+  },
   "functions": {
     "api/index.ts": {
       "maxDuration": 5
