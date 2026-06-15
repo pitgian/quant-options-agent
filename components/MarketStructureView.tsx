@@ -153,11 +153,15 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
   // ---- Active Kronos Forecast based on timeframe selection ----
   const activeKronosForecast = useMemo(() => {
-    if (!kronosForecast) return null;
+    if (!kronosForecast || !etfData || !etfData.spot) return null;
     const biasItem = market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
     if (!biasItem || !biasItem.candles || biasItem.candles.length === 0) return null;
 
-    const lastPrice = biasItem.last_price;
+    const forecastLastPrice = biasItem.last_price;
+    const liveEtfPrice = etfData.spot;
+    const scaleRatio = liveEtfPrice / forecastLastPrice;
+
+    const lastPrice = liveEtfPrice; // scale start price to match current live spot
 
     let candleCount = 4;
     if (kronosTimeframe === '15m') candleCount = 1;
@@ -170,9 +174,18 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     const sliced = biasItem.candles.slice(0, candleCount);
     if (sliced.length === 0) return null;
 
-    const targetPrice = sliced[sliced.length - 1].close;
-    const expectedHigh = Math.max(...sliced.map(c => c.high));
-    const expectedLow = Math.min(...sliced.map(c => c.low));
+    // Scale candles dynamically
+    const scaledCandles = sliced.map(c => ({
+      ...c,
+      open: c.open * scaleRatio,
+      high: c.high * scaleRatio,
+      low: c.low * scaleRatio,
+      close: c.close * scaleRatio
+    }));
+
+    const targetPrice = scaledCandles[scaledCandles.length - 1].close;
+    const expectedHigh = Math.max(...scaledCandles.map(c => c.high));
+    const expectedLow = Math.min(...scaledCandles.map(c => c.low));
     const volatilityPct = ((expectedHigh - expectedLow) / lastPrice) * 100;
     const deltaPct = ((targetPrice - lastPrice) / lastPrice) * 100;
 
@@ -191,9 +204,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       volatilityPct,
       trendBias,
       strengthPct: deltaPct,
-      candles: sliced
+      candles: scaledCandles
     };
-  }, [kronosForecast, market, kronosTimeframe]);
+  }, [kronosForecast, market, kronosTimeframe, etfData]);
 
   // ---- Kronos expected price range in Index terms ----
   const kronosRange = useMemo(() => {

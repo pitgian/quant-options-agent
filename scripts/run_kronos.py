@@ -16,6 +16,28 @@ from model.kronos import Kronos, KronosTokenizer, KronosPredictor
 # Output JSON file path
 OUTPUT_PATH = os.path.join(scripts_dir, "../data/kronos_forecast.json")
 
+def get_futures_to_etf_ratio(futures_symbol: str, etf_symbol: str, default_ratio: float) -> float:
+    try:
+        f_ticker = yf.Ticker(futures_symbol)
+        e_ticker = yf.Ticker(etf_symbol)
+        f_hist = f_ticker.history(period="5d")
+        e_hist = e_ticker.history(period="5d")
+        if not f_hist.empty and not e_hist.empty:
+            # Align on date indices
+            common_dates = f_hist.index.intersection(e_hist.index)
+            if not common_dates.empty:
+                last_date = common_dates[-1]
+                f_close = float(f_hist.loc[last_date, 'Close'])
+                e_close = float(e_hist.loc[last_date, 'Close'])
+                if f_close > 0 and e_close > 0:
+                    ratio = f_close / e_close
+                    print(f"Dynamic futures ratio for {futures_symbol}/{etf_symbol} calculated on {last_date.date()}: {ratio:.4f}")
+                    return ratio
+    except Exception as e:
+        print(f"Error computing dynamic futures ratio: {e}")
+    return default_ratio
+
+
 def get_market_bias(ticker, model, tokenizer, device):
     print(f"\n--- Fetching historical data for {ticker} ---")
     
@@ -30,7 +52,13 @@ def get_market_bias(ticker, model, tokenizer, device):
     }
     
     fetch_ticker = futures_map.get(ticker, ticker)
-    ratio = ratio_map.get(ticker, 1.0)
+    
+    # Calculate ratio dynamically using last regular session completed closes
+    if ticker in futures_map:
+        default_ratio = ratio_map.get(ticker, 1.0)
+        ratio = get_futures_to_etf_ratio(fetch_ticker, ticker, default_ratio)
+    else:
+        ratio = 1.0
     
     # Download last 5 days of 15m data for the mapped ticker
     df = yf.download(fetch_ticker, period="5d", interval="15m")

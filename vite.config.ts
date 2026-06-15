@@ -21,13 +21,13 @@ export default defineConfig(({ mode }) => {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 try {
-                  // Fetch ES=F and NQ=F quotes in parallel
-                  const symbols = ['ES=F', 'NQ=F'];
+                  // Fetch SPY and QQQ quotes in parallel with pre-market data
+                  const symbols = ['SPY', 'QQQ'];
                   const quotes = await Promise.all(
                     symbols.map(async (symbol) => {
                       try {
                         const response = await fetch(
-                          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d`,
+                          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d&includePrePost=true`,
                           {
                             headers: {
                               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -36,8 +36,21 @@ export default defineConfig(({ mode }) => {
                         );
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         const data = await response.json();
-                        const meta = data?.chart?.result?.[0]?.meta;
-                        return { symbol, price: meta?.regularMarketPrice || null };
+                        const result = data?.chart?.result?.[0];
+                        const meta = result?.meta;
+                        const closes = result?.indicators?.quote?.[0]?.close || [];
+                        
+                        let price = null;
+                        for (let i = closes.length - 1; i >= 0; i--) {
+                          if (closes[i] !== null && closes[i] !== undefined) {
+                            price = closes[i];
+                            break;
+                          }
+                        }
+                        if (price === null) {
+                          price = meta?.regularMarketPrice || null;
+                        }
+                        return { symbol, price };
                       } catch (err) {
                         console.error(`Error fetching ${symbol} in dev server:`, err);
                         return { symbol, price: null };
@@ -45,18 +58,18 @@ export default defineConfig(({ mode }) => {
                     })
                   );
 
-                  const esPrice = quotes.find(q => q.symbol === 'ES=F')?.price || null;
-                  const nqPrice = quotes.find(q => q.symbol === 'NQ=F')?.price || null;
+                  const spyPrice = quotes.find(q => q.symbol === 'SPY')?.price || null;
+                  const qqqPrice = quotes.find(q => q.symbol === 'QQQ')?.price || null;
 
-                  // Map ETF prices using standard ratios
-                  const SPY_RATIO = 10.09;
-                  const QQQ_RATIO = 41.57;
+                  // Use standard completed-close cash ratios to derive index spot prices
+                  const SPX_SPY_RATIO = 10.024;
+                  const NDX_QQQ_RATIO = 41.121;
 
                   const spotData = {
-                    SPX: esPrice,
-                    NDX: nqPrice,
-                    SPY: esPrice ? Number((esPrice / SPY_RATIO).toFixed(2)) : null,
-                    QQQ: nqPrice ? Number((nqPrice / QQQ_RATIO).toFixed(2)) : null,
+                    SPX: spyPrice ? Number((spyPrice * SPX_SPY_RATIO).toFixed(2)) : null,
+                    NDX: qqqPrice ? Number((qqqPrice * NDX_QQQ_RATIO).toFixed(2)) : null,
+                    SPY: spyPrice,
+                    QQQ: qqqPrice,
                     timestamp: new Date().toISOString()
                   };
 
