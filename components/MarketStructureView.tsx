@@ -989,6 +989,10 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 const isLVN = !!lvnZone;
                 const isTrough = nodes.lvnStrikes.has(d.strike);
                 const isInKronosRange = !!(kronosRange && d.strike >= kronosRange.low && d.strike <= kronosRange.high);
+                const flipPoint = indexData?.gexRegime?.flipPoint;
+                const isFlipRow = flipPoint
+                  ? Math.abs(d.strike - flipPoint) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint)))
+                  : false;
 
                 const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
                 const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
@@ -998,6 +1002,8 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 let rowBg = 'transparent';
                 if (isClosest) {
                   rowBg = 'rgba(234,179,8,0.2)'; // Yellow highlight for spot price
+                } else if (isFlipRow) {
+                  rowBg = 'rgba(249,115,22,0.08)'; // Orange highlight for GEX Flip row
                 } else if (isInKronosRange) {
                   if (isHVN) {
                     rowBg = 'rgba(59,130,246,0.12)'; // Soft blue base + indigo HVN blend
@@ -1018,6 +1024,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 if (isClosest) {
                   borderTopStyle = '1px solid rgba(234,179,8,0.45)';
                   borderBottomStyle = '1px solid rgba(234,179,8,0.45)';
+                } else if (isFlipRow) {
+                  borderTopStyle = '1px dashed rgba(249,115,22,0.5)';
+                  borderBottomStyle = '1px dashed rgba(249,115,22,0.5)';
                 } else {
                   if (kronosBoundaries && d.strike === kronosBoundaries.max) {
                     borderTopStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
@@ -1062,6 +1071,11 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
                     {/* Column 2: Center Strike Price */}
                     <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
+                      {isFlipRow && rowHeight >= 18 && (
+                        <span className="absolute left-0.5 text-[6.5px] font-bold text-orange-400 bg-orange-950/40 border border-orange-500/30 px-1 rounded z-20">
+                          ⚡ FLIP
+                        </span>
+                      )}
                       <span
                         className={`font-bold transition-colors shrink-0 ${
                           rowHeight < 15 ? 'text-[8px]' :
