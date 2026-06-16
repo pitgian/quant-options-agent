@@ -1337,11 +1337,14 @@ def fetch_symbol_data(
         for opt in exp_info["options"]
     })
     
-    # Pre-calculate multiple timeframes for options expiry alignment
+    # Pre-calculate multiple timeframes for options expiry alignment and manual selector
+    futures_volume_profile_1d = fetch_futures_volume_profile(symbol, spot, strikes, period="1d", interval="5m")
     futures_volume_profile_2d = fetch_futures_volume_profile(symbol, spot, strikes, period="2d", interval="15m")
+    futures_volume_profile_5d = fetch_futures_volume_profile(symbol, spot, strikes, period="5d", interval="15m")
     futures_volume_profile_7d = fetch_futures_volume_profile(symbol, spot, strikes, period="7d", interval="30m")
     futures_volume_profile_30d = fetch_futures_volume_profile(symbol, spot, strikes, period="30d", interval="1h")
     futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, period="90d", interval="1d")
+    futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="max", interval="1d")
 
     result = {
         "spot": spot,
@@ -1351,10 +1354,13 @@ def fetch_symbol_data(
         "gex_flip_point": gex_flip_point,
         "futures_volume_profile": futures_volume_profile_30d, # Keep legacy 30d profile as default
         "futures_volume_profiles": {
+            "1d": futures_volume_profile_1d,
             "2d": futures_volume_profile_2d,
+            "5d": futures_volume_profile_5d,
             "7d": futures_volume_profile_7d,
             "30d": futures_volume_profile_30d,
             "90d": futures_volume_profile_90d,
+            "max": futures_volume_profile_max,
         },
         "expiries": raw_expiries,
         "walls": {

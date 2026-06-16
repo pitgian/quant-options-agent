@@ -57,7 +57,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const [zoomPct, setZoomPct] = useState(3.0);
   const [rowHeight, setRowHeight] = useState(22);
   const [flashVisible, setFlashVisible] = useState(false);
-  const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '2d' | '7d' | '30d' | '90d'>('auto');
+  const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max'>('auto');
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [showKronosDetails, setShowKronosDetails] = useState(false);
   const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD'>('1h');
@@ -580,14 +580,17 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
               <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Futures:</span>
               <select
                 value={selectedFuturesTf}
-                onChange={(e) => setSelectedFuturesTf(e.target.value as 'auto' | '2d' | '7d' | '30d' | '90d')}
+                onChange={(e) => setSelectedFuturesTf(e.target.value as 'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max')}
                 className="bg-slate-900 border border-slate-850 text-gray-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
               >
                 <option value="auto">Auto (Allineato)</option>
+                <option value="1d">Giornaliero (5m)</option>
                 <option value="2d">2 Giorni (15m)</option>
+                <option value="5d">Settimanale (15m)</option>
                 <option value="7d">7 Giorni (30m)</option>
-                <option value="30d">30 Giorni (1h)</option>
-                <option value="90d">90 Giorni (1d)</option>
+                <option value="30d">Mensile (1h)</option>
+                <option value="90d">Trimestrale (1d)</option>
+                <option value="max">Cumulativo (Max)</option>
               </select>
             </div>
 
@@ -956,9 +959,13 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                           } else {
                             tf = selectedFuturesTf;
                           }
-                          return tf === '2d' ? '2 Giorni' :
+                          return tf === '1d' ? 'Giornaliero' :
+                                 tf === '2d' ? '2 Giorni' :
+                                 tf === '5d' ? 'Settimanale' :
                                  tf === '7d' ? '7 Giorni' :
-                                 tf === '30d' ? '30 Giorni' : '90 Giorni';
+                                 tf === '30d' ? 'Mensile' :
+                                 tf === '90d' ? 'Trimestrale' :
+                                 tf === 'max' ? 'Cumulativo' : tf;
                         })()
                       })
                     </span>
