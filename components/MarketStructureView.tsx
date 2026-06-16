@@ -499,6 +499,11 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const etfSpot = etfData.spot;
   const ratio = indexSpot / etfSpot;
 
+  const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
+  const etfSymbol = market === 'SP500' ? 'SPY' : 'QQQ';
+  const cashSpot = liveSpot[indexSymbol as keyof typeof liveSpot] || indexSpot;
+  const etfCashSpot = liveSpot[etfSymbol as keyof typeof liveSpot] || etfSpot;
+
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117]">
       {/* ================================================================== */}
@@ -1166,9 +1171,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       >
                         {d.futuresStrike.toFixed(0)} | {d.strike.toFixed(0)} | {d.etfStrike.toFixed(0)}
                       </span>
-                      {isClosest && rowHeight >= 28 && (
-                        <span className="absolute -bottom-2 text-[7px] text-blue-400 font-bold uppercase tracking-wider bg-[#0d1117] px-1 rounded border border-blue-500/30 z-10">
-                          Spot
+                      {isClosest && rowHeight >= 18 && (
+                        <span className="absolute -bottom-3 text-[6.5px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
+                          Spot: F: {indexSpot.toFixed(1)} | C: {cashSpot.toFixed(1)} | E: {etfCashSpot.toFixed(2)}
                         </span>
                       )}
                     </div>
