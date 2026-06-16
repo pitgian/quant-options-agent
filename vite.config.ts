@@ -21,8 +21,8 @@ export default defineConfig(({ mode }) => {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 try {
-                  // Fetch SPY and QQQ quotes in parallel with pre-market data
-                  const symbols = ['SPY', 'QQQ'];
+                  // Fetch SPY, QQQ, ES=F, and NQ=F quotes in parallel with pre-market data
+                  const symbols = ['SPY', 'QQQ', 'ES=F', 'NQ=F'];
                   const quotes = await Promise.all(
                     symbols.map(async (symbol) => {
                       try {
@@ -60,6 +60,8 @@ export default defineConfig(({ mode }) => {
 
                   const spyPrice = quotes.find(q => q.symbol === 'SPY')?.price || null;
                   const qqqPrice = quotes.find(q => q.symbol === 'QQQ')?.price || null;
+                  const esPrice = quotes.find(q => q.symbol === 'ES=F')?.price || null;
+                  const nqPrice = quotes.find(q => q.symbol === 'NQ=F')?.price || null;
 
                   // Use standard completed-close cash ratios to derive index spot prices
                   const SPX_SPY_RATIO = 10.024;
@@ -70,6 +72,8 @@ export default defineConfig(({ mode }) => {
                     NDX: qqqPrice ? Number((qqqPrice * NDX_QQQ_RATIO).toFixed(2)) : null,
                     SPY: spyPrice,
                     QQQ: qqqPrice,
+                    ES: esPrice,
+                    NQ: nqPrice,
                     timestamp: new Date().toISOString()
                   };
 
