@@ -80,7 +80,7 @@ jobs:
           # 6. Restore generated data files and create vercel.json to ignore Vercel builds on data branch
           mkdir -p data
           cp /tmp/options_data_backup/* data/
-          echo '{"ignoreCommand": "true"}' > vercel.json
+          echo '{"ignoreCommand": "true", "git": {"deploymentEnabled": {"master": true}}}' > vercel.json
           
           # 7. Commit and push
           git add data/options_data.json data/kronos_forecast.json vercel.json
