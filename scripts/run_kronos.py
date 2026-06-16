@@ -106,10 +106,10 @@ def get_market_bias(ticker, model, tokenizer, device):
         x_timestamp=x_timestamp, 
         y_timestamp=y_timestamp, 
         pred_len=pred_len, 
-        T=0.5,           # Lower temperature for more deterministic/stable forecast
+        T=0.7,           # Temperature balanced for realistic volatility without too much noise
         top_k=5, 
         top_p=0.9, 
-        sample_count=3,  # Run 3 samples and average them to reduce noise
+        sample_count=1,  # Single pure sample for realistic candle swings and expected range
         verbose=False
     )
     
