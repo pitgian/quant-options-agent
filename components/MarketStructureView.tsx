@@ -1050,6 +1050,23 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       borderRight: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
                     }}
                   >
+                    {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
+                    {isFlipRow && rowHeight >= 18 && (
+                      <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[6.5px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
+                        ⚡ GEX Flip: ${indexData.gexRegime.flipPoint.toFixed(0)} / ${(indexData.gexRegime.flipPoint / ratio).toFixed(1)}
+                      </span>
+                    )}
+                    {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
+                      <span className="absolute left-2 -top-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
+                        🎯 Kronos High: ${kronosRange.high.toFixed(0)} / ${(kronosRange.high / ratio).toFixed(1)}
+                      </span>
+                    )}
+                    {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
+                      <span className="absolute left-2 -bottom-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
+                        🎯 Kronos Low: ${kronosRange.low.toFixed(0)} / ${(kronosRange.low / ratio).toFixed(1)}
+                      </span>
+                    )}
+
                     {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
                     <div className="flex justify-end w-full pr-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                       <div
@@ -1071,11 +1088,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
                     {/* Column 2: Center Strike Price */}
                     <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
-                      {isFlipRow && rowHeight >= 18 && (
-                        <span className="absolute left-0.5 text-[6.5px] font-bold text-orange-400 bg-orange-950/40 border border-orange-500/30 px-1 rounded z-20">
-                          ⚡ FLIP
-                        </span>
-                      )}
                       <span
                         className={`font-bold transition-colors shrink-0 ${
                           rowHeight < 15 ? 'text-[8px]' :
@@ -1095,16 +1107,6 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       {isClosest && rowHeight >= 28 && (
                         <span className="absolute -bottom-2 text-[7px] text-blue-400 font-bold uppercase tracking-wider bg-[#0d1117] px-1 rounded border border-blue-500/30 z-10">
                           Spot
-                        </span>
-                      )}
-                      {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
-                        <span className="absolute -top-3.5 left-1/2 transform -translate-x-1/2 text-[7px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1 py-0.5 rounded shadow-lg shadow-blue-500/30 border border-blue-400 whitespace-nowrap z-25">
-                          🎯 Kronos High: ${kronosRange.high.toFixed(0)} / ${(kronosRange.high / ratio).toFixed(1)}
-                        </span>
-                      )}
-                      {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
-                        <span className="absolute -bottom-3.5 left-1/2 transform -translate-x-1/2 text-[7px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1 py-0.5 rounded shadow-lg shadow-blue-500/30 border border-blue-400 whitespace-nowrap z-25">
-                          🎯 Kronos Low: ${kronosRange.low.toFixed(0)} / ${(kronosRange.low / ratio).toFixed(1)}
                         </span>
                       )}
                     </div>
