@@ -14,9 +14,20 @@ import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/d
 const KRONOS_GITHUB_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
-const getKronosUrl = () => {
-  const isDev = import.meta.env.DEV;
-  return isDev ? KRONOS_LOCAL_URL : KRONOS_GITHUB_URL;
+const fetchKronosForecast = async (): Promise<Response | null> => {
+  try {
+    const res = await fetch(`${KRONOS_GITHUB_URL}?t=${Date.now()}`);
+    if (res.ok) return res;
+  } catch (e) {
+    console.warn('Failed to fetch Kronos forecast from GitHub, falling back to local:', e);
+  }
+  try {
+    const res = await fetch(`${KRONOS_LOCAL_URL}?t=${Date.now()}`);
+    if (res.ok) return res;
+  } catch (e) {
+    console.error('All Kronos forecast sources failed:', e);
+  }
+  return null;
 };
 
 // ============================================================================
@@ -144,7 +155,7 @@ export function useOptionsData(): UseOptionsDataReturn {
       const [etfResult, indexResult, kronosRes] = await Promise.all([
         fetchOptionsData(etfSymbol, expiryFilter, forceRefresh),
         fetchOptionsData(indexSymbol, expiryFilter, forceRefresh),
-        fetch(`${getKronosUrl()}?t=${Date.now()}`).catch(() => null)
+        fetchKronosForecast()
       ]);
 
       // GUARD: market may have changed during fetch
@@ -194,7 +205,7 @@ export function useOptionsData(): UseOptionsDataReturn {
       const [etfResult, indexResult, kronosRes] = await Promise.all([
         fetchOptionsData(etfSymbol, expiryFilter, true),
         fetchOptionsData(indexSymbol, expiryFilter, true),
-        fetch(`${getKronosUrl()}?t=${Date.now()}`).catch(() => null)
+        fetchKronosForecast()
       ]);
 
       // GUARD: Only update if market hasn't changed
