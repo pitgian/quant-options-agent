@@ -80,6 +80,16 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     }
   }, [showUpdatedFlash]);
 
+  // ---- Compute Basis Multiplier between Futures and Cash ----
+  const basisMultiplier = useMemo(() => {
+    if (!indexData) return 1;
+    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+    const cashSpot = liveSpot[indexSymbol as keyof typeof liveSpot] || indexData.spot;
+    const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
+    return (cashSpot && cashSpot > 0) ? (futuresSpot / cashSpot) : 1;
+  }, [liveSpot, indexData, market]);
+
   // ---- Extract and Merge Profile Data ----
   const profileData = useMemo(() => {
     if (!indexData || !etfData) return [];
@@ -87,6 +97,10 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     const indexSpot = indexData.spot;
     const etfSpot = etfData.spot;
     const ratio = indexSpot / etfSpot;
+
+    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+    const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexSpot;
 
     // Get all strikes from the Index data and sort them ascending
     const strikes = indexData.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
@@ -134,18 +148,23 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
         futuresVolume = exactVal;
       }
 
-      const distancePct = ((strike - indexSpot) / indexSpot) * 100;
+      // Compute futures-equivalent strike price
+      const futuresStrike = strike * basisMultiplier;
+
+      // Distance should be calculated using the futures-equivalent strike compared to the futures spot price
+      const distancePct = ((futuresStrike - futuresSpot) / futuresSpot) * 100;
 
       return {
         strike,
         etfStrike,
+        futuresStrike,
         indexVolume,
         etfVolume,
         futuresVolume,
         distancePct,
       };
     });
-  }, [indexData, etfData, expiryFilter, selectedFuturesTf]);
+  }, [indexData, etfData, expiryFilter, selectedFuturesTf, basisMultiplier, liveSpot, market]);
 
   // ---- Filter profile based on zoom percentage around spot ----
   const zoomedProfile = useMemo(() => {
@@ -228,7 +247,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   // ---- Calculate visual boundaries for Kronos expected range ----
   const kronosBoundaries = useMemo(() => {
     if (!kronosRange || zoomedProfile.length === 0) return null;
-    const strikesInRange = zoomedProfile.filter(d => d.strike >= kronosRange.low && d.strike <= kronosRange.high);
+    const strikesInRange = zoomedProfile.filter(d => d.futuresStrike >= kronosRange.low && d.futuresStrike <= kronosRange.high);
     if (strikesInRange.length === 0) return null;
     const strikes = strikesInRange.map(d => d.strike);
     return {
@@ -335,6 +354,8 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
     const strikes = zoomedProfile.map(d => d.strike).sort((a, b) => a - b);
     const indexSpot = indexData.spot;
+    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
+    const cashSpot = liveSpot[indexSymbol as keyof typeof liveSpot] || indexSpot;
 
     const areas: {
       id: number;
@@ -385,9 +406,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       }
 
       let status: 'current' | 'above' | 'below' = 'above';
-      if (indexSpot >= range.low && indexSpot <= range.high) {
+      if (cashSpot >= range.low && cashSpot <= range.high) {
         status = 'current';
-      } else if (indexSpot < range.low) {
+      } else if (cashSpot < range.low) {
         status = 'above';
       } else {
         status = 'below';
@@ -404,15 +425,17 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     });
 
     return areas;
-  }, [mergedZones, zoomedProfile, indexData]);
+  }, [mergedZones, zoomedProfile, indexData, liveSpot, market]);
 
   // ---- Actionable Trading Analysis Card ----
   const analysis = useMemo(() => {
     if (!indexData || fairValueAreas.length === 0) return null;
-    const indexSpot = indexData.spot;
+    
+    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
+    const cashSpot = liveSpot[indexSymbol as keyof typeof liveSpot] || indexData.spot;
 
     const currentArea = fairValueAreas.find(a => a.status === 'current');
-    const currentLvnZone = mergedZones.find(z => indexSpot >= z.low && indexSpot <= z.high);
+    const currentLvnZone = mergedZones.find(z => cashSpot >= z.low && cashSpot <= z.high);
 
     if (currentLvnZone) {
       return {
@@ -429,12 +452,12 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       };
     }
 
-    const distanceToUpper = currentArea.high - indexSpot;
-    const distanceToLower = indexSpot - currentArea.low;
+    const distanceToUpper = currentArea.high - cashSpot;
+    const distanceToLower = cashSpot - currentArea.low;
 
     const nearestBoundary = distanceToUpper < distanceToLower
-      ? { low: currentArea.high, high: currentArea.high, type: 'Confine Superiore (LVN)', dist: distanceToUpper, pct: (distanceToUpper / indexSpot) * 100 }
-      : { low: currentArea.low, high: currentArea.low, type: 'Confine Inferiore (LVN)', dist: distanceToLower, pct: (distanceToLower / indexSpot) * 100 };
+      ? { low: currentArea.high, high: currentArea.high, type: 'Confine Superiore (LVN)', dist: distanceToUpper, pct: (distanceToUpper / cashSpot) * 100 }
+      : { low: currentArea.low, high: currentArea.low, type: 'Confine Inferiore (LVN)', dist: distanceToLower, pct: (distanceToLower / cashSpot) * 100 };
 
     const lvnZone = mergedZones.find(z => z.low === nearestBoundary.low || z.high === nearestBoundary.high);
     const boundaryText = lvnZone
@@ -453,7 +476,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       nearestBoundary: lvnZone ? { ...lvnZone, type: nearestBoundary.type, pct: nearestBoundary.pct } : null,
       suggestion,
     };
-  }, [fairValueAreas, mergedZones, indexData]);
+  }, [fairValueAreas, mergedZones, indexData, liveSpot, market]);
 
   // ---- Max values for bar sizing ----
   const { maxEtfVolume, maxIndexVolume, maxFuturesVolume } = useMemo(() => {
@@ -882,11 +905,19 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       </div>
 
                       {/* Expected Price Range */}
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-gray-400 font-medium">Range Atteso ({kronosTimeframe}):</span>
-                        <span className="font-mono font-semibold text-gray-200">
-                          ${activeKronosForecast.expectedLow.toFixed(1)} - ${activeKronosForecast.expectedHigh.toFixed(1)}
-                        </span>
+                      <div className="flex flex-col gap-1 mt-1.5 pt-1.5 border-t border-slate-800/30">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 font-medium">Range Atteso ({kronosTimeframe}):</span>
+                          <span className="font-mono font-semibold text-blue-400">
+                            F: ${kronosRange ? kronosRange.low.toFixed(0) : '0'} - ${kronosRange ? kronosRange.high.toFixed(0) : '0'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-gray-500">Equivalenti (C | E):</span>
+                          <span className="font-mono text-gray-400 text-[10px]">
+                            C: ${kronosRange ? (kronosRange.low / basisMultiplier).toFixed(0) : '0'} - ${kronosRange ? (kronosRange.high / basisMultiplier).toFixed(0) : '0'} | E: ${activeKronosForecast.expectedLow.toFixed(1)} - ${activeKronosForecast.expectedHigh.toFixed(1)}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Expected Volatility */}
@@ -1004,9 +1035,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             </div>
 
             {/* Header labels for profiles */}
-            <div className="grid grid-cols-[1fr_110px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
+            <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
               <span className="text-right">Opzioni ETF (OI+Vol)</span>
-              <span className="text-center">Strike</span>
+              <span className="text-center">Strike (F | C | E)</span>
               <span className="text-left">Opzioni Indice (OI+Vol)</span>
               <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
             </div>
@@ -1070,7 +1101,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 return (
                   <div
                     key={d.strike}
-                    className="relative grid grid-cols-[1fr_110px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
+                    className="relative grid grid-cols-[1fr_150px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
                     title={isInKronosRange ? `All'interno del Range Atteso di Kronos AI (${kronosTimeframe})` : undefined}
                     style={{
                       height: `${rowHeight}px`,
@@ -1084,17 +1115,17 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                     {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
                     {isFlipRow && rowHeight >= 18 && (
                       <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[6.5px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
-                        ⚡ GEX Flip: ${indexData.gexRegime.flipPoint.toFixed(0)} / ${(indexData.gexRegime.flipPoint / ratio).toFixed(1)}
+                        ⚡ GEX Flip: F: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)} | C: ${indexData.gexRegime.flipPoint.toFixed(0)} | E: ${(indexData.gexRegime.flipPoint / ratio).toFixed(1)}
                       </span>
                     )}
                     {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
                       <span className="absolute left-2 -top-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos High: ${kronosRange.high.toFixed(0)} / ${(kronosRange.high / ratio).toFixed(1)}
+                        🎯 Kronos High: F: ${kronosRange.high.toFixed(0)} | C: ${(kronosRange.high / basisMultiplier).toFixed(0)} | E: ${(kronosRange.high / ratio).toFixed(1)}
                       </span>
                     )}
                     {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
                       <span className="absolute left-2 -bottom-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos Low: ${kronosRange.low.toFixed(0)} / ${(kronosRange.low / ratio).toFixed(1)}
+                        🎯 Kronos Low: F: ${kronosRange.low.toFixed(0)} | C: ${(kronosRange.low / basisMultiplier).toFixed(0)} | E: ${(kronosRange.low / ratio).toFixed(1)}
                       </span>
                     )}
 
@@ -1121,19 +1152,19 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                     <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
                       <span
                         className={`font-bold transition-colors shrink-0 ${
-                          rowHeight < 15 ? 'text-[8px]' :
-                          rowHeight < 20 ? 'text-[9px]' :
-                          rowHeight < 26 ? 'text-[10px]' : 'text-xs'
+                          rowHeight < 15 ? 'text-[7.5px]' :
+                          rowHeight < 20 ? 'text-[8.5px]' :
+                          rowHeight < 26 ? 'text-[9.5px]' : 'text-[11px]'
                         }`}
                         style={{
                           color: isClosest ? '#ffffff' : isHVN ? '#818cf8' : isLVN ? '#fb7185' : '#94a3b8',
                           backgroundColor: isClosest ? '#2563eb' : 'transparent',
-                          padding: isClosest ? '1px 5px' : '0',
+                          padding: isClosest ? '1.5px 5px' : '0',
                           borderRadius: isClosest ? '4px' : '0',
                           lineHeight: 1,
                         }}
                       >
-                        ${d.strike.toFixed(0)} / ${d.etfStrike.toFixed(0)}
+                        {d.futuresStrike.toFixed(0)} | {d.strike.toFixed(0)} | {d.etfStrike.toFixed(0)}
                       </span>
                       {isClosest && rowHeight >= 28 && (
                         <span className="absolute -bottom-2 text-[7px] text-blue-400 font-bold uppercase tracking-wider bg-[#0d1117] px-1 rounded border border-blue-500/30 z-10">
@@ -1361,6 +1392,21 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                       <h4 className="font-bold text-blue-400 mb-0.5">🤖 Range Atteso Kronos AI</h4>
                       <p className="leading-relaxed text-[11px] text-gray-455">
                         Area sfumata blu racchiusa da parentesi sul grafico. Indica i limiti statistici di oscillazione previsti dall'IA per il timeframe attivo. Ottimo da usare in confluenza con le barriere opzioni.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-bold text-slate-350 mb-0.5">📊 Triplo Allineamento Strike (F | C | E)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-455">
+                        Al centro del grafico sono visualizzati tre prezzi per ogni riga di strike:
+                        <br />
+                        • <strong>F (Futures)</strong>: Il livello di prezzo equivalente sul contratto futures (ES / NQ) rettificato per la base attuale.
+                        <br />
+                        • <strong>C (Cash Index)</strong>: Lo strike effettivo delle opzioni sull'indice cash (SPX / NDX).
+                        <br />
+                        • <strong>E (ETF)</strong>: Lo strike effettivo delle opzioni sull'ETF corrispondente (SPY / QQQ).
+                        <br />
+                        Questo consente di individuare all'istante le confluenze volumetriche e delle opzioni direttamente sul prezzo dei futures che scambi.
                       </p>
                     </div>
                   </>
