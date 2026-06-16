@@ -1268,50 +1268,74 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
               >
                 <div className="flex items-center gap-2">
                   <span className="text-amber-400 text-sm">💡</span>
-                  <span className="text-xs font-bold uppercase tracking-wider text-gray-300">Significato dei Livelli (Legenda)</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-gray-300">Guida Operativa & Legenda</span>
                 </div>
                 <span className={`text-xs text-gray-500 transition-transform duration-300 ${isGuideOpen ? 'rotate-180' : ''}`}>
                   ▼
                 </span>
               </button>
               
-              <div className="flex-1 overflow-y-auto px-5 pb-5 pt-2 border-t border-slate-800/50 text-xs text-gray-400 space-y-3.5">
+              <div className="flex-1 overflow-y-auto px-5 pb-5 pt-2 border-t border-slate-800/50 text-xs text-gray-400 space-y-4">
                 {isGuideOpen ? (
                   <>
+                    <div className="border-b border-slate-850 pb-3">
+                      <h4 className="font-bold text-indigo-400 mb-1 uppercase tracking-wide">🎯 WORKFLOW OPERATIVO (Vantaggio Statistico)</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-300 mb-2">
+                        <strong>1. Analisi del Regime (GEX):</strong> Sopra il GEX Flip (Positive Gamma) prevale stabilità e compressione di volatilità. Sotto il GEX Flip (Negative Gamma) si attivano espansioni repentine e trend direzionali accelerati dai Market Maker.
+                      </p>
+                      <p className="leading-relaxed text-[11px] text-gray-300 mb-2">
+                        <strong>2. Nodi Volumetrici:</strong> Il POC (Point of Control) e gli HVN agiscono come magneti del prezzo (aree ad alto volume). Gli LVN (Low Volume Nodes) indicano vuoti di liquidità: fungono da barriere reattive o zone di accelerazione rapida.
+                      </p>
+                      <p className="leading-relaxed text-[11px] text-gray-300">
+                        <strong>3. Confluenza & Esecuzione:</strong> Cerca ingressi ad alta probabilità (Mean Reversion) quando il prezzo tocca gli estremi del <em>Range Kronos AI</em> in concomitanza con barriere opzioni rilevanti (Call/Put Wall) o POC/HVN, preferibilmente in regime di Gamma Positivo.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-bold text-amber-500 mb-0.5">⚡ GEX Flip Point</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-450">
+                        Livello critico che separa il regime a volatilità controllata (positivo, sopra il flip) dal regime a volatilità esplosiva (negativo, sotto il flip). Guida la scelta tra strategie di rimbalzo o di breakout.
+                      </p>
+                    </div>
+
                     <div>
                       <h4 className="font-bold text-amber-500 mb-0.5">POC Magnete (Point of Control)</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        Il livello con la massima concentrazione di contratti scambiati sul profilo volumi. Rappresenta il "prezzo più equo" accettato dal mercato e agisce come baricentro o magnete del prezzo.
+                      <p className="leading-relaxed text-[11px] text-gray-455">
+                        Prezzo con la massima concentrazione di contratti futures/opzioni scambiati. Funge da baricentro o prezzo di equilibrio verso cui il mercato tende naturalmente a ritornare.
                       </p>
                     </div>
+
                     <div>
                       <h4 className="font-bold text-blue-400 mb-0.5">VAL / VAH (Value Area Boundaries)</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        VAL (Value Area Low) e VAH (Value Area High) delimitano la zona in cui è stato scambiato il 70% dei volumi della sessione (la Value Area). L'uscita da questo range segnala la ricerca di nuove aree di valore e innesca breakout veloci.
+                      <p className="leading-relaxed text-[11px] text-gray-455">
+                        Limiti inferiore (VAL) e superiore (VAH) del 70% dei volumi scambiati. Uscite decise da questo range segnalano squilibri e l'avvio di forti impulsi direzionali.
                       </p>
                     </div>
+
                     <div>
                       <h4 className="font-bold text-purple-400 mb-0.5">HVN (High Volume Node)</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        Nodi ad alto volume. Zone di forte transazione e accettazione del prezzo, dove il mercato tende a consolidare lateralmente (supporti/resistenze statiche).
+                      <p className="leading-relaxed text-[11px] text-gray-455">
+                        Nodi ad alto volume. Rappresentano supporti e resistenze statiche orizzontali solide dove il prezzo tende a rallentare e consolidare in range.
                       </p>
                     </div>
-                    <div>
-                      <h4 className="font-bold text-blue-400 mb-0.5">🎯 Range Atteso Kronos AI</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        Evidenziato sul grafico da un'area sfumata blu racchiusa da parentesi verticali blu e linee orizzontali tratteggiate. Indica la fascia di oscillazione attesa stimata dal modello di intelligenza artificiale per il timeframe selezionato (da 15m a EOD). Consente di verificare a colpo d'occhio se i target attesi coincidono con livelli elevati di Open Interest o volumi storici.
-                      </p>
-                    </div>
+
                     <div>
                       <h4 className="font-bold text-rose-400 mb-0.5">LVN Zone (Low Volume Node)</h4>
-                      <p className="leading-relaxed text-[11px] text-gray-400">
-                        Nodi a basso volume. Aree di vuoto di liquidità e rifiuto strutturale del prezzo, che agiscono come barriere di rimbalzo o acceleratori per breakout rapidi.
+                      <p className="leading-relaxed text-[11px] text-gray-455">
+                        Zone a basso volume scambiato. Essendo vuoti di liquidità, il prezzo tende a rimbalzarvi contro violentemente o ad attraversarle con estrema rapidità.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-bold text-blue-400 mb-0.5">🤖 Range Atteso Kronos AI</h4>
+                      <p className="leading-relaxed text-[11px] text-gray-455">
+                        Area sfumata blu racchiusa da parentesi sul grafico. Indica i limiti statistici di oscillazione previsti dall'IA per il timeframe attivo. Ottimo da usare in confluenza con le barriere opzioni.
                       </p>
                     </div>
                   </>
                 ) : (
                   <div className="text-gray-500 italic flex items-center justify-center h-24">
-                    Clicca su "Significato dei Livelli" per visualizzare le spiegazioni operative.
+                    Clicca su "Guida Operativa & Legenda" per visualizzare le spiegazioni.
                   </div>
                 )}
               </div>
@@ -1326,7 +1350,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       {/* ================================================================== */}
       <footer className="border-t border-gray-800/50 px-4 py-2 mt-auto">
         <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between text-[10px] text-gray-600">
-          <span>Market Structure & Volume Profile</span>
+          <span>Gamma & Volatility Analytics Portal</span>
           {lastRefreshed && (
             <span>Aggiornato il: {lastRefreshed.toLocaleTimeString()}</span>
           )}
