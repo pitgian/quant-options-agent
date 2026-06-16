@@ -585,9 +585,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
               >
                 <option value="auto">Auto (Allineato)</option>
                 <option value="1d">Giornaliero (5m)</option>
-                <option value="2d">2 Giorni (15m)</option>
                 <option value="5d">Settimanale (15m)</option>
-                <option value="7d">7 Giorni (30m)</option>
                 <option value="30d">Mensile (1h)</option>
                 <option value="90d">Trimestrale (1d)</option>
                 <option value="max">Cumulativo (Max)</option>
