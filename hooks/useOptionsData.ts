@@ -291,8 +291,10 @@ export function useOptionsData(): UseOptionsDataReturn {
     
     const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
     const etfSymbol = market === 'SP500' ? 'SPY' : 'QQQ';
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
     
-    const liveIndexPrice = liveSpot[indexSymbol as keyof typeof liveSpot];
+    // Prioritize Futures price (ES/NQ) to derive ETF spot, fallback to cash index (SPX/NDX)
+    const liveIndexPrice = liveSpot[futuresSymbol as keyof typeof liveSpot] || liveSpot[indexSymbol as keyof typeof liveSpot];
     let livePrice: number | null = null;
     
     if (liveIndexPrice && indexData && indexData.spot && etfData.spot) {
@@ -305,12 +307,13 @@ export function useOptionsData(): UseOptionsDataReturn {
     if (!livePrice) return etfData;
     const finalPrice = livePrice;
 
-    // Keep GEX regime in sync with new price and pre-calculated flip point
+    // Use Cash ETF price for GEX regime detection to match options contract settlement
+    const cashPrice = liveSpot[etfSymbol as keyof typeof liveSpot] || etfData.spot;
     const flipPoint = etfData.gexRegime.flipPoint;
     let regime = etfData.gexRegime.regime;
     let label = etfData.gexRegime.label;
     if (flipPoint !== null) {
-      if (finalPrice >= flipPoint) {
+      if (cashPrice >= flipPoint) {
         regime = 'positive';
         label = 'Low Volatility';
       } else {
@@ -341,15 +344,19 @@ export function useOptionsData(): UseOptionsDataReturn {
   const finalIndexData = useMemo(() => {
     if (!indexData) return null;
     const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
-    const livePrice = liveSpot[indexSymbol as keyof typeof liveSpot];
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+
+    // Prioritize Futures price (ES/NQ) as the index spot price, fallback to Cash index (SPX/NDX)
+    const livePrice = liveSpot[futuresSymbol as keyof typeof liveSpot] || liveSpot[indexSymbol as keyof typeof liveSpot];
     if (!livePrice) return indexData;
 
-    // Keep GEX regime in sync with new price and pre-calculated flip point
+    // Use Cash Index price for GEX regime detection to match options contract settlement
+    const cashPrice = liveSpot[indexSymbol as keyof typeof liveSpot] || indexData.spot;
     const flipPoint = indexData.gexRegime.flipPoint;
     let regime = indexData.gexRegime.regime;
     let label = indexData.gexRegime.label;
     if (flipPoint !== null) {
-      if (livePrice >= flipPoint) {
+      if (cashPrice >= flipPoint) {
         regime = 'positive';
         label = 'Low Volatility';
       } else {
