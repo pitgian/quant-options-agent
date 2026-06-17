@@ -240,7 +240,8 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       const etfToFuturesRatio = futuresSpot / etfSpot;
       return {
         low: activeKronosForecast.expectedLow * etfToFuturesRatio,
-        high: activeKronosForecast.expectedHigh * etfToFuturesRatio
+        high: activeKronosForecast.expectedHigh * etfToFuturesRatio,
+        etfToFuturesRatio
       };
     }
     return null;
@@ -1044,7 +1045,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             {/* Header labels for profiles */}
             <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
               <span className="text-right">Opzioni ETF (OI+Vol)</span>
-              <span className="text-center">Strike (F | C | E)</span>
+              <span className="text-center">Strike (F | E)</span>
               <span className="text-left">Opzioni Indice (OI+Vol)</span>
               <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
             </div>
@@ -1052,7 +1053,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             {/* Chart rows */}
             <div className="flex flex-col gap-0.5">
               {zoomedProfile.slice().reverse().map((d) => {
-                const isClosest = Math.abs(d.futuresStrike - indexSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.futuresStrike - indexSpot)));
+                const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+                const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
+                const isClosest = Math.abs(d.futuresStrike - futuresSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.futuresStrike - futuresSpot)));
                 const isHVN = nodes.hvnStrikes.has(d.strike);
                 const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                 const isLVN = !!lvnZone;
@@ -1122,17 +1125,17 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                     {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
                     {isFlipRow && rowHeight >= 18 && (
                       <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[6.5px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
-                        ⚡ GEX Flip: F: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)} | C: ${indexData.gexRegime.flipPoint.toFixed(0)} | E: ${(indexData.gexRegime.flipPoint / ratio).toFixed(1)}
+                        ⚡ GEX Flip: F: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)} | E: ${(indexData.gexRegime.flipPoint / ratio).toFixed(1)}
                       </span>
                     )}
                     {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
                       <span className="absolute left-2 -top-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos High: F: ${kronosRange.high.toFixed(0)} | C: ${(kronosRange.high / basisMultiplier).toFixed(0)} | E: ${(kronosRange.high / ratio).toFixed(1)}
+                        🎯 Kronos High: F: ${kronosRange.high.toFixed(0)} | E: ${(kronosRange.high / kronosRange.etfToFuturesRatio).toFixed(1)}
                       </span>
                     )}
                     {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
                       <span className="absolute left-2 -bottom-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos Low: F: ${kronosRange.low.toFixed(0)} | C: ${(kronosRange.low / basisMultiplier).toFixed(0)} | E: ${(kronosRange.low / ratio).toFixed(1)}
+                        🎯 Kronos Low: F: ${kronosRange.low.toFixed(0)} | E: ${(kronosRange.low / kronosRange.etfToFuturesRatio).toFixed(1)}
                       </span>
                     )}
 
@@ -1171,11 +1174,14 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                           lineHeight: 1,
                         }}
                       >
-                        {d.futuresStrike.toFixed(0)} | {d.strike.toFixed(0)} | {d.etfStrike.toFixed(0)}
+                        F: {d.futuresStrike.toFixed(0)} | E: {d.etfStrike.toFixed(0)}
                       </span>
                       {isClosest && rowHeight >= 18 && (
                         <span className="absolute -bottom-3 text-[6.5px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
-                          Spot: F: {indexSpot.toFixed(1)} | C: {cashSpot.toFixed(1)} | E: {etfCashSpot.toFixed(2)}
+                          Spot: F: {(() => {
+                            const fs = market === 'SP500' ? 'ES' : 'NQ';
+                            return (liveSpot[fs as keyof typeof liveSpot] || indexSpot).toFixed(2);
+                          })()} | E: {etfCashSpot.toFixed(2)}
                         </span>
                       )}
                     </div>
