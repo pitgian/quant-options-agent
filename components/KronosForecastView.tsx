@@ -13,6 +13,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     kronosForecast,
     etfData,
     indexData,
+    liveSpot,
     timeSinceUpdate,
     refreshing,
     handleRefresh
@@ -20,7 +21,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
 
   // Local UI State
   const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD'>('1h');
-  const [displayMode, setDisplayMode] = useState<'etf' | 'index'>('index');
+  const [displayMode, setDisplayMode] = useState<'futures' | 'etf'>('futures');
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const chartRef = useRef<SVGSVGElement | null>(null);
 
@@ -42,15 +43,17 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     return market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
   }, [kronosForecast, market]);
 
-  // Dynamically calculate conversion ratios
-  const indexRatio = useMemo(() => {
-    if (indexData?.spot && etfData?.spot) {
-      return indexData.spot / etfData.spot;
+  // Dynamically calculate conversion ratios based on Futures
+  const futuresRatio = useMemo(() => {
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+    const fSpot = liveSpot[futuresSymbol as keyof typeof liveSpot];
+    if (fSpot && etfData?.spot) {
+      return fSpot / etfData.spot;
     }
-    return market === 'SP500' ? 10.024 : 41.121;
-  }, [indexData, etfData, market]);
+    return market === 'SP500' ? 10.05 : 41.2;
+  }, [liveSpot, etfData, market]);
 
-  // Scale candles based on live spot price and selected display mode (Index or ETF)
+  // Scale candles based on live spot price and selected display mode (Futures or ETF)
   const chartData = useMemo(() => {
     if (!biasItem || !biasItem.candles || biasItem.candles.length === 0) return null;
     if (!etfData || !etfData.spot) return null;
@@ -60,8 +63,8 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     const scaleRatio = liveEtfPrice / forecastLastPrice;
 
     // Determine multipliers for display unit
-    const multiplier = displayMode === 'index' ? indexRatio : 1.0;
-    const liveSpot = liveEtfPrice * multiplier;
+    const multiplier = displayMode === 'futures' ? futuresRatio : 1.0;
+    const currentSpot = liveEtfPrice * multiplier;
 
     let candleCount = 4;
     if (kronosTimeframe === '15m') candleCount = 1;
@@ -78,7 +81,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
       const high = c.high * scaleRatio * multiplier;
       const low = c.low * scaleRatio * multiplier;
       const close = c.close * scaleRatio * multiplier;
-      const changePct = ((close - liveSpot) / liveSpot) * 100;
+      const changePct = ((close - currentSpot) / currentSpot) * 100;
 
       // Extract time from timestamp
       let formattedTime = `+${(idx + 1) * 15}m`;
@@ -100,11 +103,11 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
       };
     });
 
-    const targetPrice = scaledCandles[scaledCandles.length - 1]?.close || liveSpot;
-    const expectedHigh = Math.max(liveSpot, ...scaledCandles.map(c => c.high));
-    const expectedLow = Math.min(liveSpot, ...scaledCandles.map(c => c.low));
-    const volatilityPct = ((expectedHigh - expectedLow) / liveSpot) * 100;
-    const deltaPct = ((targetPrice - liveSpot) / liveSpot) * 100;
+    const targetPrice = scaledCandles[scaledCandles.length - 1]?.close || currentSpot;
+    const expectedHigh = Math.max(currentSpot, ...scaledCandles.map(c => c.high));
+    const expectedLow = Math.min(currentSpot, ...scaledCandles.map(c => c.low));
+    const volatilityPct = ((expectedHigh - expectedLow) / currentSpot) * 100;
+    const deltaPct = ((targetPrice - currentSpot) / currentSpot) * 100;
 
     let trendBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
     if (deltaPct > 0.05) {
@@ -114,7 +117,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     }
 
     return {
-      liveSpot,
+      liveSpot: currentSpot,
       targetPrice,
       expectedHigh,
       expectedLow,
@@ -123,7 +126,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
       strengthPct: deltaPct,
       candles: scaledCandles
     };
-  }, [biasItem, etfData, indexRatio, displayMode, kronosTimeframe]);
+  }, [biasItem, etfData, futuresRatio, displayMode, kronosTimeframe]);
 
   // Handle Chart mouse movements to display interactive crosshair and tooltip
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement, MouseEvent>) => {
@@ -275,14 +278,14 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
             <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Unità:</span>
             <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800">
               <button
-                onClick={() => setDisplayMode('index')}
+                onClick={() => setDisplayMode('futures')}
                 className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
                 style={{
-                  backgroundColor: displayMode === 'index' ? '#1e293b' : 'transparent',
-                  color: displayMode === 'index' ? '#e2e8f0' : '#64748b',
+                  backgroundColor: displayMode === 'futures' ? '#1e293b' : 'transparent',
+                  color: displayMode === 'futures' ? '#e2e8f0' : '#64748b',
                 }}
               >
-                Indice ({market === 'SP500' ? 'SPX' : 'NDX'})
+                Futures ({market === 'SP500' ? 'ES' : 'NQ'})
               </button>
               <button
                 onClick={() => setDisplayMode('etf')}
@@ -357,7 +360,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
                 <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Prezzo Spot Corrente</span>
                 <div className="mt-2">
                   <span className="text-xl font-bold text-slate-100">${chartData.liveSpot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  <span className="text-[10px] text-gray-500 block">Unit: {displayMode === 'index' ? (market === 'SP500' ? 'SPX' : 'NDX') : (market === 'SP500' ? 'SPY' : 'QQQ')}</span>
+                  <span className="text-[10px] text-gray-500 block">Unit: {displayMode === 'futures' ? (market === 'SP500' ? 'ES' : 'NQ') : (market === 'SP500' ? 'SPY' : 'QQQ')}</span>
                 </div>
               </div>
 
