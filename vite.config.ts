@@ -21,9 +21,25 @@ export default defineConfig(({ mode }) => {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 try {
-                  // Fetch SPY, QQQ, ES=F, and NQ=F quotes in parallel with pre-market data
-                  const symbols = ['SPY', 'QQQ', 'ES=F', 'NQ=F'];
-                  const quotes = await Promise.all(
+                  // Helper function to check if the US stock market is open
+                  const isMarketOpen = () => {
+                    const nd = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+                    const nyDate = new Date(nd);
+                    const day = nyDate.getDay(); // 0 = Sunday, 6 = Saturday
+                    const hour = nyDate.getHours();
+                    const minute = nyDate.getMinutes();
+                    
+                    // Market is open Mon-Fri, 9:30 AM - 4:00 PM
+                    if (day === 0 || day === 6) return false;
+                    const timeInMinutes = hour * 60 + minute;
+                    return timeInMinutes >= 9 * 60 + 30 && timeInMinutes < 16 * 60;
+                  };
+
+                  // Fetch SPY, QQQ, ES=F, NQ=F, ^SPX, and ^NDX quotes in parallel
+                  const symbols = ['SPY', 'QQQ', 'ES=F', 'NQ=F', '^SPX', '^NDX'];
+                  const quotes: Record<string, { live: number | null; prevClose: number | null }> = {};
+
+                  await Promise.all(
                     symbols.map(async (symbol) => {
                       try {
                         const response = await fetch(
@@ -35,101 +51,81 @@ export default defineConfig(({ mode }) => {
                           }
                         );
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                        const data = await response.json();
+                        const data = (await response.json()) as any;
                         const result = data?.chart?.result?.[0];
                         const meta = result?.meta;
-                        const timestamps = result?.timestamp || [];
                         const closes = result?.indicators?.quote?.[0]?.close || [];
                         
-                        const candles = [];
-                        for (let i = 0; i < closes.length; i++) {
+                        let lastCandlePrice = null;
+                        for (let i = closes.length - 1; i >= 0; i--) {
                           if (closes[i] !== null && closes[i] !== undefined) {
-                            candles.push({
-                              time: timestamps[i],
-                              price: closes[i]
-                            });
+                            lastCandlePrice = closes[i];
+                            break;
                           }
                         }
                         
-                        let latestPrice = meta?.regularMarketPrice || null;
-                        let latestTime = Math.floor(Date.now() / 1000);
-                        if (candles.length > 0) {
-                          latestPrice = candles[candles.length - 1].price;
-                          latestTime = candles[candles.length - 1].time;
-                        }
+                        const live = meta?.regularMarketPrice || lastCandlePrice;
+                        const prevClose = meta?.chartPreviousClose || meta?.previousClose || lastCandlePrice;
                         
-                        return { symbol, candles, latestPrice, latestTime };
+                        quotes[symbol] = { live, prevClose };
                       } catch (err) {
                         console.error(`Error fetching ${symbol} in dev server:`, err);
-                        return { symbol, candles: [], latestPrice: null, latestTime: 0 };
+                        quotes[symbol] = { live: null, prevClose: null };
                       }
                     })
                   );
 
-                  const spyChart = quotes.find(q => q.symbol === 'SPY') || { candles: [], latestPrice: null, latestTime: 0 };
-                  const qqqChart = quotes.find(q => q.symbol === 'QQQ') || { candles: [], latestPrice: null, latestTime: 0 };
-                  const esChart = quotes.find(q => q.symbol === 'ES=F') || { candles: [], latestPrice: null, latestTime: 0 };
-                  const nqChart = quotes.find(q => q.symbol === 'NQ=F') || { candles: [], latestPrice: null, latestTime: 0 };
+                  // Extract variables with defaults
+                  const spyLive = quotes['SPY']?.live || null;
+                  const spyPrev = quotes['SPY']?.prevClose || null;
+                  
+                  const qqqLive = quotes['QQQ']?.live || null;
+                  const qqqPrev = quotes['QQQ']?.prevClose || null;
+                  
+                  const esLive = quotes['ES=F']?.live || null;
+                  const esPrev = quotes['ES=F']?.prevClose || null;
+                  
+                  const nqLive = quotes['NQ=F']?.live || null;
+                  const nqPrev = quotes['NQ=F']?.prevClose || null;
+                  
+                  const spxLive = quotes['^SPX']?.live || null;
+                  const spxPrev = quotes['^SPX']?.prevClose || null;
+                  
+                  const ndxLive = quotes['^NDX']?.live || null;
+                  const ndxPrev = quotes['^NDX']?.prevClose || null;
 
-                  // Helper function to find price of a chart at a specific timestamp
-                  const getPriceAtTime = (chart: any, targetTime: number, fallbackPrice: number | null) => {
-                    if (!chart.candles || chart.candles.length === 0) return fallbackPrice;
-                    
-                    let closestCandle = chart.candles[0];
-                    let minDiff = Math.abs(closestCandle.time - targetTime);
-                    
-                    for (const candle of chart.candles) {
-                      const diff = Math.abs(candle.time - targetTime);
-                      if (diff < minDiff) {
-                        minDiff = diff;
-                        closestCandle = candle;
-                      }
-                    }
-                    
-                    // If the closest candle is more than 30 minutes away, fallback
-                    if (minDiff > 1800) {
-                      return fallbackPrice;
-                    }
-                    
-                    return closestCandle.price;
-                  };
+                  const marketOpen = isMarketOpen();
 
-                  const SPX_SPY_RATIO = 10.024;
-                  const NDX_QQQ_RATIO = 41.121;
+                  let derivedSPX: number | null = null;
+                  let derivedNDX: number | null = null;
+                  let derivedSPY: number | null = null;
+                  let derivedQQQ: number | null = null;
 
-                  // S&P 500 Calculations
-                  const spyPrice = spyChart.latestPrice;
-                  const spyTime = spyChart.latestTime;
-                  const esLive = esChart.latestPrice;
-
-                  let esBasis = 0;
-                  if (spyPrice && esLive && spyTime) {
-                    const esPriceAtSpyTime = getPriceAtTime(esChart, spyTime, esLive) || esLive;
-                    esBasis = esPriceAtSpyTime - (spyPrice * SPX_SPY_RATIO);
+                  if (marketOpen) {
+                    // Active Trading Hours
+                    const spxRatio = (spxPrev && spyPrev) ? (spxPrev / spyPrev) : 10.024;
+                    const ndxRatio = (ndxPrev && qqqPrev) ? (ndxPrev / qqqPrev) : 41.121;
+                    
+                    derivedSPX = spyLive ? Number((spyLive * spxRatio).toFixed(2)) : (spxLive || spxPrev);
+                    derivedNDX = qqqLive ? Number((qqqLive * ndxRatio).toFixed(2)) : (ndxLive || ndxPrev);
+                    derivedSPY = spyLive;
+                    derivedQQQ = qqqLive;
+                  } else {
+                    // Overnight / Closed Hours (Estimate from futures relative returns)
+                    const esRatio = (esLive && esPrev) ? (esLive / esPrev) : 1.0;
+                    const nqRatio = (nqLive && nqPrev) ? (nqLive / nqPrev) : 1.0;
+                    
+                    derivedSPX = spxPrev ? Number((spxPrev * esRatio).toFixed(2)) : null;
+                    derivedNDX = ndxPrev ? Number((ndxPrev * nqRatio).toFixed(2)) : null;
+                    derivedSPY = spyPrev ? Number((spyPrev * esRatio).toFixed(2)) : null;
+                    derivedQQQ = qqqPrev ? Number((qqqPrev * nqRatio).toFixed(2)) : null;
                   }
-
-                  const spxPrice = esLive ? Number((esLive - esBasis).toFixed(2)) : (spyPrice ? Number((spyPrice * SPX_SPY_RATIO).toFixed(2)) : null);
-                  const spyDerived = spxPrice ? Number((spxPrice / SPX_SPY_RATIO).toFixed(2)) : spyPrice;
-
-                  // Nasdaq 105 Calculations
-                  const qqqPrice = qqqChart.latestPrice;
-                  const qqqTime = qqqChart.latestTime;
-                  const nqLive = nqChart.latestPrice;
-
-                  let nqBasis = 0;
-                  if (qqqPrice && nqLive && qqqTime) {
-                    const nqPriceAtQqqTime = getPriceAtTime(nqChart, qqqTime, nqLive) || nqLive;
-                    nqBasis = nqPriceAtQqqTime - (qqqPrice * NDX_QQQ_RATIO);
-                  }
-
-                  const ndxPrice = nqLive ? Number((nqLive - nqBasis).toFixed(2)) : (qqqPrice ? Number((qqqPrice * NDX_QQQ_RATIO).toFixed(2)) : null);
-                  const qqqDerived = ndxPrice ? Number((ndxPrice / NDX_QQQ_RATIO).toFixed(2)) : qqqPrice;
 
                   const spotData = {
-                    SPX: spxPrice,
-                    NDX: ndxPrice,
-                    SPY: spyDerived,
-                    QQQ: qqqDerived,
+                    SPX: derivedSPX,
+                    NDX: derivedNDX,
+                    SPY: derivedSPY,
+                    QQQ: derivedQQQ,
                     ES: esLive,
                     NQ: nqLive,
                     timestamp: new Date().toISOString()
