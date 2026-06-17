@@ -53,62 +53,43 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           
-      - name: Commit and push changes
+      - name: Commit and push to Gist
         run: |
-          # 1. Back up generated data files
-          mkdir -p /tmp/options_data_backup
-          cp data/options_data.json data/kronos_forecast.json /tmp/options_data_backup/
+          # Check if secrets are provided
+          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
+            echo "GH_PAT or GIST_ID secret is missing. Skipping Gist update."
+            exit 0
+          fi
+
+          # 1. Clone the gist repository
+          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo
           
-          # 2. Configure Git
+          # 2. Copy the generated files
+          cp data/options_data.json gist_repo/
+          cp data/kronos_forecast.json gist_repo/
+          
+          # 3. Configure Git and commit
+          cd gist_repo
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 3. Clean master working tree to prevent checkout conflicts
-          git reset --hard HEAD
+          git add options_data.json kronos_forecast.json
           
-          # 4. Fetch remote data branch to check if it exists
-          git fetch origin data || true
-          
-          # 5. Checkout or create data branch
-          if git show-ref --quiet refs/remotes/origin/data; then
-            git checkout -f -B data origin/data
-          else
-            git checkout -f --orphan data
-            git rm -rf .
-          fi
-          
-          # 6. Restore generated data files and create vercel.json to ignore Vercel builds on data branch
-          mkdir -p data
-          cp /tmp/options_data_backup/* data/
-          echo '{"ignoreCommand": "true", "git": {"deploymentEnabled": {"master": true}}}' > vercel.json
-          
-          # 7. Commit and push
-          git add data/options_data.json data/kronos_forecast.json vercel.json
-          
-          # Check if there are differences to commit
           if git diff --quiet && git diff --staged --quiet; then
-            echo "Nessun cambiamento da committare"
+            echo "Nessun cambiamento da committare nel gist"
             exit 0
           fi
           
           git commit -m "chore: update options data"
           
-          # Push to origin data branch
+          # 4. Push to Gist
           for i in 1 2 3; do
-            if git push origin data; then
-              echo "Push successful"
+            if git push origin main || git push origin master; then
+              echo "Push to Gist successful"
               exit 0
             fi
             echo "Push failed, attempt $i. Fetching and rebasing..."
-            git fetch origin data
-            git rebase --autostash origin/data || {
-              git rebase --abort 2>/dev/null || true
-              git reset --hard origin/data
-              mkdir -p data
-              cp /tmp/options_data_backup/* data/
-              git add data/options_data.json data/kronos_forecast.json
-              git commit -m "chore: update options data" || true
-            }
+            git pull --rebase origin main || git pull --rebase origin master
           done
           
           echo "Push failed after 3 attempts"

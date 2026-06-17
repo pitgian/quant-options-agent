@@ -12,7 +12,13 @@
 // ============================================================================
 
 /** GitHub Raw URL for the options data JSON file */
-const GITHUB_DATA_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/options_data.json';
+const GIST_USER = import.meta.env.VITE_GIST_USER;
+const GIST_ID = import.meta.env.VITE_GIST_ID;
+
+const GITHUB_DATA_URL = GIST_USER && GIST_ID 
+  ? `https://gist.githubusercontent.com/${GIST_USER}/${GIST_ID}/raw/options_data.json`
+  : 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/options_data.json';
+
 const LOCAL_DATA_URL = '/data/options_data.json';
 
 /** Cache duration in milliseconds (3 minutes — must be shorter than cron interval) */

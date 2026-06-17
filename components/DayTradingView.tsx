@@ -82,7 +82,9 @@ const LevelRow: React.FC<{
   onHover: (strike: number | null) => void;
   maxOI: number;
   maxVol: number;
-}> = ({ level, isHovered, onHover, maxOI, maxVol }) => {
+  futuresEquivalent?: number;
+  futuresSymbol?: string;
+}> = ({ level, isHovered, onHover, maxOI, maxVol, futuresEquivalent, futuresSymbol }) => {
   const isResistance = level.type === 'resistance';
   const isCross = !!level.isCrossSymbol;
 
@@ -105,9 +107,16 @@ const LevelRow: React.FC<{
     >
       <div className="grid grid-cols-[80px_192px_64px_1fr] gap-4 items-center">
         {/* Strike price */}
-        <span className="font-mono text-base font-bold" style={{ color }}>
-          ${level.strike.toFixed(0)}
-        </span>
+        <div className="flex flex-col">
+          <span className="font-mono text-base font-bold" style={{ color }}>
+            ${level.strike.toFixed(0)}
+          </span>
+          {futuresEquivalent != null && futuresSymbol && (
+            <span className="text-[10px] font-mono text-gray-500 font-medium whitespace-nowrap">
+              {futuresSymbol} ~{futuresEquivalent.toFixed(0)}
+            </span>
+          )}
+        </div>
 
         {/* Label badge — amber ★ Cross-Symbol or regular label */}
         <div className="flex items-center">
@@ -329,12 +338,45 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
     let maxOI = 0;
     let maxVol = 0;
     for (const l of allLevels) {
-      // Use primary symbol's OI/Vol for all levels (consistent scale)
       if (l.totalOI > maxOI) maxOI = l.totalOI;
       if (l.totalVolume > maxVol) maxVol = l.totalVolume;
     }
     return { maxOI, maxVol };
   }, [data]);
+
+  // ---- Futures Basis & Equivalent Calculations ----
+  const futuresSymbol = useMemo(() => {
+    return (symbol === 'SPY' || symbol === 'SPX') ? 'ES' : 'NQ';
+  }, [symbol]);
+
+  const futuresBasis = useMemo(() => {
+    if (!liveSpot) return 0;
+    if (symbol === 'SPX' || symbol === 'SPY') {
+      const es = liveSpot.ES;
+      const spx = liveSpot.SPX;
+      if (es && spx) return es - spx;
+    } else if (symbol === 'NDX' || symbol === 'QQQ') {
+      const nq = liveSpot.NQ;
+      const ndx = liveSpot.NDX;
+      if (nq && ndx) return nq - ndx;
+    }
+    return 0;
+  }, [liveSpot, symbol]);
+
+  const indexToEtfRatio = useMemo(() => {
+    if (!liveSpot) return 1;
+    if (symbol === 'SPY' && liveSpot.SPX && liveSpot.SPY) return liveSpot.SPX / liveSpot.SPY;
+    if (symbol === 'QQQ' && liveSpot.NDX && liveSpot.QQQ) return liveSpot.NDX / liveSpot.QQQ;
+    return 1;
+  }, [liveSpot, symbol]);
+
+  const calculateFuturesEquivalent = (strike: number) => {
+    let eq = strike;
+    if (symbol === 'SPY' || symbol === 'QQQ') {
+      eq = eq * indexToEtfRatio;
+    }
+    return eq + futuresBasis;
+  };
 
   // ---- Update flash animation state ----
   const [flashVisible, setFlashVisible] = useState(false);
@@ -488,6 +530,8 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
                     onHover={setHighlightedStrike}
                     maxOI={maxOI}
                     maxVol={maxVol}
+                    futuresEquivalent={calculateFuturesEquivalent(level.strike)}
+                    futuresSymbol={futuresSymbol}
                   />
                 ))}
               </div>
@@ -525,6 +569,8 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
                     onHover={setHighlightedStrike}
                     maxOI={maxOI}
                     maxVol={maxVol}
+                    futuresEquivalent={calculateFuturesEquivalent(level.strike)}
+                    futuresSymbol={futuresSymbol}
                   />
                 ))}
               </div>

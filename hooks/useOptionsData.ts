@@ -11,7 +11,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DayTradingData, ExpiryFilter, KronosForecast } from '../types';
 import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/dataService';
 
-const KRONOS_GITHUB_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
+const GIST_USER = import.meta.env.VITE_GIST_USER;
+const GIST_ID = import.meta.env.VITE_GIST_ID;
+
+const KRONOS_GITHUB_URL = GIST_USER && GIST_ID
+  ? `https://gist.githubusercontent.com/${GIST_USER}/${GIST_ID}/raw/kronos_forecast.json`
+  : 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
+
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
 const fetchKronosForecast = async (): Promise<Response | null> => {
@@ -289,21 +295,10 @@ export function useOptionsData(): UseOptionsDataReturn {
   const finalEtfData = useMemo(() => {
     if (!etfData) return null;
     
-    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
     const etfSymbol = market === 'SP500' ? 'SPY' : 'QQQ';
-    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
     
-    // Prioritize Futures price (ES/NQ) to derive ETF spot, fallback to cash index (SPX/NDX)
-    const liveIndexPrice = liveSpot[futuresSymbol as keyof typeof liveSpot] || liveSpot[indexSymbol as keyof typeof liveSpot];
-    let livePrice: number | null = null;
-    
-    if (liveIndexPrice && indexData && indexData.spot && etfData.spot) {
-      const ratio = indexData.spot / etfData.spot;
-      livePrice = Number((liveIndexPrice / ratio).toFixed(2));
-    } else {
-      livePrice = liveSpot[etfSymbol as keyof typeof liveSpot];
-    }
-    
+    // Strictly rely on the cleanly derived ETF spot price calculated by the backend
+    const livePrice = liveSpot[etfSymbol as keyof typeof liveSpot];
     if (!livePrice) return etfData;
     const finalPrice = livePrice;
 
@@ -344,10 +339,9 @@ export function useOptionsData(): UseOptionsDataReturn {
   const finalIndexData = useMemo(() => {
     if (!indexData) return null;
     const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
-    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
 
-    // Prioritize Futures price (ES/NQ) as the index spot price, fallback to Cash index (SPX/NDX)
-    const livePrice = liveSpot[futuresSymbol as keyof typeof liveSpot] || liveSpot[indexSymbol as keyof typeof liveSpot];
+    // Strictly rely on the cleanly derived Cash index spot price calculated by the backend
+    const livePrice = liveSpot[indexSymbol as keyof typeof liveSpot];
     if (!livePrice) return indexData;
 
     // Use Cash Index price for GEX regime detection to match options contract settlement

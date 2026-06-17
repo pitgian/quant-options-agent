@@ -228,21 +228,23 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     };
   }, [kronosForecast, market, kronosTimeframe, etfData]);
 
-  // ---- Kronos expected price range in Index terms ----
+  // ---- Kronos expected price range in Futures terms ----
   const kronosRange = useMemo(() => {
     if (!activeKronosForecast || !indexData || !etfData) return null;
 
-    const indexSpot = indexData.spot;
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+    const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
     const etfSpot = etfData.spot;
-    if (indexSpot && etfSpot) {
-      const ratio = indexSpot / etfSpot;
+    
+    if (futuresSpot && etfSpot) {
+      const etfToFuturesRatio = futuresSpot / etfSpot;
       return {
-        low: activeKronosForecast.expectedLow * ratio,
-        high: activeKronosForecast.expectedHigh * ratio
+        low: activeKronosForecast.expectedLow * etfToFuturesRatio,
+        high: activeKronosForecast.expectedHigh * etfToFuturesRatio
       };
     }
     return null;
-  }, [activeKronosForecast, indexData, etfData]);
+  }, [activeKronosForecast, indexData, etfData, liveSpot, market]);
 
   // ---- Calculate visual boundaries for Kronos expected range ----
   const kronosBoundaries = useMemo(() => {
