@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
               const url = new URL(req.url, 'http://localhost');
               const urlPath = url.pathname;
 
+              console.log('[DEBUG] Vite middleware - req.url:', req.url, 'urlPath:', urlPath);
               if (urlPath === '/api-spot') {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');
