@@ -120,8 +120,8 @@ export async function fetchOptionsData(
   if (symbolData.futures_volume_profile) {
     dayTradingData.futuresVolumeProfile = symbolData.futures_volume_profile;
   }
-  if (symbolData.futures_volume_profiles) {
-    dayTradingData.futuresVolumeProfiles = symbolData.futures_volume_profiles;
+  if (symbolData.futures_volume_profile) {
+    dayTradingData.futuresVolumeProfiles = symbolData.futures_volume_profile;
   }
 
   return dayTradingData;

@@ -304,6 +304,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
     highlightedStrike,
     setHighlightedStrike,
     lastRefreshed,
+    liveSpot,
   } = state;
 
   // ---- Last updated text ----
