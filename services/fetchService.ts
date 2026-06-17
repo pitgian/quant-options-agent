@@ -158,10 +158,10 @@ export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJs
     return cache.data;
   }
 
-  // Always prioritize the live GitHub data branch so local development displays real-time option chains.
-  // Fall back to the local file if offline or if GitHub is down.
-  const url1 = GITHUB_DATA_URL;
-  const url2 = LOCAL_DATA_URL;
+  // Prioritize local file in dev mode, GitHub in production.
+  const isDev = import.meta.env.DEV;
+  const url1 = isDev ? LOCAL_DATA_URL : GITHUB_DATA_URL;
+  const url2 = isDev ? GITHUB_DATA_URL : LOCAL_DATA_URL;
 
   // 1. Try fetching from primary URL
   try {

@@ -21,17 +21,21 @@ const KRONOS_GITHUB_URL = GIST_USER && GIST_ID
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
 const fetchKronosForecast = async (): Promise<Response | null> => {
+  const isDev = import.meta.env.DEV;
+  const primaryUrl = isDev ? KRONOS_LOCAL_URL : KRONOS_GITHUB_URL;
+  const secondaryUrl = isDev ? KRONOS_GITHUB_URL : KRONOS_LOCAL_URL;
+
   try {
-    const res = await fetch(`${KRONOS_GITHUB_URL}?t=${Date.now()}`);
+    const res = await fetch(`${primaryUrl}?t=${Date.now()}`);
     if (res.ok) return res;
   } catch (e) {
-    console.warn('Failed to fetch Kronos forecast from GitHub, falling back to local:', e);
+    console.warn(`Failed to fetch Kronos forecast from primary (${primaryUrl}), falling back to secondary:`, e);
   }
   try {
-    const res = await fetch(`${KRONOS_LOCAL_URL}?t=${Date.now()}`);
+    const res = await fetch(`${secondaryUrl}?t=${Date.now()}`);
     if (res.ok) return res;
   } catch (e) {
-    console.error('All Kronos forecast sources failed:', e);
+    console.error(`All Kronos forecast sources failed:`, e);
   }
   return null;
 };

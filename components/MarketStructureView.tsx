@@ -519,8 +519,10 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
   const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
   const etfSymbol = market === 'SP500' ? 'SPY' : 'QQQ';
+  const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
   const cashSpot = liveSpot[indexSymbol as keyof typeof liveSpot] || indexSpot;
   const etfCashSpot = liveSpot[etfSymbol as keyof typeof liveSpot] || etfSpot;
+  const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexSpot;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117]">
@@ -705,42 +707,18 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
               <div className="flex justify-between items-center mb-1.5">
                 <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Prezzi Spot & Futures</span>
-                {(() => {
-                  const cashPrice = market === 'SP500' ? liveSpot?.SPX : liveSpot?.NDX;
-                  if (indexSpot && cashPrice) {
-                    const basis = indexSpot - cashPrice;
-                    return (
-                      <span className="text-[9px] text-blue-400 font-mono font-bold bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20" title="Basis = Futures Price - Cash Index Price. I contratti futures quotano a premio rispetto all'indice cash (e alle opzioni) a causa di rollover e dividendi.">
-                        Premium: +{basis.toFixed(1)} pt
-                      </span>
-                    );
-                  }
-                  return null;
-                })()}
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <span className="text-[9px] text-gray-400 font-medium uppercase">Indice Cash</span>
+                  <span className="text-[9px] text-gray-400 font-medium uppercase font-semibold">ETF Cash ({etfSymbol})</span>
                   <div className="text-sm font-mono font-bold text-white">
-                    {(() => {
-                      const cashPrice = market === 'SP500' ? liveSpot?.SPX : liveSpot?.NDX;
-                      return cashPrice ? `$${cashPrice.toFixed(1)}` : 'Caricamento...';
-                    })()}
-                  </div>
-                </div>
-                <div className="text-center">
-                  <span className="text-[9px] text-gray-405 font-medium uppercase text-blue-400">Futures</span>
-                  <div className="text-sm font-mono font-bold text-blue-400 font-semibold">
-                    ${indexSpot.toFixed(1)}
+                    ${etfCashSpot.toFixed(2)}
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-[9px] text-gray-400 font-medium uppercase">ETF Cash</span>
-                  <div className="text-sm font-mono font-bold text-white">
-                    {(() => {
-                      const etfCashPrice = market === 'SP500' ? liveSpot?.SPY : liveSpot?.QQQ;
-                      return etfCashPrice ? `$${etfCashPrice.toFixed(2)}` : 'Caricamento...';
-                    })()}
+                  <span className="text-[9px] text-blue-400 font-medium uppercase font-semibold">Futures ({futuresSymbol})</span>
+                  <div className="text-sm font-mono font-bold text-blue-400 font-semibold">
+                    ${futuresSpot.toFixed(1)}
                   </div>
                 </div>
               </div>
