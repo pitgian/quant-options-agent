@@ -1050,12 +1050,12 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             {/* Chart rows */}
             <div className="flex flex-col gap-0.5">
               {zoomedProfile.slice().reverse().map((d) => {
-                const isClosest = Math.abs(d.strike - indexSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - indexSpot)));
+                const isClosest = Math.abs(d.futuresStrike - indexSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.futuresStrike - indexSpot)));
                 const isHVN = nodes.hvnStrikes.has(d.strike);
                 const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                 const isLVN = !!lvnZone;
                 const isTrough = nodes.lvnStrikes.has(d.strike);
-                const isInKronosRange = !!(kronosRange && d.strike >= kronosRange.low && d.strike <= kronosRange.high);
+                const isInKronosRange = !!(kronosRange && d.futuresStrike >= kronosRange.low && d.futuresStrike <= kronosRange.high);
                 const flipPoint = indexData?.gexRegime?.flipPoint;
                 const isFlipRow = flipPoint
                   ? Math.abs(d.strike - flipPoint) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint)))
