@@ -121,7 +121,9 @@ export function useOptionsData(): UseOptionsDataReturn {
     let active = true;
     const fetchLiveSpot = async () => {
       try {
-        const response = await fetch('/api-spot');
+        const response = await fetch(`/api-spot?t=${Date.now()}`, {
+          cache: 'no-store'
+        });
         if (!response.ok) return;
         const data = await response.json();
         if (data && active) {

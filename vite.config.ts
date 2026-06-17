@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => {
               if (urlPath === '/api-spot') {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');
+                res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
                 try {
                   // Fetch SPY, QQQ, ES=F, NQ=F, ^SPX, and ^NDX quotes in parallel
                   const symbols = ['SPY', 'QQQ', 'ES=F', 'NQ=F', '^SPX', '^NDX'];
@@ -30,7 +31,7 @@ export default defineConfig(({ mode }) => {
                     symbols.map(async (symbol) => {
                       try {
                         const response = await fetch(
-                          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=1d&includePrePost=true`,
+                          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1m&range=5m&includePrePost=true`,
                           {
                             headers: {
                               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
