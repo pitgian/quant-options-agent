@@ -29,20 +29,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Handle live spot prices request
   if (req.query.action === 'spot') {
     try {
-      // Helper function to check if the US stock market is open
-      const isMarketOpen = () => {
-        const nd = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
-        const nyDate = new Date(nd);
-        const day = nyDate.getDay(); // 0 = Sunday, 6 = Saturday
-        const hour = nyDate.getHours();
-        const minute = nyDate.getMinutes();
-        
-        // Market is open Mon-Fri, 9:30 AM - 4:00 PM
-        if (day === 0 || day === 6) return false;
-        const timeInMinutes = hour * 60 + minute;
-        return timeInMinutes >= 9 * 60 + 30 && timeInMinutes < 16 * 60;
-      };
-
       // Fetch SPY, QQQ, ES=F, NQ=F, ^SPX, and ^NDX quotes in parallel
       const symbols = ['SPY', 'QQQ', 'ES=F', 'NQ=F', '^SPX', '^NDX'];
       const quotes: Record<string, { live: number | null; prevClose: number | null }> = {};
@@ -84,10 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
 
       // Extract variables with defaults
-      const spyLive = quotes['SPY']?.live || null;
       const spyPrev = quotes['SPY']?.prevClose || null;
-      
-      const qqqLive = quotes['QQQ']?.live || null;
       const qqqPrev = quotes['QQQ']?.prevClose || null;
       
       const esLive = quotes['ES=F']?.live || null;
@@ -96,38 +79,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const nqLive = quotes['NQ=F']?.live || null;
       const nqPrev = quotes['NQ=F']?.prevClose || null;
       
-      const spxLive = quotes['^SPX']?.live || null;
       const spxPrev = quotes['^SPX']?.prevClose || null;
-      
-      const ndxLive = quotes['^NDX']?.live || null;
       const ndxPrev = quotes['^NDX']?.prevClose || null;
 
-      const marketOpen = isMarketOpen();
-
-      let derivedSPX: number | null = null;
-      let derivedNDX: number | null = null;
-      let derivedSPY: number | null = null;
-      let derivedQQQ: number | null = null;
-
-      if (marketOpen) {
-        // Active Trading Hours
-        const spxRatio = (spxPrev && spyPrev) ? (spxPrev / spyPrev) : 10.024;
-        const ndxRatio = (ndxPrev && qqqPrev) ? (ndxPrev / qqqPrev) : 41.121;
-        
-        derivedSPX = spyLive ? Number((spyLive * spxRatio).toFixed(2)) : (spxLive || spxPrev);
-        derivedNDX = qqqLive ? Number((qqqLive * ndxRatio).toFixed(2)) : (ndxLive || ndxPrev);
-        derivedSPY = spyLive;
-        derivedQQQ = qqqLive;
-      } else {
-        // Overnight / Closed Hours (Estimate from futures relative returns)
-        const esRatio = (esLive && esPrev) ? (esLive / esPrev) : 1.0;
-        const nqRatio = (nqLive && nqPrev) ? (nqLive / nqPrev) : 1.0;
-        
-        derivedSPX = spxPrev ? Number((spxPrev * esRatio).toFixed(2)) : null;
-        derivedNDX = ndxPrev ? Number((ndxPrev * nqRatio).toFixed(2)) : null;
-        derivedSPY = spyPrev ? Number((spyPrev * esRatio).toFixed(2)) : null;
-        derivedQQQ = qqqPrev ? Number((qqqPrev * nqRatio).toFixed(2)) : null;
-      }
+      // Always derive spot prices from active futures returns 24/5
+      const esRatio = (esLive && esPrev) ? (esLive / esPrev) : 1.0;
+      const nqRatio = (nqLive && nqPrev) ? (nqLive / nqPrev) : 1.0;
+      
+      const derivedSPX = spxPrev ? Number((spxPrev * esRatio).toFixed(2)) : null;
+      const derivedNDX = ndxPrev ? Number((ndxPrev * nqRatio).toFixed(2)) : null;
+      const derivedSPY = spyPrev ? Number((spyPrev * esRatio).toFixed(2)) : null;
+      const derivedQQQ = qqqPrev ? Number((qqqPrev * nqRatio).toFixed(2)) : null;
 
       const spotData = {
         SPX: derivedSPX,
