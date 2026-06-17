@@ -54,11 +54,13 @@ jobs:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           
       - name: Commit and push to Gist
+        id: gist_push
+        continue-on-error: true
         run: |
           # Check if secrets are provided
           if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
             echo "GH_PAT or GIST_ID secret is missing. Skipping Gist update."
-            exit 0
+            exit 1
           fi
 
           # 1. Clone the gist repository
@@ -94,3 +96,43 @@ jobs:
           
           echo "Push failed after 3 attempts"
           exit 1
+
+      - name: Fallback: Commit and push to repository data branch
+        if: steps.gist_push.outcome == 'failure'
+        run: |
+          echo "Gist push failed. Falling back to committing directly to the repository data branch..."
+          
+          # Keep only the generated files we need
+          mkdir -p /tmp/generated_data
+          cp data/options_data.json /tmp/generated_data/
+          cp data/kronos_forecast.json /tmp/generated_data/
+          
+          # Clean checkout data branch
+          git fetch origin data
+          git checkout data
+          
+          # Restore the generated files
+          mkdir -p data
+          cp /tmp/generated_data/options_data.json data/
+          cp /tmp/generated_data/kronos_forecast.json data/
+          
+          # Configure Git
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Add and commit
+          git add data/options_data.json data/kronos_forecast.json
+          
+          # Generate vercel.json if missing to ignore builds
+          if [ ! -f vercel.json ]; then
+            echo '{"ignoreCommand": "exit 0"}' > vercel.json
+            git add vercel.json
+          fi
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit on data branch."
+            exit 0
+          fi
+          
+          git commit -m "chore: update options data [fallback] [skip ci]"
+          git push origin data
