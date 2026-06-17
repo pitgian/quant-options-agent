@@ -38,42 +38,100 @@ export default defineConfig(({ mode }) => {
                         const data = await response.json();
                         const result = data?.chart?.result?.[0];
                         const meta = result?.meta;
+                        const timestamps = result?.timestamp || [];
                         const closes = result?.indicators?.quote?.[0]?.close || [];
                         
-                        let price = null;
-                        for (let i = closes.length - 1; i >= 0; i--) {
+                        const candles = [];
+                        for (let i = 0; i < closes.length; i++) {
                           if (closes[i] !== null && closes[i] !== undefined) {
-                            price = closes[i];
-                            break;
+                            candles.push({
+                              time: timestamps[i],
+                              price: closes[i]
+                            });
                           }
                         }
-                        if (price === null) {
-                          price = meta?.regularMarketPrice || null;
+                        
+                        let latestPrice = meta?.regularMarketPrice || null;
+                        let latestTime = Math.floor(Date.now() / 1000);
+                        if (candles.length > 0) {
+                          latestPrice = candles[candles.length - 1].price;
+                          latestTime = candles[candles.length - 1].time;
                         }
-                        return { symbol, price };
+                        
+                        return { symbol, candles, latestPrice, latestTime };
                       } catch (err) {
                         console.error(`Error fetching ${symbol} in dev server:`, err);
-                        return { symbol, price: null };
+                        return { symbol, candles: [], latestPrice: null, latestTime: 0 };
                       }
                     })
                   );
 
-                  const spyPrice = quotes.find(q => q.symbol === 'SPY')?.price || null;
-                  const qqqPrice = quotes.find(q => q.symbol === 'QQQ')?.price || null;
-                  const esPrice = quotes.find(q => q.symbol === 'ES=F')?.price || null;
-                  const nqPrice = quotes.find(q => q.symbol === 'NQ=F')?.price || null;
+                  const spyChart = quotes.find(q => q.symbol === 'SPY') || { candles: [], latestPrice: null, latestTime: 0 };
+                  const qqqChart = quotes.find(q => q.symbol === 'QQQ') || { candles: [], latestPrice: null, latestTime: 0 };
+                  const esChart = quotes.find(q => q.symbol === 'ES=F') || { candles: [], latestPrice: null, latestTime: 0 };
+                  const nqChart = quotes.find(q => q.symbol === 'NQ=F') || { candles: [], latestPrice: null, latestTime: 0 };
 
-                  // Use standard completed-close cash ratios to derive index spot prices
+                  // Helper function to find price of a chart at a specific timestamp
+                  const getPriceAtTime = (chart: any, targetTime: number, fallbackPrice: number | null) => {
+                    if (!chart.candles || chart.candles.length === 0) return fallbackPrice;
+                    
+                    let closestCandle = chart.candles[0];
+                    let minDiff = Math.abs(closestCandle.time - targetTime);
+                    
+                    for (const candle of chart.candles) {
+                      const diff = Math.abs(candle.time - targetTime);
+                      if (diff < minDiff) {
+                        minDiff = diff;
+                        closestCandle = candle;
+                      }
+                    }
+                    
+                    // If the closest candle is more than 30 minutes away, fallback
+                    if (minDiff > 1800) {
+                      return fallbackPrice;
+                    }
+                    
+                    return closestCandle.price;
+                  };
+
                   const SPX_SPY_RATIO = 10.024;
                   const NDX_QQQ_RATIO = 41.121;
 
+                  // S&P 500 Calculations
+                  const spyPrice = spyChart.latestPrice;
+                  const spyTime = spyChart.latestTime;
+                  const esLive = esChart.latestPrice;
+
+                  let esBasis = 0;
+                  if (spyPrice && esLive && spyTime) {
+                    const esPriceAtSpyTime = getPriceAtTime(esChart, spyTime, esLive) || esLive;
+                    esBasis = esPriceAtSpyTime - (spyPrice * SPX_SPY_RATIO);
+                  }
+
+                  const spxPrice = esLive ? Number((esLive - esBasis).toFixed(2)) : (spyPrice ? Number((spyPrice * SPX_SPY_RATIO).toFixed(2)) : null);
+                  const spyDerived = spxPrice ? Number((spxPrice / SPX_SPY_RATIO).toFixed(2)) : spyPrice;
+
+                  // Nasdaq 105 Calculations
+                  const qqqPrice = qqqChart.latestPrice;
+                  const qqqTime = qqqChart.latestTime;
+                  const nqLive = nqChart.latestPrice;
+
+                  let nqBasis = 0;
+                  if (qqqPrice && nqLive && qqqTime) {
+                    const nqPriceAtQqqTime = getPriceAtTime(nqChart, qqqTime, nqLive) || nqLive;
+                    nqBasis = nqPriceAtQqqTime - (qqqPrice * NDX_QQQ_RATIO);
+                  }
+
+                  const ndxPrice = nqLive ? Number((nqLive - nqBasis).toFixed(2)) : (qqqPrice ? Number((qqqPrice * NDX_QQQ_RATIO).toFixed(2)) : null);
+                  const qqqDerived = ndxPrice ? Number((ndxPrice / NDX_QQQ_RATIO).toFixed(2)) : qqqPrice;
+
                   const spotData = {
-                    SPX: spyPrice ? Number((spyPrice * SPX_SPY_RATIO).toFixed(2)) : null,
-                    NDX: qqqPrice ? Number((qqqPrice * NDX_QQQ_RATIO).toFixed(2)) : null,
-                    SPY: spyPrice,
-                    QQQ: qqqPrice,
-                    ES: esPrice,
-                    NQ: nqPrice,
+                    SPX: spxPrice,
+                    NDX: ndxPrice,
+                    SPY: spyDerived,
+                    QQQ: qqqDerived,
+                    ES: esLive,
+                    NQ: nqLive,
                     timestamp: new Date().toISOString()
                   };
 
