@@ -251,11 +251,26 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const kronosBoundaries = useMemo(() => {
     if (!kronosRange || zoomedProfile.length === 0) return null;
     const strikesInRange = zoomedProfile.filter(d => d.futuresStrike >= kronosRange.low && d.futuresStrike <= kronosRange.high);
-    if (strikesInRange.length === 0) return null;
-    const strikes = strikesInRange.map(d => d.strike);
+    
+    if (strikesInRange.length > 0) {
+      const strikes = strikesInRange.map(d => d.strike);
+      return {
+        min: Math.min(...strikes),
+        max: Math.max(...strikes)
+      };
+    }
+
+    // If range is extremely narrow (no strikes inside), snap to closest strikes
+    const closestToLow = zoomedProfile.reduce((prev, curr) => 
+      Math.abs(curr.futuresStrike - kronosRange.low) < Math.abs(prev.futuresStrike - kronosRange.low) ? curr : prev
+    );
+    const closestToHigh = zoomedProfile.reduce((prev, curr) => 
+      Math.abs(curr.futuresStrike - kronosRange.high) < Math.abs(prev.futuresStrike - kronosRange.high) ? curr : prev
+    );
+
     return {
-      max: Math.max(...strikes),
-      min: Math.min(...strikes)
+      min: Math.min(closestToLow.strike, closestToHigh.strike),
+      max: Math.max(closestToLow.strike, closestToHigh.strike)
     };
   }, [kronosRange, zoomedProfile]);
 
@@ -1060,7 +1075,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                 const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                 const isLVN = !!lvnZone;
                 const isTrough = nodes.lvnStrikes.has(d.strike);
-                const isInKronosRange = !!(kronosRange && d.futuresStrike >= kronosRange.low && d.futuresStrike <= kronosRange.high);
+                const isInKronosRange = !!(kronosBoundaries && d.strike >= kronosBoundaries.min && d.strike <= kronosBoundaries.max);
                 const flipPoint = indexData?.gexRegime?.flipPoint;
                 const isFlipRow = flipPoint
                   ? Math.abs(d.strike - flipPoint) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint)))
