@@ -204,8 +204,8 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     }));
 
     const targetPrice = scaledCandles[scaledCandles.length - 1].close;
-    const expectedHigh = Math.max(...scaledCandles.map(c => c.high));
-    const expectedLow = Math.min(...scaledCandles.map(c => c.low));
+    const expectedHigh = Math.max(lastPrice, ...scaledCandles.map(c => c.high));
+    const expectedLow = Math.min(lastPrice, ...scaledCandles.map(c => c.low));
     const volatilityPct = ((expectedHigh - expectedLow) / lastPrice) * 100;
     const deltaPct = ((targetPrice - lastPrice) / lastPrice) * 100;
 
