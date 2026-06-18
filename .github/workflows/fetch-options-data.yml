@@ -13,10 +13,10 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Previene esecuzioni simultanee - accoda le nuove esecuzioni
+# Previene esecuzioni simultanee - cancella quelle in corso e avvia la nuova
 concurrency:
   group: fetch-options-data
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   fetch-data:
@@ -31,20 +31,39 @@ jobs:
           persist-credentials: true
           fetch-depth: 0
         
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-kronos-${{ hashFiles('scripts/run_kronos.py') }}
+          restore-keys: |
+            hf-models-kronos-
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          
+
+      - name: Cache virtualenv
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('scripts/requirements.txt') }}
+
       - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
+          python -m venv .venv
+          source .venv/bin/activate
           python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r scripts/requirements.txt
           
       - name: Fetch options data
         timeout-minutes: 20
         run: |
+          source .venv/bin/activate
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
           python scripts/run_kronos.py
         env:
