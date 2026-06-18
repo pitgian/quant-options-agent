@@ -83,11 +83,16 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
 
     const forecastLastPrice = activeData.last_price || etfData.spot;
     const liveEtfPrice = etfData.spot;
-    const scaleRatio = liveEtfPrice / forecastLastPrice;
+    // For multiday forecasts (1h candles), keep scaleRatio at 1.0 to prevent sub-second jitters.
+    // For intraday forecasts, scale dynamically to align with current price.
+    const scaleRatio = is1h ? 1.0 : liveEtfPrice / forecastLastPrice;
+
+    // Scale start price to match current live spot for intraday, or use static model price for multiday to remain stable.
+    const lastPrice = is1h ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
 
     // Determine multipliers for display unit
     const multiplier = displayMode === 'futures' ? futuresRatio : 1.0;
-    const currentSpot = liveEtfPrice * multiplier;
+    const currentSpot = lastPrice * multiplier;
 
     let candleCount = 4;
     if (kronosTimeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
@@ -420,7 +425,15 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
             {/* Interactive Candlestick Chart */}
             <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 lg:p-6 flex flex-col gap-3 relative">
               <div className="flex justify-between items-center">
-                <h3 className="text-sm font-bold text-slate-300">📈 Traiettoria Previsionale & Candele Proiettate (15m Interval)</h3>
+                <h3 className="text-sm font-bold text-slate-300">
+                  📈 Traiettoria Previsionale & Candele Proiettate ({
+                    kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W'
+                      ? '1h Interval'
+                      : kronosTimeframe === '15m' || kronosTimeframe === '30m' || kronosTimeframe === '1h' || kronosTimeframe === '2h'
+                        ? '5m Interval'
+                        : '15m Interval'
+                  })
+                </h3>
                 <span className="text-[10px] text-gray-500 font-mono">
                   Spostati sul grafico per ispezionare le candele
                 </span>

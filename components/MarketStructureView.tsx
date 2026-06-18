@@ -202,9 +202,12 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
     const forecastLastPrice = activeData.last_price || etfData.spot;
     const liveEtfPrice = etfData.spot;
-    const scaleRatio = liveEtfPrice / forecastLastPrice;
+    // For multiday forecasts (1h candles), keep scaleRatio at 1.0 to prevent sub-second jitters.
+    // For intraday forecasts, scale dynamically to align with current price.
+    const scaleRatio = is1h ? 1.0 : liveEtfPrice / forecastLastPrice;
 
-    const lastPrice = liveEtfPrice; // scale start price to match current live spot
+    // Scale start price to match current live spot for intraday, or use static model price for multiday to remain stable.
+    const lastPrice = is1h ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
 
     let candleCount = 4;
     if (kronosTimeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
