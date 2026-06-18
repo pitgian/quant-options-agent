@@ -271,10 +271,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
     const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
     const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
-    const etfSpot = etfData.spot;
     
-    if (futuresSpot && etfSpot) {
-      const etfToFuturesRatio = futuresSpot / etfSpot;
+    if (futuresSpot && activeKronosForecast.lastPrice > 0) {
+      const etfToFuturesRatio = futuresSpot / activeKronosForecast.lastPrice;
       return {
         low: activeKronosForecast.expectedLow * etfToFuturesRatio,
         high: activeKronosForecast.expectedHigh * etfToFuturesRatio,
