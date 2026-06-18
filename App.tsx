@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { MarketStructureView } from './components/MarketStructureView';
+import { DayTradingView } from './components/DayTradingView';
 import { KronosForecastView } from './components/KronosForecastView';
 import { useOptionsData } from './hooks/useOptionsData';
 
 export default function App() {
   const sharedState = useOptionsData();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'kronos'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'levels' | 'kronos'>('dashboard');
 
   return (
     <div className="min-h-screen flex flex-col text-slate-100" style={{ backgroundColor: '#0d1117' }}>
@@ -35,6 +36,16 @@ export default function App() {
                 📊 Dashboard Volumi
               </button>
               <button
+                onClick={() => setActiveTab('levels')}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-150"
+                style={{
+                  backgroundColor: activeTab === 'levels' ? '#1e293b' : 'transparent',
+                  color: activeTab === 'levels' ? '#e2e8f0' : '#64748b',
+                }}
+              >
+                🎯 Livelli Intraday
+              </button>
+              <button
                 onClick={() => setActiveTab('kronos')}
                 className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-150"
                 style={{
@@ -47,17 +58,16 @@ export default function App() {
             </div>
           </div>
           <div className="text-xs text-gray-500 font-semibold tracking-wider uppercase">
-            {activeTab === 'dashboard' ? '3-Profile Unified Dashboard' : 'Kronos AI Detailed Forecast'}
+            {activeTab === 'dashboard' ? '3-Profile Unified Dashboard' : 
+             activeTab === 'levels' ? 'Day Trading Key Levels' : 'Kronos AI Detailed Forecast'}
           </div>
         </div>
       </nav>
 
       {/* Render Selected View */}
-      {activeTab === 'dashboard' ? (
-        <MarketStructureView sharedState={sharedState} />
-      ) : (
-        <KronosForecastView sharedState={sharedState} />
-      )}
+      {activeTab === 'dashboard' && <MarketStructureView sharedState={sharedState} />}
+      {activeTab === 'levels' && <DayTradingView sharedState={sharedState} />}
+      {activeTab === 'kronos' && <KronosForecastView sharedState={sharedState} />}
     </div>
   );
 }

@@ -505,7 +505,7 @@ class ResidualCovariateAdapter(nn.Module):
         super().__init__()
         self.pred_len = pred_len
         self.d_in = d_in
-        self.input_dim = (pred_len * d_in) + 2
+        self.input_dim = (pred_len * d_in) + 3
         self.output_dim = pred_len * d_in
         
         self.net = nn.Sequential(
@@ -522,13 +522,14 @@ class ResidualCovariateAdapter(nn.Module):
                 nn.init.normal_(m.weight, std=0.001)
                 nn.init.zeros_(m.bias)
                 
-    def forward(self, baseline_forecast, skew, pcr):
+    def forward(self, baseline_forecast, skew, pcr, gex):
         # baseline_forecast: (batch_size, pred_len, d_in)
         # skew: (batch_size, 1)
         # pcr: (batch_size, 1)
+        # gex: (batch_size, 1)
         batch_size = baseline_forecast.size(0)
         flat_forecast = baseline_forecast.view(batch_size, -1)
-        covariates = torch.cat([skew, pcr], dim=-1) # (batch_size, 2)
+        covariates = torch.cat([skew, pcr, gex], dim=-1) # (batch_size, 3)
         x = torch.cat([flat_forecast, covariates], dim=-1) # (batch_size, input_dim)
         residual = self.net(x) # (batch_size, output_dim)
         return residual.view(batch_size, self.pred_len, self.d_in)
@@ -634,16 +635,18 @@ class KronosPredictor:
             try:
                 current_skew = df['volatility_skew_25d'].iloc[-1] if 'volatility_skew_25d' in df.columns else 0.0
                 current_pcr = df['put_call_oi_ratio'].iloc[-1] if 'put_call_oi_ratio' in df.columns else 1.0
+                current_gex = (df['total_net_gex'].iloc[-1] / 1e9) if 'total_net_gex' in df.columns else 0.0
                 with torch.no_grad():
                     baseline_tensor = torch.from_numpy(preds).unsqueeze(0).to(self.device)
                     skew_tensor = torch.tensor([[current_skew]], dtype=torch.float32).to(self.device)
                     pcr_tensor = torch.tensor([[current_pcr]], dtype=torch.float32).to(self.device)
+                    gex_tensor = torch.tensor([[current_gex]], dtype=torch.float32).to(self.device)
                     
-                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor)
+                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor, gex_tensor)
                     residual = residual_tensor.squeeze(0).cpu().numpy()
                     preds = preds + residual
                     if verbose:
-                        print(f"Applied Residual Covariate Adapter (skew={current_skew:.4f}, pcr={current_pcr:.4f})")
+                        print(f"Applied Residual Covariate Adapter (skew={current_skew:.4f}, pcr={current_pcr:.4f}, gex={current_gex:.3f}B)")
             except Exception as e:
                 print(f"Warning: Failed to apply covariate adapter: {e}")
 
@@ -757,13 +760,15 @@ class KronosPredictor:
             try:
                 skews = [df_list[i]['volatility_skew_25d'].iloc[-1] if 'volatility_skew_25d' in df_list[i].columns else 0.0 for i in range(num_series)]
                 pcrs = [df_list[i]['put_call_oi_ratio'].iloc[-1] if 'put_call_oi_ratio' in df_list[i].columns else 1.0 for i in range(num_series)]
+                gexs = [(df_list[i]['total_net_gex'].iloc[-1] / 1e9) if 'total_net_gex' in df_list[i].columns else 0.0 for i in range(num_series)]
                 
                 with torch.no_grad():
                     baseline_tensor = torch.from_numpy(preds).to(self.device)
                     skew_tensor = torch.tensor([[s] for s in skews], dtype=torch.float32).to(self.device)
                     pcr_tensor = torch.tensor([[p] for p in pcrs], dtype=torch.float32).to(self.device)
+                    gex_tensor = torch.tensor([[g] for g in gexs], dtype=torch.float32).to(self.device)
                     
-                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor)
+                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor, gex_tensor)
                     residuals = residual_tensor.cpu().numpy()
                     preds = preds + residuals
             except Exception as e:

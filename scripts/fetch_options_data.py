@@ -568,6 +568,7 @@ def parse_chain_side(
     side: str,
     symbol: str = "",
     expiry_date: str = "",
+    spot: float = 0.0,
     oi_lookup: Optional[Dict[Tuple[str, float, str, str], int]] = None,
 ) -> Tuple[List[Dict[str, Any]], int, int]:
     """
@@ -586,12 +587,18 @@ def parse_chain_side(
     fallback_count = 0
     zero_oi_count = 0
     rows = []
+    
+    dte = days_to_expiry(expiry_date) if expiry_date else 0
+
     for _, row in df.iterrows():
         oi = int(row["openInterest"]) if pd.notna(row["openInterest"]) else 0
         vol = int(row["volume"]) if pd.notna(row["volume"]) else 0
         strike = round(float(row["strike"]), 2)
-        gamma = float(row["gamma"]) if pd.notna(row.get("gamma")) else 0.0
         iv = float(row["impliedVolatility"]) if pd.notna(row.get("impliedVolatility")) else 0.0
+        
+        gamma = float(row["gamma"]) if pd.notna(row.get("gamma")) else 0.0
+        if gamma == 0.0 and spot > 0:
+            gamma = estimate_gamma(spot, strike, dte, symbol, iv)
 
         if oi == 0:
             zero_oi_count += 1
@@ -1209,9 +1216,41 @@ def calculate_put_call_oi_ratio(all_options_by_expiry: List[Dict[str, Any]]) -> 
     return total_put_oi / total_call_oi
 
 
-def append_to_history(symbol: str, skew: float, pcr: float, file_path: str = "data/options_history.json") -> None:
+def estimate_gamma(spot: float, strike: float, dte: int, symbol: str, implied_vol: float = None) -> float:
     """
-    Append skew and PCR metrics to history log, keeping the last 500 records per symbol.
+    Estimate option Gamma using Black-Scholes formula.
+    Matches the frontend estimateGamma utility in utils/gammaEstimate.ts
+    """
+    import math
+    DEFAULT_IV = {
+        'SPY': 0.15,
+        'QQQ': 0.20,
+        'SPX': 0.15,
+        'NDX': 0.20,
+    }
+    FALLBACK_IV = 0.20
+    risk_free_rate = 0.05
+
+    symbol_upper = symbol.upper() if symbol else ""
+    default_iv = DEFAULT_IV.get(symbol_upper, FALLBACK_IV)
+    sigma_input = implied_vol if implied_vol is not None else default_iv
+
+    T = max(dte / 365.0, 1.0 / 365.0)
+    sigma = max(sigma_input, 0.05)
+    sqrt_T = math.sqrt(T)
+
+    try:
+        d1 = (math.log(spot / strike) + (risk_free_rate + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
+        pdf = math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)
+        gamma = pdf / (spot * sigma * sqrt_T)
+        return gamma
+    except Exception:
+        return 0.0
+
+
+def append_to_history(symbol: str, skew: float, pcr: float, net_gex: float, file_path: str = "data/options_history.json") -> None:
+    """
+    Append skew, PCR and Net GEX metrics to history log, keeping the last 500 records per symbol.
     """
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     history = []
@@ -1226,7 +1265,8 @@ def append_to_history(symbol: str, skew: float, pcr: float, file_path: str = "da
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "symbol": symbol,
         "volatility_skew_25d": round(skew, 5),
-        "put_call_oi_ratio": round(pcr, 5)
+        "put_call_oi_ratio": round(pcr, 5),
+        "total_net_gex": round(net_gex, 5)
     }
     history.append(new_record)
 
@@ -1350,10 +1390,10 @@ def fetch_symbol_data(
     for exp_date, contract_count in selected_counts:
         chain = fetched_chains[exp_date]
         calls, call_zeros, call_fbs = parse_chain_side(
-            chain["calls"], "CALL", symbol, exp_date, oi_lookup
+            chain["calls"], "CALL", symbol, exp_date, spot, oi_lookup
         )
         puts, put_zeros, put_fbs = parse_chain_side(
-            chain["puts"], "PUT", symbol, exp_date, oi_lookup
+            chain["puts"], "PUT", symbol, exp_date, spot, oi_lookup
         )
         total_zero_oi += call_zeros + put_zeros
         total_fallbacks += call_fbs + put_fbs
@@ -1538,7 +1578,7 @@ def fetch_symbol_data(
     logger.info(f"📈 [{symbol}] Calculated 25-Delta Skew: {skew_value:.4f}, Put/Call OI Ratio: {pcr_value:.4f}")
     
     # Append to history database
-    append_to_history(symbol, skew_value, pcr_value)
+    append_to_history(symbol, skew_value, pcr_value, total_net_gex)
 
     result = {
         "spot": spot,

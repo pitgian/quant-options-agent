@@ -97,6 +97,7 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
     # Load latest real-time options data for fallback
     latest_skew = 0.0
     latest_pcr = 1.0
+    latest_gex = 0.0
     try:
         options_data_path = os.path.join(scripts_dir, "../data/options_data.json")
         if os.path.exists(options_data_path):
@@ -105,6 +106,7 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
                 symbol_data = opt_data.get("symbols", {}).get(symbol, {})
                 latest_skew = symbol_data.get("volatility_skew_25d", 0.0)
                 latest_pcr = symbol_data.get("put_call_oi_ratio", 1.0)
+                latest_gex = symbol_data.get("total_net_gex", 0.0)
     except Exception as e:
         print(f"Warning: Could not load latest options data for fallback: {e}")
 
@@ -137,10 +139,14 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
                 price_df['datetime'] = price_df['datetime'].astype('datetime64[ns]')
                 price_df = price_df.sort_values('datetime')
                 
+                # Ensure total_net_gex column exists in hist_df
+                if 'total_net_gex' not in hist_df.columns:
+                    hist_df['total_net_gex'] = 0.0
+                
                 # Merge options history (backward direction matches closest record before/at price timestamp)
                 merged_df = pd.merge_asof(
                     price_df, 
-                    hist_df[['datetime', 'volatility_skew_25d', 'put_call_oi_ratio']], 
+                    hist_df[['datetime', 'volatility_skew_25d', 'put_call_oi_ratio', 'total_net_gex']], 
                     on='datetime', 
                     direction='backward'
                 )
@@ -161,10 +167,16 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
     else:
         df['put_call_oi_ratio'] = df['put_call_oi_ratio'].fillna(latest_pcr)
 
+    if 'total_net_gex' not in df.columns:
+        df['total_net_gex'] = latest_gex
+    else:
+        df['total_net_gex'] = df['total_net_gex'].fillna(latest_gex)
+
     context_df = df.tail(context_len).copy()
     context_df['volume'] = context_df['volume'].astype(float)
     context_df['volatility_skew_25d'] = context_df['volatility_skew_25d'].astype(float)
     context_df['put_call_oi_ratio'] = context_df['put_call_oi_ratio'].astype(float)
+    context_df['total_net_gex'] = context_df['total_net_gex'].astype(float)
     
     x_timestamp = pd.Series(context_df.index)
     y_timestamp = generate_future_trading_timestamps(context_df.index[-1], interval, pred_len)

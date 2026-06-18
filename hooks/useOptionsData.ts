@@ -112,6 +112,14 @@ export interface UseOptionsDataReturn {
   etfData: DayTradingData | null;
   /** Index-specific day trading data */
   indexData: DayTradingData | null;
+  /** SPY options data (S&P 500 ETF) */
+  spyData: DayTradingData | null;
+  /** SPX options data (S&P 500 Index) */
+  spxData: DayTradingData | null;
+  /** QQQ options data (Nasdaq 100 ETF) */
+  qqqData: DayTradingData | null;
+  /** NDX options data (Nasdaq 100 Index) */
+  ndxData: DayTradingData | null;
   /** Human-readable time since last data update */
   timeSinceUpdate: string;
   /** True when a manual refresh is in progress */
@@ -149,8 +157,10 @@ export interface UseOptionsDataReturn {
 
 export function useOptionsData(): UseOptionsDataReturn {
   const [market, setMarketState] = useState<'SP500' | 'NASDAQ100'>('SP500');
-  const [etfData, setEtfData] = useState<DayTradingData | null>(null);
-  const [indexData, setIndexData] = useState<DayTradingData | null>(null);
+  const [spyData, setSpyData] = useState<DayTradingData | null>(null);
+  const [spxData, setSpxData] = useState<DayTradingData | null>(null);
+  const [qqqData, setQqqData] = useState<DayTradingData | null>(null);
+  const [ndxData, setNdxData] = useState<DayTradingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeSinceUpdate, setTimeSinceUpdate] = useState<string>('');
@@ -160,7 +170,6 @@ export function useOptionsData(): UseOptionsDataReturn {
   const [isBackgroundRefreshing, setIsBackgroundRefreshing] = useState(false);
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('0dte');
   const [kronosForecast, setKronosForecast] = useState<KronosForecast | null>(null);
-
 
   const [liveSpot, setLiveSpot] = useState<{
     SPX: number | null;
@@ -206,40 +215,25 @@ export function useOptionsData(): UseOptionsDataReturn {
   }, []);
 
   const prevTimestampRef = useRef<string | null>(null);
-  const marketRef = useRef(market);
-
-  // Keep marketRef in sync for race condition guards
-  useEffect(() => {
-    marketRef.current = market;
-  }, [market]);
 
   const setMarket = useCallback((newMarket: 'SP500' | 'NASDAQ100') => {
     setMarketState(newMarket);
-    setExpiryFilter('0dte');
-    setEtfData(null);
-    setIndexData(null);
-    setError(null);
   }, []);
 
   // ---- Data fetching ----
   const loadData = useCallback(async (forceRefresh = false) => {
-    const currentMarket = market;
     setLoading(true);
     setError(null);
 
-    const etfSymbol = currentMarket === 'SP500' ? 'SPY' : 'QQQ';
-    const indexSymbol = currentMarket === 'SP500' ? 'SPX' : 'NDX';
-
     try {
-      // Fetch symbols and Kronos forecast in parallel from cache/pipeline/devserver
-      const [etfResult, indexResult, kronosRes] = await Promise.all([
-        fetchOptionsData(etfSymbol, expiryFilter, forceRefresh),
-        fetchOptionsData(indexSymbol, expiryFilter, forceRefresh),
+      // Fetch all 4 symbols and Kronos forecast in parallel
+      const [spyResult, spxResult, qqqResult, ndxResult, kronosRes] = await Promise.all([
+        fetchOptionsData('SPY', expiryFilter, forceRefresh),
+        fetchOptionsData('SPX', expiryFilter, forceRefresh),
+        fetchOptionsData('QQQ', expiryFilter, forceRefresh),
+        fetchOptionsData('NDX', expiryFilter, forceRefresh),
         fetchKronosForecast()
       ]);
-
-      // GUARD: market may have changed during fetch
-      if (currentMarket !== marketRef.current) return;
 
       if (kronosRes && kronosRes.ok) {
         try {
@@ -250,46 +244,43 @@ export function useOptionsData(): UseOptionsDataReturn {
         }
       }
 
-      if (etfResult.success && etfResult.data && indexResult.success && indexResult.data) {
-        setEtfData(etfResult.data);
-        setIndexData(indexResult.data);
-        prevTimestampRef.current = etfResult.data.timestamp ?? null;
+      if (spyResult.success && spyResult.data &&
+          spxResult.success && spxResult.data &&
+          qqqResult.success && qqqResult.data &&
+          ndxResult.success && ndxResult.data) {
+        setSpyData(spyResult.data);
+        setSpxData(spxResult.data);
+        setQqqData(qqqResult.data);
+        setNdxData(ndxResult.data);
+        prevTimestampRef.current = spyResult.data.timestamp ?? null;
         setLastRefreshed(new Date());
         setError(null);
       } else {
-        setError(etfResult.error || indexResult.error || 'Failed to load options data');
+        setError(spyResult.error || spxResult.error || qqqResult.error || ndxResult.error || 'Failed to load options data');
       }
     } catch (err) {
-      if (currentMarket !== marketRef.current) return;
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
-      if (currentMarket === marketRef.current) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
 
-    // Update time since (use ETF timestamp as reference)
-    const ts = await getTimeSinceUpdate(etfSymbol);
-    if (currentMarket !== marketRef.current) return;
+    // Update time since (use SPY timestamp as reference)
+    const ts = await getTimeSinceUpdate('SPY');
     setTimeSinceUpdate(ts);
-  }, [market, expiryFilter]);
+  }, [expiryFilter]);
 
   // Silent background refresh
   const silentRefresh = useCallback(async () => {
     setIsBackgroundRefreshing(true);
-    const currentMarket = market;
-    const etfSymbol = currentMarket === 'SP500' ? 'SPY' : 'QQQ';
-    const indexSymbol = currentMarket === 'SP500' ? 'SPX' : 'NDX';
 
     try {
-      const [etfResult, indexResult, kronosRes] = await Promise.all([
-        fetchOptionsData(etfSymbol, expiryFilter, true),
-        fetchOptionsData(indexSymbol, expiryFilter, true),
+      const [spyResult, spxResult, qqqResult, ndxResult, kronosRes] = await Promise.all([
+        fetchOptionsData('SPY', expiryFilter, true),
+        fetchOptionsData('SPX', expiryFilter, true),
+        fetchOptionsData('QQQ', expiryFilter, true),
+        fetchOptionsData('NDX', expiryFilter, true),
         fetchKronosForecast()
       ]);
-
-      // GUARD: Only update if market hasn't changed
-      if (currentMarket !== marketRef.current) return;
 
       if (kronosRes && kronosRes.ok) {
         try {
@@ -300,13 +291,18 @@ export function useOptionsData(): UseOptionsDataReturn {
         }
       }
 
-      if (etfResult.success && etfResult.data && indexResult.success && indexResult.data) {
+      if (spyResult.success && spyResult.data &&
+          spxResult.success && spxResult.data &&
+          qqqResult.success && qqqResult.data &&
+          ndxResult.success && ndxResult.data) {
         const prevTimestamp = prevTimestampRef.current;
-        const newTimestamp = etfResult.data.timestamp ?? null;
+        const newTimestamp = spyResult.data.timestamp ?? null;
 
         if (prevTimestamp !== newTimestamp) {
-          setEtfData(etfResult.data);
-          setIndexData(indexResult.data);
+          setSpyData(spyResult.data);
+          setSpxData(spxResult.data);
+          setQqqData(qqqResult.data);
+          setNdxData(ndxResult.data);
           prevTimestampRef.current = newTimestamp;
           setLastRefreshed(new Date());
           setShowUpdatedFlash(true);
@@ -314,13 +310,12 @@ export function useOptionsData(): UseOptionsDataReturn {
         }
       }
 
-      const ts = await getTimeSinceUpdate(etfSymbol);
-      if (currentMarket !== marketRef.current) return;
+      const ts = await getTimeSinceUpdate('SPY');
       setTimeSinceUpdate(ts);
     } finally {
       setIsBackgroundRefreshing(false);
     }
-  }, [market, expiryFilter]);
+  }, [expiryFilter]);
 
   useEffect(() => {
     loadData();
@@ -352,24 +347,19 @@ export function useOptionsData(): UseOptionsDataReturn {
     setRefreshing(false);
   };
 
-  // Overridden etfData and indexData with live spot prices
-  const finalEtfData = useMemo(() => {
-    if (!etfData) return null;
+  // Helper to adjust options data dynamically based on live market spots
+  const adjustDataWithLiveSpot = useCallback((dayData: DayTradingData | null, symb: string) => {
+    if (!dayData) return null;
     
-    const etfSymbol = market === 'SP500' ? 'SPY' : 'QQQ';
-    
-    // Strictly rely on the cleanly derived ETF spot price calculated by the backend
-    const livePrice = liveSpot[etfSymbol as keyof typeof liveSpot];
-    if (!livePrice) return etfData;
-    const finalPrice = livePrice;
+    // Rely on cleanly derived spot prices from Yahoo Finance
+    const livePrice = liveSpot[symb as keyof typeof liveSpot];
+    if (!livePrice) return dayData;
 
-    // Use Cash ETF price for GEX regime detection to match options contract settlement
-    const cashPrice = liveSpot[etfSymbol as keyof typeof liveSpot] || etfData.spot;
-    const flipPoint = etfData.gexRegime.flipPoint;
-    let regime = etfData.gexRegime.regime;
-    let label = etfData.gexRegime.label;
+    const flipPoint = dayData.gexRegime.flipPoint;
+    let regime = dayData.gexRegime.regime;
+    let label = dayData.gexRegime.label;
     if (flipPoint !== null) {
-      if (cashPrice >= flipPoint) {
+      if (livePrice >= flipPoint) {
         regime = 'positive';
         label = 'Low Volatility';
       } else {
@@ -379,65 +369,37 @@ export function useOptionsData(): UseOptionsDataReturn {
     }
 
     return {
-      ...etfData,
-      spot: finalPrice,
-      gexRegime: {
-        ...etfData.gexRegime,
-        regime,
-        label,
-      },
-      resistance: etfData.resistance.map(r => ({
-        ...r,
-        distance: Math.round((Math.abs(r.strike - finalPrice) / finalPrice) * 10000) / 100
-      })),
-      support: etfData.support.map(s => ({
-        ...s,
-        distance: Math.round((Math.abs(s.strike - finalPrice) / finalPrice) * 10000) / 100
-      }))
-    };
-  }, [etfData, indexData, liveSpot, market]);
-
-  const finalIndexData = useMemo(() => {
-    if (!indexData) return null;
-    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
-
-    // Strictly rely on the cleanly derived Cash index spot price calculated by the backend
-    const livePrice = liveSpot[indexSymbol as keyof typeof liveSpot];
-    if (!livePrice) return indexData;
-
-    // Use Cash Index price for GEX regime detection to match options contract settlement
-    const cashPrice = liveSpot[indexSymbol as keyof typeof liveSpot] || indexData.spot;
-    const flipPoint = indexData.gexRegime.flipPoint;
-    let regime = indexData.gexRegime.regime;
-    let label = indexData.gexRegime.label;
-    if (flipPoint !== null) {
-      if (cashPrice >= flipPoint) {
-        regime = 'positive';
-        label = 'Low Volatility';
-      } else {
-        regime = 'negative';
-        label = 'High Volatility';
-      }
-    }
-
-    return {
-      ...indexData,
+      ...dayData,
       spot: livePrice,
       gexRegime: {
-        ...indexData.gexRegime,
+        ...dayData.gexRegime,
         regime,
         label,
       },
-      resistance: indexData.resistance.map(r => ({
+      resistance: dayData.resistance.map(r => ({
         ...r,
         distance: Math.round((Math.abs(r.strike - livePrice) / livePrice) * 10000) / 100
       })),
-      support: indexData.support.map(s => ({
+      support: dayData.support.map(s => ({
         ...s,
         distance: Math.round((Math.abs(s.strike - livePrice) / livePrice) * 10000) / 100
       }))
     };
-  }, [indexData, liveSpot, market]);
+  }, [liveSpot]);
+
+  // Overridden spyData, spxData, qqqData, ndxData with live spot prices
+  const finalSpyData = useMemo(() => adjustDataWithLiveSpot(spyData, 'SPY'), [spyData, adjustDataWithLiveSpot]);
+  const finalSpxData = useMemo(() => adjustDataWithLiveSpot(spxData, 'SPX'), [spxData, adjustDataWithLiveSpot]);
+  const finalQqqData = useMemo(() => adjustDataWithLiveSpot(qqqData, 'QQQ'), [qqqData, adjustDataWithLiveSpot]);
+  const finalNdxData = useMemo(() => adjustDataWithLiveSpot(ndxData, 'NDX'), [ndxData, adjustDataWithLiveSpot]);
+
+  const finalEtfData = useMemo(() => {
+    return market === 'SP500' ? finalSpyData : finalQqqData;
+  }, [market, finalSpyData, finalQqqData]);
+
+  const finalIndexData = useMemo(() => {
+    return market === 'SP500' ? finalSpxData : finalNdxData;
+  }, [market, finalSpxData, finalNdxData]);
 
   return {
     loading,
@@ -446,6 +408,10 @@ export function useOptionsData(): UseOptionsDataReturn {
     setMarket,
     etfData: finalEtfData,
     indexData: finalIndexData,
+    spyData: finalSpyData,
+    spxData: finalSpxData,
+    qqqData: finalQqqData,
+    ndxData: finalNdxData,
     timeSinceUpdate,
     refreshing,
     isBackgroundRefreshing,

@@ -18,6 +18,18 @@ export default defineConfig(({ mode }) => {
               const urlPath = url.pathname;
 
               console.log('[DEBUG] Vite middleware - req.url:', req.url, 'urlPath:', urlPath);
+              
+              if (urlPath.startsWith('/data/')) {
+                const fileName = path.basename(urlPath);
+                const filePath = path.join(process.cwd(), 'data', fileName);
+                if (fs.existsSync(filePath)) {
+                  res.setHeader('Content-Type', 'application/json');
+                  res.setHeader('Access-Control-Allow-Origin', '*');
+                  res.end(fs.readFileSync(filePath));
+                  return;
+                }
+              }
+
               if (urlPath === '/api-spot') {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');

@@ -166,6 +166,7 @@ def main():
         # Get covariates
         skew = record["volatility_skew_25d"]
         pcr = record["put_call_oi_ratio"]
+        gex = record.get("total_net_gex", 0.0) / 1e9
 
         # Run baseline Kronos forecast (without adapter)
         # Temporarily disable predictor's adapter if it loads one
@@ -220,6 +221,7 @@ def main():
                 "baseline": preds_norm,            # (pred_len, 6)
                 "skew": skew,
                 "pcr": pcr,
+                "gex": gex,
                 "target_residual": target_residual # (pred_len, 6)
             })
         except Exception as e:
@@ -240,6 +242,7 @@ def main():
             # Use latest record's covariates
             skew = records[-1]["volatility_skew_25d"]
             pcr = records[-1]["put_call_oi_ratio"]
+            gex = records[-1].get("total_net_gex", 0.0) / 1e9
             
             x_timestamp = pd.Series(context_df.index)
             y_timestamp = pd.Series(future_df.index)
@@ -284,6 +287,7 @@ def main():
                         "baseline": preds_norm + np.random.normal(0, 0.02, size=preds_norm.shape).astype(np.float32),
                         "skew": skew + np.random.normal(0, 0.01),
                         "pcr": pcr + np.random.normal(0, 0.05),
+                        "gex": gex + np.random.normal(0, 0.2),
                         "target_residual": target_residual + noise
                     })
             except Exception as e:
@@ -292,23 +296,24 @@ def main():
         if not training_samples:
             print("❌ Error: Could not construct even synthetic training samples.")
             sys.exit(1)
-
+ 
     # 5. Training loop
     adapter = ResidualCovariateAdapter(pred_len=args.pred_len).to(device)
     optimizer = torch.optim.Adam(adapter.parameters(), lr=args.lr)
     criterion = nn.MSELoss()
-
+ 
     # Convert training samples to tensors
     baselines = torch.stack([torch.from_numpy(s["baseline"]) for s in training_samples]).to(device) # (N, pred_len, 6)
     skews = torch.tensor([[s["skew"]] for s in training_samples], dtype=torch.float32).to(device) # (N, 1)
     pcrs = torch.tensor([[s["pcr"]] for s in training_samples], dtype=torch.float32).to(device)   # (N, 1)
+    gexs = torch.tensor([[s["gex"]] for s in training_samples], dtype=torch.float32).to(device)   # (N, 1)
     targets = torch.stack([torch.from_numpy(s["target_residual"]) for s in training_samples]).to(device) # (N, pred_len, 6)
-
+ 
     print("Training Residual Covariate Adapter...")
     adapter.train()
     for epoch in range(args.epochs):
         optimizer.zero_grad()
-        outputs = adapter(baselines, skews, pcrs)
+        outputs = adapter(baselines, skews, pcrs, gexs)
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
