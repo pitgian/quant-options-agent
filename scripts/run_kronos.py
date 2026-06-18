@@ -142,7 +142,7 @@ def get_market_bias(ticker, model, tokenizer, device):
         device=device
     )
     
-    # Generate 1h Forecast (up to 24 candles)
+    # Generate 1h Forecast (up to 40 candles)
     print(f"\n--- Generating 1h forecast for {ticker} ---")
     forecast_1h = run_forecast_for_resolution(
         fetch_ticker=fetch_ticker,
@@ -150,7 +150,7 @@ def get_market_bias(ticker, model, tokenizer, device):
         interval="1h",
         period="30d",
         context_len=128,
-        pred_len=24,
+        pred_len=40,
         model=model,
         tokenizer=tokenizer,
         device=device
