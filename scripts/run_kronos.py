@@ -89,8 +89,82 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col] / ratio
 
+    # Add Skew and PCR covariates
+    symbol = "SPY"
+    if "NQ" in fetch_ticker or "QQQ" in fetch_ticker:
+        symbol = "QQQ"
+
+    # Load latest real-time options data for fallback
+    latest_skew = 0.0
+    latest_pcr = 1.0
+    try:
+        options_data_path = os.path.join(scripts_dir, "../data/options_data.json")
+        if os.path.exists(options_data_path):
+            with open(options_data_path, "r") as f:
+                opt_data = json.load(f)
+                symbol_data = opt_data.get("symbols", {}).get(symbol, {})
+                latest_skew = symbol_data.get("volatility_skew_25d", 0.0)
+                latest_pcr = symbol_data.get("put_call_oi_ratio", 1.0)
+    except Exception as e:
+        print(f"Warning: Could not load latest options data for fallback: {e}")
+
+    # Try to load options history and merge using pd.merge_asof
+    history_loaded = False
+    history_path = os.path.join(scripts_dir, "../data/options_history.json")
+    if os.path.exists(history_path):
+        try:
+            with open(history_path, "r") as f:
+                history = json.load(f)
+            symbol_history = [r for r in history if r.get("symbol") == symbol]
+            if symbol_history:
+                hist_df = pd.DataFrame(symbol_history)
+                hist_dt = pd.to_datetime(hist_df['timestamp'])
+                if hist_dt.dt.tz is not None:
+                    hist_df['datetime'] = hist_dt.dt.tz_convert('UTC').dt.tz_localize(None)
+                else:
+                    hist_df['datetime'] = hist_dt
+                hist_df['datetime'] = hist_df['datetime'].astype('datetime64[ns]')
+                hist_df = hist_df.sort_values('datetime')
+                
+                # Prepare price df for merge_asof
+                price_df = df.reset_index()
+                index_col = price_df.columns[0]
+                price_dt = pd.to_datetime(price_df[index_col])
+                if price_dt.dt.tz is not None:
+                    price_df['datetime'] = price_dt.dt.tz_convert('UTC').dt.tz_localize(None)
+                else:
+                    price_df['datetime'] = price_dt
+                price_df['datetime'] = price_df['datetime'].astype('datetime64[ns]')
+                price_df = price_df.sort_values('datetime')
+                
+                # Merge options history (backward direction matches closest record before/at price timestamp)
+                merged_df = pd.merge_asof(
+                    price_df, 
+                    hist_df[['datetime', 'volatility_skew_25d', 'put_call_oi_ratio']], 
+                    on='datetime', 
+                    direction='backward'
+                )
+                df = merged_df.set_index(index_col)
+                df = df.drop(columns=['datetime'])
+                history_loaded = True
+                print(f"Successfully merged {len(symbol_history)} options history records for {symbol} using merge_asof.")
+        except Exception as e:
+            print(f"Warning: Failed to merge options history: {e}")
+
+    if not history_loaded or 'volatility_skew_25d' not in df.columns:
+        df['volatility_skew_25d'] = latest_skew
+    else:
+        df['volatility_skew_25d'] = df['volatility_skew_25d'].fillna(latest_skew)
+        
+    if 'put_call_oi_ratio' not in df.columns:
+        df['put_call_oi_ratio'] = latest_pcr
+    else:
+        df['put_call_oi_ratio'] = df['put_call_oi_ratio'].fillna(latest_pcr)
+
     context_df = df.tail(context_len).copy()
     context_df['volume'] = context_df['volume'].astype(float)
+    context_df['volatility_skew_25d'] = context_df['volatility_skew_25d'].astype(float)
+    context_df['put_call_oi_ratio'] = context_df['put_call_oi_ratio'].astype(float)
     
     x_timestamp = pd.Series(context_df.index)
     y_timestamp = generate_future_trading_timestamps(context_df.index[-1], interval, pred_len)

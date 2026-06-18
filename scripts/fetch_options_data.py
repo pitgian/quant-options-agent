@@ -571,7 +571,7 @@ def parse_chain_side(
     oi_lookup: Optional[Dict[Tuple[str, float, str, str], int]] = None,
 ) -> Tuple[List[Dict[str, Any]], int, int]:
     """
-    Extract strike, oi, volume from a single side (calls/puts) DataFrame.
+    Extract strike, oi, volume, gamma, and implied volatility from a single side (calls/puts) DataFrame.
 
     If *oi_lookup* is provided and a row has oi == 0, attempts to fall back
     to the last known non-zero OI from the lookup using the key
@@ -591,6 +591,7 @@ def parse_chain_side(
         vol = int(row["volume"]) if pd.notna(row["volume"]) else 0
         strike = round(float(row["strike"]), 2)
         gamma = float(row["gamma"]) if pd.notna(row.get("gamma")) else 0.0
+        iv = float(row["impliedVolatility"]) if pd.notna(row.get("impliedVolatility")) else 0.0
 
         if oi == 0:
             zero_oi_count += 1
@@ -608,9 +609,11 @@ def parse_chain_side(
                 "oi": oi,
                 "vol": vol,
                 "gamma": gamma,
+                "iv": iv,
             }
         )
     return rows, zero_oi_count, fallback_count
+
 
 
 # ---------------------------------------------------------------------------
@@ -1058,10 +1061,193 @@ def fetch_futures_volume_profile(
         return {}
 
 
+def calculate_volatility_skew_25d(all_options_by_expiry: List[Dict[str, Any]], spot: float) -> float:
+    """
+    Calculate the 25-Delta volatility skew: IV(Put 25D) - IV(Call 25D)
+    averaged across liquid expirations (1 <= DTE <= 60).
+    """
+    import math
+
+    def normal_cdf(x):
+        return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
+
+    def get_delta(spot, strike, dte, iv, side):
+        t = max(1, dte) / 365.0
+        r = 0.05
+        if iv <= 0 or t <= 0:
+            if side == "CALL":
+                return 1.0 if spot > strike else 0.0
+            else:
+                return -1.0 if spot < strike else 0.0
+        try:
+            d1 = (math.log(spot / strike) + (r + (iv ** 2) / 2.0) * t) / (iv * math.sqrt(t))
+            if side == "CALL":
+                return normal_cdf(d1)
+            else:
+                return normal_cdf(d1) - 1.0
+        except Exception:
+            if side == "CALL":
+                return 1.0 if spot > strike else 0.0
+            else:
+                return -1.0 if spot < strike else 0.0
+
+    exp_skews = []
+    exp_weights = []
+
+    for exp_info in all_options_by_expiry:
+        exp_date = exp_info["date"]
+        dte = days_to_expiry(exp_date)
+        # Focus on liquid near-term expirations (e.g., 1 to 60 days)
+        if dte < 1 or dte > 60:
+            continue
+
+        options = exp_info["options"]
+        puts = [o for o in options if o["side"] == "PUT"]
+        calls = [o for o in options if o["side"] == "CALL"]
+
+        if not puts or not calls:
+            continue
+
+        # Find put closest to -0.25 delta
+        best_put = None
+        min_put_diff = float("inf")
+        for p in puts:
+            p_iv = p.get("iv", 0.0)
+            if p_iv <= 0:
+                continue
+            delta = get_delta(spot, p["strike"], dte, p_iv, "PUT")
+            diff = abs(delta - (-0.25))
+            if diff < min_put_diff:
+                min_put_diff = diff
+                best_put = p
+
+        # Find call closest to 0.25 delta
+        best_call = None
+        min_call_diff = float("inf")
+        for c in calls:
+            c_iv = c.get("iv", 0.0)
+            if c_iv <= 0:
+                continue
+            delta = get_delta(spot, c["strike"], dte, c_iv, "CALL")
+            diff = abs(delta - 0.25)
+            if diff < min_call_diff:
+                min_call_diff = diff
+                best_call = c
+
+        if best_put and best_call and min_put_diff < 0.15 and min_call_diff < 0.15:
+            put_iv = best_put.get("iv", 0.0)
+            call_iv = best_call.get("iv", 0.0)
+            skew = put_iv - call_iv
+            total_oi = sum(o.get("oi", 0) for o in options)
+            exp_skews.append(skew)
+            exp_weights.append(total_oi if total_oi > 0 else 1)
+
+    if not exp_skews:
+        # Fallback: try first available expiration
+        for exp_info in all_options_by_expiry:
+            exp_date = exp_info["date"]
+            dte = days_to_expiry(exp_date)
+            options = exp_info["options"]
+            puts = [o for o in options if o["side"] == "PUT"]
+            calls = [o for o in options if o["side"] == "CALL"]
+
+            best_put = None
+            min_put_diff = float("inf")
+            for p in puts:
+                p_iv = p.get("iv", 0.0)
+                if p_iv <= 0:
+                    continue
+                delta = get_delta(spot, p["strike"], dte, p_iv, "PUT")
+                diff = abs(delta - (-0.25))
+                if diff < min_put_diff:
+                    min_put_diff = diff
+                    best_put = p
+
+            best_call = None
+            min_call_diff = float("inf")
+            for c in calls:
+                c_iv = c.get("iv", 0.0)
+                if c_iv <= 0:
+                    continue
+                delta = get_delta(spot, c["strike"], dte, c_iv, "CALL")
+                diff = abs(delta - 0.25)
+                if diff < min_call_diff:
+                    min_call_diff = diff
+                    best_call = c
+
+            if best_put and best_call:
+                put_iv = best_put.get("iv", 0.0)
+                call_iv = best_call.get("iv", 0.0)
+                return put_iv - call_iv
+
+        return 0.0
+
+    # Weighted average of skews
+    total_w = sum(exp_weights)
+    weighted_skew = sum(s * w for s, w in zip(exp_skews, exp_weights)) / total_w
+    return weighted_skew
+
+
+def calculate_put_call_oi_ratio(all_options_by_expiry: List[Dict[str, Any]]) -> float:
+    """
+    Calculate the total Put Open Interest divided by total Call Open Interest.
+    """
+    total_put_oi = 0
+    total_call_oi = 0
+
+    for exp_info in all_options_by_expiry:
+        for opt in exp_info["options"]:
+            oi = opt.get("oi", 0)
+            if opt["side"] == "PUT":
+                total_put_oi += oi
+            elif opt["side"] == "CALL":
+                total_call_oi += oi
+
+    if total_call_oi <= 0:
+        return 1.0 if total_put_oi > 0 else 0.0
+
+    return total_put_oi / total_call_oi
+
+
+def append_to_history(symbol: str, skew: float, pcr: float, file_path: str = "data/options_history.json") -> None:
+    """
+    Append skew and PCR metrics to history log, keeping the last 500 records per symbol.
+    """
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    history = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                history = json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not load history file: {e}")
+
+    new_record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol,
+        "volatility_skew_25d": round(skew, 5),
+        "put_call_oi_ratio": round(pcr, 5)
+    }
+    history.append(new_record)
+
+    # Filter to keep only last 500 records per symbol
+    spy_records = [r for r in history if r.get("symbol") == "SPY"][-500:]
+    qqq_records = [r for r in history if r.get("symbol") == "QQQ"][-500:]
+    other_records = [r for r in history if r.get("symbol") not in ["SPY", "QQQ"]][-500:]
+    history = spy_records + qqq_records + other_records
+
+    try:
+        with open(file_path, "w") as f:
+            json.dump(history, f, indent=2)
+        logger.info(f"💾 Saved real-time covariates for {symbol} to history ({file_path})")
+    except Exception as e:
+        logger.error(f"❌ Failed to write to history file: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
+
 
 def fetch_symbol_data(
     symbol: str,
@@ -1346,12 +1532,22 @@ def fetch_symbol_data(
     futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, period="90d", interval="1d")
     futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="max", interval="1d")
 
+    # Calculate covariates
+    skew_value = calculate_volatility_skew_25d(all_options_by_expiry, spot)
+    pcr_value = calculate_put_call_oi_ratio(all_options_by_expiry)
+    logger.info(f"📈 [{symbol}] Calculated 25-Delta Skew: {skew_value:.4f}, Put/Call OI Ratio: {pcr_value:.4f}")
+    
+    # Append to history database
+    append_to_history(symbol, skew_value, pcr_value)
+
     result = {
         "spot": spot,
         "generated": now_iso,
         "oi_fallback_used": oi_fallback_used,
         "total_net_gex": round(total_net_gex, 2),
         "gex_flip_point": gex_flip_point,
+        "volatility_skew_25d": round(skew_value, 4),
+        "put_call_oi_ratio": round(pcr_value, 4),
         "futures_volume_profile": futures_volume_profile_30d, # Keep legacy 30d profile as default
         "futures_volume_profiles": {
             "1d": futures_volume_profile_1d,

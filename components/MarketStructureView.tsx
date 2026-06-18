@@ -762,8 +762,8 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
             {/* GEX Regimes */}
             <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-center">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Regime GEX</span>
-              <div className="mt-1 grid grid-cols-2 gap-4">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Regime GEX & Covariate</span>
+              <div className="mt-2 grid grid-cols-2 gap-4">
                 <div>
                   <span className="text-[9px] text-gray-400 font-medium block">Indice ({indexData.symbol})</span>
                   <span
@@ -778,6 +778,16 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                   {indexData.gexRegime.flipPoint && (
                     <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
                       Flip: ${indexData.gexRegime.flipPoint.toFixed(0)}
+                    </div>
+                  )}
+                  {indexData.volatilitySkew25d !== undefined && (
+                    <div className="text-[9px] text-gray-400 mt-1 font-mono">
+                      Skew: <span className="text-amber-400 font-bold">{indexData.volatilitySkew25d > 0 ? '+' : ''}{(indexData.volatilitySkew25d * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
+                  {indexData.putCallOiRatio !== undefined && (
+                    <div className="text-[9px] text-gray-400 font-mono">
+                      PCR (OI): <span className="text-indigo-400 font-bold">{indexData.putCallOiRatio.toFixed(2)}</span>
                     </div>
                   )}
                 </div>
@@ -795,6 +805,16 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                   {etfData.gexRegime.flipPoint && (
                     <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
                       Flip: ${etfData.gexRegime.flipPoint.toFixed(1)}
+                    </div>
+                  )}
+                  {etfData.volatilitySkew25d !== undefined && (
+                    <div className="text-[9px] text-gray-400 mt-1 font-mono">
+                      Skew: <span className="text-amber-400 font-bold">{etfData.volatilitySkew25d > 0 ? '+' : ''}{(etfData.volatilitySkew25d * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
+                  {etfData.putCallOiRatio !== undefined && (
+                    <div className="text-[9px] text-gray-400 font-mono">
+                      PCR (OI): <span className="text-indigo-400 font-bold">{etfData.putCallOiRatio.toFixed(2)}</span>
                     </div>
                   )}
                 </div>
@@ -949,13 +969,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                         <div className="flex items-center justify-between">
                           <span className="text-gray-400 font-medium">Range Atteso ({kronosTimeframe}):</span>
                           <span className="font-mono font-semibold text-blue-400">
-                            F: ${kronosRange ? kronosRange.low.toFixed(0) : '0'} - ${kronosRange ? kronosRange.high.toFixed(0) : '0'}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-[10px]">
-                          <span className="text-gray-500">Equivalenti (C | E):</span>
-                          <span className="font-mono text-gray-400 text-[10px]">
-                            C: ${kronosRange ? (kronosRange.low / basisMultiplier).toFixed(0) : '0'} - ${kronosRange ? (kronosRange.high / basisMultiplier).toFixed(0) : '0'} | E: ${activeKronosForecast.expectedLow.toFixed(1)} - ${activeKronosForecast.expectedHigh.toFixed(1)}
+                            ${kronosRange ? kronosRange.low.toFixed(0) : '0'} - ${kronosRange ? kronosRange.high.toFixed(0) : '0'}
                           </span>
                         </div>
                       </div>
@@ -1077,7 +1091,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             {/* Header labels for profiles */}
             <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
               <span className="text-right">Opzioni ETF (OI+Vol)</span>
-              <span className="text-center">Strike (F | E)</span>
+              <span className="text-center">Strike</span>
               <span className="text-left">Opzioni Indice (OI+Vol)</span>
               <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
             </div>
@@ -1157,17 +1171,17 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                     {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
                     {isFlipRow && rowHeight >= 18 && (
                       <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[6.5px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
-                        ⚡ GEX Flip: F: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)} | E: ${(indexData.gexRegime.flipPoint / ratio).toFixed(1)}
+                        ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
                       </span>
                     )}
                     {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
                       <span className="absolute left-2 -top-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos High: F: ${kronosRange.high.toFixed(0)} | E: ${(kronosRange.high / kronosRange.etfToFuturesRatio).toFixed(1)}
+                        🎯 Kronos High: ${kronosRange.high.toFixed(0)}
                       </span>
                     )}
                     {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
                       <span className="absolute left-2 -bottom-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos Low: F: ${kronosRange.low.toFixed(0)} | E: ${(kronosRange.low / kronosRange.etfToFuturesRatio).toFixed(1)}
+                        🎯 Kronos Low: ${kronosRange.low.toFixed(0)}
                       </span>
                     )}
 
@@ -1206,14 +1220,14 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                           lineHeight: 1,
                         }}
                       >
-                        F: {d.futuresStrike.toFixed(0)} | E: {d.etfStrike.toFixed(0)}
+                        {d.futuresStrike.toFixed(0)}
                       </span>
                       {isClosest && rowHeight >= 18 && (
                         <span className="absolute -bottom-3 text-[6.5px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
-                          Spot: F: {(() => {
+                          Spot: {(() => {
                             const fs = market === 'SP500' ? 'ES' : 'NQ';
-                            return (liveSpot[fs as keyof typeof liveSpot] || indexSpot).toFixed(2);
-                          })()} | E: {etfCashSpot.toFixed(2)}
+                            return (liveSpot[fs as keyof typeof liveSpot] || indexSpot).toFixed(1);
+                          })()}
                         </span>
                       )}
                     </div>

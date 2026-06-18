@@ -60,18 +60,63 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r scripts/requirements.txt
           
+      - name: Restore state from repository data branch
+        continue-on-error: true
+        run: |
+          git fetch origin data || true
+          git checkout origin/data -- data/options_history.json || true
+          git checkout origin/data -- scripts/model/covariate_adapter.pth || true
+
+      - name: Restore state from Gist
+        id: gist_restore
+        continue-on-error: true
+        run: |
+          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
+            echo "GH_PAT or GIST_ID secret is missing. Skipping Gist restore."
+            exit 0
+          fi
+          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo_restore
+          if [ -f gist_repo_restore/options_history.json ]; then
+            echo "Restoring options_history.json from Gist..."
+            mkdir -p data
+            cp -f gist_repo_restore/options_history.json data/
+          fi
+          if [ -f gist_repo_restore/covariate_adapter.pth ]; then
+            echo "Restoring covariate_adapter.pth from Gist..."
+            mkdir -p scripts/model
+            cp -f gist_repo_restore/covariate_adapter.pth scripts/model/
+          fi
+          rm -rf gist_repo_restore
+
       - name: Fetch options data
         timeout-minutes: 20
         run: |
           source .venv/bin/activate
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
-          python scripts/run_kronos.py
         env:
           TZ: America/New_York
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
-          
+
+      - name: Train covariate adapters
+        timeout-minutes: 15
+        run: |
+          source .venv/bin/activate
+          python scripts/train_adapter.py --symbol SPY --interval 15m --epochs 20 || true
+          python scripts/train_adapter.py --symbol QQQ --interval 15m --epochs 20 || true
+        env:
+          TZ: America/New_York
+
+      - name: Run Kronos predictions
+        timeout-minutes: 15
+        run: |
+          source .venv/bin/activate
+          python scripts/run_kronos.py
+        env:
+          TZ: America/New_York
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+
       - name: Commit and push to Gist
         id: gist_push
         continue-on-error: true
@@ -88,20 +133,22 @@ jobs:
           # 2. Copy the generated files
           cp data/options_data.json gist_repo/
           cp data/kronos_forecast.json gist_repo/
+          cp data/options_history.json gist_repo/ || true
+          cp scripts/model/covariate_adapter.pth gist_repo/ || true
           
           # 3. Configure Git and commit
           cd gist_repo
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          git add options_data.json kronos_forecast.json
+          git add options_data.json kronos_forecast.json options_history.json covariate_adapter.pth
           
           if git diff --quiet && git diff --staged --quiet; then
             echo "Nessun cambiamento da committare nel gist"
             exit 0
           fi
           
-          git commit -m "chore: update options data"
+          git commit -m "chore: update options data and model state"
           
           # 4. Push to Gist
           for i in 1 2 3; do
@@ -125,9 +172,11 @@ jobs:
           mkdir -p /tmp/generated_data
           cp data/options_data.json /tmp/generated_data/
           cp data/kronos_forecast.json /tmp/generated_data/
+          cp data/options_history.json /tmp/generated_data/ || true
+          cp scripts/model/covariate_adapter.pth /tmp/generated_data/ || true
           
           # Remove local generated files to prevent checkout conflicts
-          rm -f data/options_data.json data/kronos_forecast.json
+          rm -f data/options_data.json data/kronos_forecast.json data/options_history.json scripts/model/covariate_adapter.pth
           
           # Clean checkout data branch
           git fetch origin data
@@ -137,13 +186,16 @@ jobs:
           mkdir -p data
           cp /tmp/generated_data/options_data.json data/
           cp /tmp/generated_data/kronos_forecast.json data/
+          cp /tmp/generated_data/options_history.json data/ || true
+          mkdir -p scripts/model
+          cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
           
           # Configure Git
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
           # Add and commit
-          git add data/options_data.json data/kronos_forecast.json
+          git add data/options_data.json data/kronos_forecast.json data/options_history.json scripts/model/covariate_adapter.pth
           
           # Generate vercel.json if missing to ignore builds
           if [ ! -f vercel.json ]; then
@@ -156,5 +208,5 @@ jobs:
             exit 0
           fi
           
-          git commit -m "chore: update options data [fallback] [skip ci]"
+          git commit -m "chore: update options data and model state [fallback] [skip ci]"
           git push origin data

@@ -76,7 +76,7 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
         Forward pass of the KronosTokenizer.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, d_in).
+            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, d_in + covariates).
 
         Returns:
             tuple: A tuple containing:
@@ -86,7 +86,17 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
                 - torch.Tensor: quantized - Quantized representation from BSQuantizer.
                 - torch.Tensor: z_indices - Indices from the BSQuantizer.
         """
-        z = self.embed(x)
+        if x.shape[-1] > self.d_in:
+            x_base = x[:, :, :self.d_in]
+            x_exog = x[:, :, self.d_in:]
+            z_base = self.embed(x_base)
+            if not hasattr(self, 'exog_embed'):
+                self.exog_embed = nn.Linear(x_exog.shape[-1], self.d_model).to(device=x.device, dtype=x.dtype)
+                nn.init.normal_(self.exog_embed.weight, std=0.02)
+                nn.init.zeros_(self.exog_embed.bias)
+            z = z_base + self.exog_embed(x_exog)
+        else:
+            z = self.embed(x)
 
         for layer in self.encoder:
             z = layer(z)
@@ -144,13 +154,24 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
         Encodes the input data into quantized indices.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, d_in).
+            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, d_in + covariates).
             half (bool, optional): Whether to use half quantization in BSQuantizer. Defaults to False.
 
         Returns:
             torch.Tensor: Quantized indices from BSQuantizer.
         """
-        z = self.embed(x)
+        if x.shape[-1] > self.d_in:
+            x_base = x[:, :, :self.d_in]
+            x_exog = x[:, :, self.d_in:]
+            z_base = self.embed(x_base)
+            if not hasattr(self, 'exog_embed'):
+                self.exog_embed = nn.Linear(x_exog.shape[-1], self.d_model).to(device=x.device, dtype=x.dtype)
+                nn.init.normal_(self.exog_embed.weight, std=0.02)
+                nn.init.zeros_(self.exog_embed.bias)
+            z = z_base + self.exog_embed(x_exog)
+        else:
+            z = self.embed(x)
+
         for layer in self.encoder:
             z = layer(z)
         z = self.quant_embed(z)
@@ -479,6 +500,40 @@ def calc_time_stamps(x_timestamp):
     return time_df
 
 
+class ResidualCovariateAdapter(nn.Module):
+    def __init__(self, pred_len, d_in=6, hidden_dim=64):
+        super().__init__()
+        self.pred_len = pred_len
+        self.d_in = d_in
+        self.input_dim = (pred_len * d_in) + 2
+        self.output_dim = pred_len * d_in
+        
+        self.net = nn.Sequential(
+            nn.Linear(self.input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, self.output_dim)
+        )
+        
+        # Initialize weights with very small values so initial adjustment is near zero
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.001)
+                nn.init.zeros_(m.bias)
+                
+    def forward(self, baseline_forecast, skew, pcr):
+        # baseline_forecast: (batch_size, pred_len, d_in)
+        # skew: (batch_size, 1)
+        # pcr: (batch_size, 1)
+        batch_size = baseline_forecast.size(0)
+        flat_forecast = baseline_forecast.view(batch_size, -1)
+        covariates = torch.cat([skew, pcr], dim=-1) # (batch_size, 2)
+        x = torch.cat([flat_forecast, covariates], dim=-1) # (batch_size, input_dim)
+        residual = self.net(x) # (batch_size, output_dim)
+        return residual.view(batch_size, self.pred_len, self.d_in)
+
+
 class KronosPredictor:
 
     def __init__(self, model, tokenizer, device=None, max_context=512, clip=5):
@@ -504,6 +559,21 @@ class KronosPredictor:
 
         self.tokenizer = self.tokenizer.to(self.device)
         self.model = self.model.to(self.device)
+
+        # Try to load covariate adapter if it exists
+        self.adapter = None
+        import os
+        adapter_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "covariate_adapter.pth")
+        if os.path.exists(adapter_path):
+            try:
+                checkpoint = torch.load(adapter_path, map_location=self.device)
+                pred_len = checkpoint.get("pred_len", 24)
+                self.adapter = ResidualCovariateAdapter(pred_len=pred_len).to(self.device)
+                self.adapter.load_state_dict(checkpoint["state_dict"])
+                self.adapter.eval()
+                print(f"Loaded Residual Covariate Adapter from {adapter_path} (pred_len={pred_len})")
+            except Exception as e:
+                print(f"Warning: Failed to load covariate adapter: {e}")
 
     def generate(self, x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose):
 
@@ -531,13 +601,18 @@ class KronosPredictor:
         if self.amt_vol not in df.columns and self.vol_col in df.columns:
             df[self.amt_vol] = df[self.vol_col] * df[self.price_cols].mean(axis=1)
 
-        if df[self.price_cols + [self.vol_col, self.amt_vol]].isnull().values.any():
-            raise ValueError("Input DataFrame contains NaN values in price or volume columns.")
+        cols = self.price_cols + [self.vol_col, self.amt_vol]
+        has_covariates = 'volatility_skew_25d' in df.columns and 'put_call_oi_ratio' in df.columns
+        if has_covariates:
+            cols = cols + ['volatility_skew_25d', 'put_call_oi_ratio']
+
+        if df[cols].isnull().values.any():
+            raise ValueError("Input DataFrame contains NaN values in price, volume, or covariate columns.")
 
         x_time_df = calc_time_stamps(x_timestamp)
         y_time_df = calc_time_stamps(y_timestamp)
 
-        x = df[self.price_cols + [self.vol_col, self.amt_vol]].values.astype(np.float32)
+        x = df[cols].values.astype(np.float32)
         x_stamp = x_time_df.values.astype(np.float32)
         y_stamp = y_time_df.values.astype(np.float32)
 
@@ -553,7 +628,27 @@ class KronosPredictor:
         preds = self.generate(x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose)
 
         preds = preds.squeeze(0)
-        preds = preds * (x_std + 1e-5) + x_mean
+
+        # Apply adapter correction if available (operating in the normalized space)
+        if self.adapter is not None and self.adapter.pred_len == pred_len:
+            try:
+                current_skew = df['volatility_skew_25d'].iloc[-1] if 'volatility_skew_25d' in df.columns else 0.0
+                current_pcr = df['put_call_oi_ratio'].iloc[-1] if 'put_call_oi_ratio' in df.columns else 1.0
+                with torch.no_grad():
+                    baseline_tensor = torch.from_numpy(preds).unsqueeze(0).to(self.device)
+                    skew_tensor = torch.tensor([[current_skew]], dtype=torch.float32).to(self.device)
+                    pcr_tensor = torch.tensor([[current_pcr]], dtype=torch.float32).to(self.device)
+                    
+                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor)
+                    residual = residual_tensor.squeeze(0).cpu().numpy()
+                    preds = preds + residual
+                    if verbose:
+                        print(f"Applied Residual Covariate Adapter (skew={current_skew:.4f}, pcr={current_pcr:.4f})")
+            except Exception as e:
+                print(f"Warning: Failed to apply covariate adapter: {e}")
+
+        # Reconstruct only the first 6 elements of means and stds as the model outputs 6 elements
+        preds = preds * (x_std[:6] + 1e-5) + x_mean[:6]
 
         pred_df = pd.DataFrame(preds, columns=self.price_cols + [self.vol_col, self.amt_vol], index=y_timestamp)
         return pred_df
@@ -594,6 +689,11 @@ class KronosPredictor:
         seq_lens = []
         y_lens = []
 
+        cols = self.price_cols + [self.vol_col, self.amt_vol]
+        has_covariates = 'volatility_skew_25d' in df_list[0].columns and 'put_call_oi_ratio' in df_list[0].columns
+        if has_covariates:
+            cols = cols + ['volatility_skew_25d', 'put_call_oi_ratio']
+
         for i in range(num_series):
             df = df_list[i]
             if not isinstance(df, pd.DataFrame):
@@ -608,8 +708,8 @@ class KronosPredictor:
             if self.amt_vol not in df.columns and self.vol_col in df.columns:
                 df[self.amt_vol] = df[self.vol_col] * df[self.price_cols].mean(axis=1)
 
-            if df[self.price_cols + [self.vol_col, self.amt_vol]].isnull().values.any():
-                raise ValueError(f"DataFrame at index {i} contains NaN values in price or volume columns.")
+            if df[cols].isnull().values.any():
+                raise ValueError(f"DataFrame at index {i} contains NaN values in price, volume, or covariate columns.")
 
             x_timestamp = x_timestamp_list[i]
             y_timestamp = y_timestamp_list[i]
@@ -617,7 +717,7 @@ class KronosPredictor:
             x_time_df = calc_time_stamps(x_timestamp)
             y_time_df = calc_time_stamps(y_timestamp)
 
-            x = df[self.price_cols + [self.vol_col, self.amt_vol]].values.astype(np.float32)
+            x = df[cols].values.astype(np.float32)
             x_stamp = x_time_df.values.astype(np.float32)
             y_stamp = y_time_df.values.astype(np.float32)
 
@@ -652,9 +752,26 @@ class KronosPredictor:
         preds = self.generate(x_batch, x_stamp_batch, y_stamp_batch, pred_len, T, top_k, top_p, sample_count, verbose)
         # preds: (B, pred_len, feat)
 
+        # Apply adapter correction if available
+        if self.adapter is not None and self.adapter.pred_len == pred_len:
+            try:
+                skews = [df_list[i]['volatility_skew_25d'].iloc[-1] if 'volatility_skew_25d' in df_list[i].columns else 0.0 for i in range(num_series)]
+                pcrs = [df_list[i]['put_call_oi_ratio'].iloc[-1] if 'put_call_oi_ratio' in df_list[i].columns else 1.0 for i in range(num_series)]
+                
+                with torch.no_grad():
+                    baseline_tensor = torch.from_numpy(preds).to(self.device)
+                    skew_tensor = torch.tensor([[s] for s in skews], dtype=torch.float32).to(self.device)
+                    pcr_tensor = torch.tensor([[p] for p in pcrs], dtype=torch.float32).to(self.device)
+                    
+                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor)
+                    residuals = residual_tensor.cpu().numpy()
+                    preds = preds + residuals
+            except Exception as e:
+                print(f"Warning: Failed to apply covariate adapter in batch: {e}")
+
         pred_dfs = []
         for i in range(num_series):
-            preds_i = preds[i] * (stds[i] + 1e-5) + means[i]
+            preds_i = preds[i] * (stds[i][:6] + 1e-5) + means[i][:6]
             pred_df = pd.DataFrame(preds_i, columns=self.price_cols + [self.vol_col, self.amt_vol], index=y_timestamp_list[i])
             pred_dfs.append(pred_df)
 

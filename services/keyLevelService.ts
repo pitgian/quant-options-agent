@@ -34,7 +34,9 @@ export function buildDayTradingData(
   callWalls: Wall[],
   gexRegime: GexRegime,
   gexStrikeData: GexStrikeData[],
-  crossSymbolConfluence?: CrossSymbolConfluence
+  crossSymbolConfluence?: CrossSymbolConfluence,
+  volatilitySkew25d?: number,
+  putCallOiRatio?: number
 ): DayTradingData {
   // Find GEX peaks above/below spot to identify Major Gamma Walls
   let maxPositiveGexStrike = -1;
@@ -154,6 +156,8 @@ export function buildDayTradingData(
     support: finalSupport,
     gexStrikeData,
     crossSymbolConfluence,
+    volatilitySkew25d,
+    putCallOiRatio,
   };
 }
 

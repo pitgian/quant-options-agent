@@ -499,12 +499,35 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
                 ${spot.toFixed(2)}
               </span>
             </div>
-            <RegimeBadge
-              regime={gexRegime.regime}
-              label={gexRegime.label}
-              netGEX={gexRegime.netGEX}
-              flipPoint={gexRegime.flipPoint}
-            />
+            <div className="flex items-center gap-6 flex-wrap">
+              <RegimeBadge
+                regime={gexRegime.regime}
+                label={gexRegime.label}
+                netGEX={gexRegime.netGEX}
+                flipPoint={gexRegime.flipPoint}
+              />
+              
+              {(data.volatilitySkew25d !== undefined || data.putCallOiRatio !== undefined) && (
+                <div className="flex gap-6 border-l border-gray-800 pl-6 py-0.5">
+                  {data.volatilitySkew25d !== undefined && (
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-gray-500 uppercase font-semibold tracking-wider">25D Vol Skew</span>
+                      <span className="text-sm font-mono font-bold text-amber-400 mt-0.5">
+                        {data.volatilitySkew25d > 0 ? '+' : ''}{(data.volatilitySkew25d * 100).toFixed(2)}%
+                      </span>
+                    </div>
+                  )}
+                  {data.putCallOiRatio !== undefined && (
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-gray-500 uppercase font-semibold tracking-wider">Put/Call Ratio (OI)</span>
+                      <span className="text-sm font-mono font-bold text-indigo-400 mt-0.5">
+                        {data.putCallOiRatio.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Operational Guide */}

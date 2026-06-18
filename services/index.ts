@@ -113,7 +113,9 @@ export async function fetchOptionsData(
     callWalls,
     gexRegime,
     gexStrikeData,
-    crossSymbolConfluence
+    crossSymbolConfluence,
+    symbolData.volatility_skew_25d,
+    symbolData.put_call_oi_ratio
   );
 
   // Propagate futures volume profile if present

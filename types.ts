@@ -78,6 +78,8 @@ export interface DayTradingData {
   futuresVolumeProfile?: Record<string, number>;
   /** Futures volume profiles by timeframe preset (e.g. '2d', '7d', '30d', '90d') */
   futuresVolumeProfiles?: Record<string, Record<string, number>>;
+  volatilitySkew25d?: number;
+  putCallOiRatio?: number;
 }
 
 /**
