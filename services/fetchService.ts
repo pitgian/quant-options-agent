@@ -160,8 +160,19 @@ export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJs
   }
 
   const isDev = import.meta.env.DEV;
-  const primaryUrl = isDev ? LOCAL_DATA_URL : (GIST_DATA_URL || REPO_DATA_URL);
-  const backupUrl = isDev ? (GIST_DATA_URL || REPO_DATA_URL) : LOCAL_DATA_URL;
+
+  // Build the list of URLs to try in order
+  const urls: { name: string; url: string | null }[] = [];
+  
+  if (isDev) {
+    urls.push({ name: 'Local File', url: LOCAL_DATA_URL });
+    if (GIST_DATA_URL) urls.push({ name: 'Gist', url: GIST_DATA_URL });
+    urls.push({ name: 'GitHub Repo Branch', url: REPO_DATA_URL });
+  } else {
+    if (GIST_DATA_URL) urls.push({ name: 'Gist', url: GIST_DATA_URL });
+    urls.push({ name: 'GitHub Repo Branch', url: REPO_DATA_URL });
+    urls.push({ name: 'Local Static Fallback', url: LOCAL_DATA_URL });
+  }
 
   const fetchJson = async (url: string): Promise<RawJson> => {
     const response = await fetch(`${url}?t=${Date.now()}`, {
@@ -183,49 +194,45 @@ export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJs
     return data;
   };
 
-  try {
-    let data = await fetchJson(primaryUrl);
+  let bestData: RawJson | null = null;
+  let bestTime = 0;
 
-    // If in production and Gist is primary, check if it's stale (more than 15 mins old)
-    if (!isDev && GIST_DATA_URL && primaryUrl === GIST_DATA_URL) {
-      const generatedTime = data.generated ? new Date(data.generated).getTime() : 0;
-      const ageMs = now - generatedTime;
-      const isStale = ageMs > 15 * 60 * 1000;
-
-      if (isStale) {
-        console.warn(`Gist data is stale (${Math.round(ageMs / 1000 / 60)} minutes old). Trying to fetch from raw repo branch fallback...`);
-        try {
-          const repoData = await fetchJson(REPO_DATA_URL);
-          const repoGeneratedTime = repoData.generated ? new Date(repoData.generated).getTime() : 0;
-          if (repoGeneratedTime > generatedTime) {
-            console.log("GitHub raw repo data is newer. Using fallback data.");
-            data = repoData;
-          }
-        } catch (repoError) {
-          console.error("Failed to fetch fallback repo data, continuing with stale Gist:", repoError);
-        }
-      }
-    }
-
-    cache = { timestamp: now, data };
-    return data;
-  } catch (primaryError) {
-    console.warn(`Failed to fetch from primary source (${primaryUrl}), falling back to backup:`, primaryError);
-
+  for (const source of urls) {
+    if (!source.url) continue;
     try {
-      const data = await fetchJson(backupUrl);
-      cache = { timestamp: now, data };
-      return data;
-    } catch (secondaryError) {
-      console.error('All options data sources failed:', secondaryError);
-
-      if (cache) {
-        return cache.data;
+      console.log(`Fetching options data from ${source.name}...`);
+      const data = await fetchJson(source.url);
+      const genTime = data.generated ? new Date(data.generated).getTime() : 0;
+      
+      // Keep track of the newest data we find
+      if (!bestData || genTime > bestTime) {
+        bestData = data;
+        bestTime = genTime;
       }
-
-      return null;
+      
+      // If the data is fresh (less than 10 minutes old), we can stop searching to speed up loading
+      const ageMs = now - genTime;
+      if (ageMs < 10 * 60 * 1000) {
+        console.log(`Source ${source.name} is fresh (age: ${Math.round(ageMs / 1000 / 60)}m). Stopping fetch cascade.`);
+        break;
+      }
+    } catch (err) {
+      console.warn(`Failed to fetch from ${source.name}:`, err);
     }
   }
+
+  if (bestData) {
+    cache = { timestamp: now, data: bestData };
+    return bestData;
+  }
+
+  // Fallback to memory cache as absolute last resort
+  if (cache) {
+    console.warn("All fetch sources failed, returning stale memory cache");
+    return cache.data;
+  }
+
+  return null;
 }
 
 // ============================================================================

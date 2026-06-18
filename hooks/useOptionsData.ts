@@ -22,55 +22,77 @@ const KRONOS_GIST_URL = GIST_USER && GIST_ID
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
 const fetchKronosForecast = async (): Promise<Response | null> => {
+  const now = Date.now();
   const isDev = import.meta.env.DEV;
+
+  // Build the list of URLs to try in order
+  const urls: { name: string; url: string | null }[] = [];
   
-  const fetchJson = async (url: string) => {
-    const res = await fetch(`${url}?t=${Date.now()}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res;
+  if (isDev) {
+    urls.push({ name: 'Local File', url: KRONOS_LOCAL_URL });
+    if (KRONOS_GIST_URL) urls.push({ name: 'Gist', url: KRONOS_GIST_URL });
+    urls.push({ name: 'GitHub Repo Branch', url: KRONOS_REPO_URL });
+  } else {
+    if (KRONOS_GIST_URL) urls.push({ name: 'Gist', url: KRONOS_GIST_URL });
+    urls.push({ name: 'GitHub Repo Branch', url: KRONOS_REPO_URL });
+    urls.push({ name: 'Local Static Fallback', url: KRONOS_LOCAL_URL });
+  }
+
+  const fetchJson = async (url: string): Promise<KronosForecast> => {
+    const response = await fetch(`${url}?t=${Date.now()}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data: KronosForecast = await response.json();
+
+    if (!data.updated_at || !data.SP500_bias || !data.NASDAQ_bias) {
+      throw new Error('Invalid Kronos forecast structure');
+    }
+
+    return data;
   };
 
-  const primaryUrl = isDev ? KRONOS_LOCAL_URL : (KRONOS_GIST_URL || KRONOS_REPO_URL);
-  const secondaryUrl = isDev ? (KRONOS_GIST_URL || KRONOS_REPO_URL) : KRONOS_LOCAL_URL;
+  let bestData: KronosForecast | null = null;
+  let bestTime = 0;
 
-  try {
-    let res = await fetchJson(primaryUrl);
-    
-    // Check if stale in production when Gist is primary
-    if (!isDev && KRONOS_GIST_URL && primaryUrl === KRONOS_GIST_URL) {
-      try {
-        const clonedRes = res.clone();
-        const data = await clonedRes.json();
-        const generatedTime = data.generated ? new Date(data.generated).getTime() : 0;
-        const ageMs = Date.now() - generatedTime;
-        const isStale = ageMs > 15 * 60 * 1000;
-        
-        if (isStale) {
-          console.warn(`Kronos Gist forecast is stale (${Math.round(ageMs / 1000 / 60)} minutes old). Trying fallback to GitHub repo branch...`);
-          const repoRes = await fetchJson(KRONOS_REPO_URL);
-          const clonedRepoRes = repoRes.clone();
-          const repoData = await clonedRepoRes.json();
-          const repoGeneratedTime = repoData.generated ? new Date(repoData.generated).getTime() : 0;
-          if (repoGeneratedTime > generatedTime) {
-            console.log("GitHub repo Kronos forecast is newer. Using repo forecast.");
-            res = repoRes;
-          }
-        }
-      } catch (e) {
-        console.error("Error analyzing Kronos Gist freshness/fetching repo fallback:", e);
-      }
-    }
-    
-    return res;
-  } catch (e) {
-    console.warn(`Failed to fetch Kronos forecast from primary (${primaryUrl}), trying secondary...`, e);
+  for (const source of urls) {
+    if (!source.url) continue;
     try {
-      return await fetchJson(secondaryUrl);
+      console.log(`Fetching Kronos forecast from ${source.name}...`);
+      const data = await fetchJson(source.url);
+      const updateTime = data.updated_at ? new Date(data.updated_at).getTime() : 0;
+      
+      // Keep track of the newest data we find
+      if (!bestData || updateTime > bestTime) {
+        bestData = data;
+        bestTime = updateTime;
+      }
+      
+      // If the data is fresh (less than 10 minutes old), we can stop searching to speed up loading
+      const ageMs = now - updateTime;
+      if (ageMs < 10 * 60 * 1000) {
+        console.log(`Source ${source.name} is fresh (age: ${Math.round(ageMs / 1000 / 60)}m). Stopping fetch cascade.`);
+        break;
+      }
     } catch (err) {
-      console.error(`All Kronos forecast sources failed:`, err);
-      return null;
+      console.warn(`Failed to fetch from ${source.name}:`, err);
     }
   }
+
+  if (bestData) {
+    return {
+      ok: true,
+      json: async () => bestData,
+    } as Response;
+  }
+
+  return null;
 };
 
 // ============================================================================
