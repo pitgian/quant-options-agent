@@ -61,14 +61,22 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     if (!biasItem) return null;
     if (!etfData || !etfData.spot) return null;
 
-    const is5m = kronosTimeframe === '15m' || kronosTimeframe === '30m' || kronosTimeframe === '1h' || kronosTimeframe === '2h';
-    const is1h = kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W';
+    const is5m = kronosTimeframe === '15m' || kronosTimeframe === '30m';
+    const is15m = kronosTimeframe === '1h' || kronosTimeframe === '2h';
+    const is1h = kronosTimeframe === '4h' || kronosTimeframe === 'EOD';
+    const is4h = kronosTimeframe === '2D' || kronosTimeframe === '3D';
+    const isDaily = kronosTimeframe === '1W';
+    const isStable = is4h || isDaily;
 
     const resolutionData = is5m 
       ? biasItem.forecast_5m 
-      : is1h 
-        ? biasItem.forecast_1h 
-        : biasItem.forecast_15m;
+      : is15m
+        ? biasItem.forecast_15m
+        : is1h 
+          ? biasItem.forecast_1h 
+          : is4h
+            ? biasItem.forecast_4h
+            : biasItem.forecast_1d;
 
     // Fallback logic to prevent crashes if JSON hasn't been re-written yet
     const activeData = resolutionData || {
@@ -83,12 +91,12 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
 
     const forecastLastPrice = activeData.last_price || etfData.spot;
     const liveEtfPrice = etfData.spot;
-    // For multiday forecasts (1h candles), keep scaleRatio at 1.0 to prevent sub-second jitters.
+    // For multiday forecasts (4h and 1d candles), keep scaleRatio at 1.0 to prevent sub-second jitters.
     // For intraday forecasts, scale dynamically to align with current price.
-    const scaleRatio = is1h ? 1.0 : liveEtfPrice / forecastLastPrice;
+    const scaleRatio = isStable ? 1.0 : liveEtfPrice / forecastLastPrice;
 
     // Scale start price to match current live spot for intraday, or use static model price for multiday to remain stable.
-    const lastPrice = is1h ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
+    const lastPrice = isStable ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
 
     // Determine multipliers for display unit
     const multiplier = displayMode === 'futures' ? futuresRatio : 1.0;
@@ -97,13 +105,13 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     let candleCount = 4;
     if (kronosTimeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
     else if (kronosTimeframe === '30m') candleCount = 6;  // 6 * 5m = 30m
-    else if (kronosTimeframe === '1h') candleCount = 12;  // 12 * 5m = 1h
-    else if (kronosTimeframe === '2h') candleCount = 24;  // 24 * 5m = 2h
-    else if (kronosTimeframe === '4h') candleCount = 16;  // 16 * 15m = 4h
-    else if (kronosTimeframe === 'EOD') candleCount = 26; // 26 * 15m = 6.5h
-    else if (kronosTimeframe === '2D') candleCount = 13;  // 13 * 1h = 13h
-    else if (kronosTimeframe === '3D') candleCount = 20;  // 20 * 1h = 20h
-    else if (kronosTimeframe === '1W') candleCount = 33;  // 33 * 1h = 33h
+    else if (kronosTimeframe === '1h') candleCount = 4;   // 4 * 15m = 1h
+    else if (kronosTimeframe === '2h') candleCount = 8;   // 8 * 15m = 2h
+    else if (kronosTimeframe === '4h') candleCount = 4;   // 4 * 1h = 4h
+    else if (kronosTimeframe === 'EOD') candleCount = 7;  // 7 * 1h = 7h (EOD)
+    else if (kronosTimeframe === '2D') candleCount = 4;   // 4 * 4h = 16h
+    else if (kronosTimeframe === '3D') candleCount = 6;   // 6 * 4h = 24h
+    else if (kronosTimeframe === '1W') candleCount = 5;   // 5 * 1d = 5 days (1 week)
 
     const sliced = activeData.candles.slice(0, candleCount);
 
@@ -115,10 +123,20 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
       const changePct = ((close - currentSpot) / currentSpot) * 100;
 
       // Extract time from timestamp
-      let formattedTime = is5m ? `+${(idx + 1) * 5}m` : is1h ? `+${idx + 1}h` : `+${(idx + 1) * 15}m`;
+      let formattedTime = is5m 
+        ? `+${(idx + 1) * 5}m` 
+        : is15m 
+          ? `+${(idx + 1) * 15}m` 
+          : is1h 
+            ? `+${idx + 1}h` 
+            : is4h
+              ? `+${(idx + 1) * 4}h`
+              : `+${idx + 1}d`;
       try {
         const d = new Date(c.timestamp);
-        if (is1h) {
+        if (isDaily) {
+          formattedTime = d.toLocaleDateString([], { weekday: 'short', month: '2-digit', day: '2-digit' });
+        } else if (isStable) {
           formattedTime = d.toLocaleDateString([], { weekday: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else {
           formattedTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -133,7 +151,15 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
         close,
         changePct,
         formattedTime,
-        label: is5m ? `+${(idx + 1) * 5}m` : is1h ? `+${idx + 1}h` : `+${(idx + 1) * 15}m`,
+        label: is5m 
+          ? `+${(idx + 1) * 5}m` 
+          : is15m 
+            ? `+${(idx + 1) * 15}m` 
+            : is1h 
+              ? `+${idx + 1}h` 
+              : is4h
+                ? `+${(idx + 1) * 4}h`
+                : `+${idx + 1}d`,
         rawVolume: c.volume
       };
     });
@@ -427,11 +453,15 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
               <div className="flex justify-between items-center">
                 <h3 className="text-sm font-bold text-slate-300">
                   📈 Traiettoria Previsionale & Candele Proiettate ({
-                    kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W'
-                      ? '1h Interval'
-                      : kronosTimeframe === '15m' || kronosTimeframe === '30m' || kronosTimeframe === '1h' || kronosTimeframe === '2h'
-                        ? '5m Interval'
-                        : '15m Interval'
+                    kronosTimeframe === '15m' || kronosTimeframe === '30m'
+                      ? '5m Interval'
+                      : kronosTimeframe === '1h' || kronosTimeframe === '2h'
+                        ? '15m Interval'
+                        : kronosTimeframe === '4h' || kronosTimeframe === 'EOD'
+                          ? '1h Interval'
+                          : kronosTimeframe === '2D' || kronosTimeframe === '3D'
+                            ? '4h Interval'
+                            : 'Daily Interval'
                   })
                 </h3>
                 <span className="text-[10px] text-gray-500 font-mono">

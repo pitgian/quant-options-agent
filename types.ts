@@ -260,11 +260,15 @@ export interface KronosForecastItem {
   last_price_5m: number;
   last_price_15m: number;
   last_price_1h: number;
+  last_price_4h: number;
+  last_price_1d: number;
   trend_bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   strength_pct: number;
   forecast_5m: KronosResolutionForecast;
   forecast_15m: KronosResolutionForecast;
   forecast_1h: KronosResolutionForecast;
+  forecast_4h: KronosResolutionForecast;
+  forecast_1d: KronosResolutionForecast;
   error?: string;
   
   // Optional legacy properties for safety

@@ -180,14 +180,22 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     const biasItem = market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
     if (!biasItem) return null;
 
-    const is5m = kronosTimeframe === '15m' || kronosTimeframe === '30m' || kronosTimeframe === '1h' || kronosTimeframe === '2h';
-    const is1h = kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W';
+    const is5m = kronosTimeframe === '15m' || kronosTimeframe === '30m';
+    const is15m = kronosTimeframe === '1h' || kronosTimeframe === '2h';
+    const is1h = kronosTimeframe === '4h' || kronosTimeframe === 'EOD';
+    const is4h = kronosTimeframe === '2D' || kronosTimeframe === '3D';
+    const isDaily = kronosTimeframe === '1W';
+    const isStable = is4h || isDaily;
     
     const resolutionData = is5m 
       ? biasItem.forecast_5m 
-      : is1h 
-        ? biasItem.forecast_1h 
-        : biasItem.forecast_15m;
+      : is15m
+        ? biasItem.forecast_15m
+        : is1h 
+          ? biasItem.forecast_1h 
+          : is4h
+            ? biasItem.forecast_4h
+            : biasItem.forecast_1d;
     
     // Fallback logic to prevent crashes if JSON hasn't been re-written yet
     const activeData = resolutionData || {
@@ -202,23 +210,23 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
     const forecastLastPrice = activeData.last_price || etfData.spot;
     const liveEtfPrice = etfData.spot;
-    // For multiday forecasts (1h candles), keep scaleRatio at 1.0 to prevent sub-second jitters.
+    // For multiday forecasts (4h and 1d candles), keep scaleRatio at 1.0 to prevent sub-second jitters.
     // For intraday forecasts, scale dynamically to align with current price.
-    const scaleRatio = is1h ? 1.0 : liveEtfPrice / forecastLastPrice;
+    const scaleRatio = isStable ? 1.0 : liveEtfPrice / forecastLastPrice;
 
     // Scale start price to match current live spot for intraday, or use static model price for multiday to remain stable.
-    const lastPrice = is1h ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
+    const lastPrice = isStable ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
 
     let candleCount = 4;
     if (kronosTimeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
     else if (kronosTimeframe === '30m') candleCount = 6;  // 6 * 5m = 30m
-    else if (kronosTimeframe === '1h') candleCount = 12;  // 12 * 5m = 1h
-    else if (kronosTimeframe === '2h') candleCount = 24;  // 24 * 5m = 2h
-    else if (kronosTimeframe === '4h') candleCount = 16;  // 16 * 15m = 4h
-    else if (kronosTimeframe === 'EOD') candleCount = 26; // 26 * 15m = 6.5h
-    else if (kronosTimeframe === '2D') candleCount = 13;  // 13 * 1h = 13h
-    else if (kronosTimeframe === '3D') candleCount = 20;  // 20 * 1h = 20h
-    else if (kronosTimeframe === '1W') candleCount = 33;  // 33 * 1h = 33h
+    else if (kronosTimeframe === '1h') candleCount = 4;   // 4 * 15m = 1h
+    else if (kronosTimeframe === '2h') candleCount = 8;   // 8 * 15m = 2h
+    else if (kronosTimeframe === '4h') candleCount = 4;   // 4 * 1h = 4h
+    else if (kronosTimeframe === 'EOD') candleCount = 7;  // 7 * 1h = 7h (EOD)
+    else if (kronosTimeframe === '2D') candleCount = 4;   // 4 * 4h = 16h
+    else if (kronosTimeframe === '3D') candleCount = 6;   // 6 * 4h = 24h
+    else if (kronosTimeframe === '1W') candleCount = 5;   // 5 * 1d = 5 days (1 week)
 
     const sliced = activeData.candles.slice(0, candleCount);
     if (sliced.length === 0) return null;
@@ -912,7 +920,10 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                               {kronosTimeframe === '30m' ? '+15m' :
                                kronosTimeframe === '1h' ? '+30m' :
                                kronosTimeframe === '2h' ? '+1h' :
-                               kronosTimeframe === '4h' ? '+2h' : '+3h'}
+                               kronosTimeframe === '4h' ? '+2h' :
+                               kronosTimeframe === 'EOD' ? '+3h' :
+                               kronosTimeframe === '2D' ? '+8h' :
+                               kronosTimeframe === '3D' ? '+12h' : '+3 G'}
                             </span>
                           )}
                           <span>+{kronosTimeframe}</span>

@@ -38,9 +38,34 @@ def get_futures_to_etf_ratio(futures_symbol: str, etf_symbol: str, default_ratio
     return default_ratio
 
 
+def generate_future_trading_timestamps(last_ts, interval, pred_len):
+    timestamps = []
+    curr = last_ts
+    while len(timestamps) < pred_len:
+        if interval == "5m":
+            curr += pd.Timedelta(minutes=5)
+        elif interval == "15m":
+            curr += pd.Timedelta(minutes=15)
+        elif interval == "1h":
+            curr += pd.Timedelta(hours=1)
+        elif interval == "4h":
+            curr += pd.Timedelta(hours=4)
+        else:
+            curr += pd.Timedelta(days=1)
+            
+        if curr.weekday() >= 5: # 5 is Saturday, 6 is Sunday
+            continue
+        timestamps.append(curr)
+    return pd.Series(timestamps)
+
+
 def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_len, pred_len, model, tokenizer, device):
     print(f"Downloading historical data: interval={interval}, period={period}...")
-    df = yf.download(fetch_ticker, period=period, interval=interval)
+    if interval == "4h":
+        df = yf.download(fetch_ticker, period=period, interval="1h")
+    else:
+        df = yf.download(fetch_ticker, period=period, interval=interval)
+        
     if df.empty:
         raise ValueError(f"No data returned for ticker {fetch_ticker} with interval {interval}")
         
@@ -51,6 +76,15 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
     df = df[['open', 'high', 'low', 'close', 'volume']]
     df = df.dropna()
 
+    if interval == "4h":
+        df = df.resample('4h').agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }).dropna()
+
     if ratio != 1.0:
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col] / ratio
@@ -59,19 +93,7 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
     context_df['volume'] = context_df['volume'].astype(float)
     
     x_timestamp = pd.Series(context_df.index)
-    freq_map = {
-        "5m": "5min",
-        "15m": "15min",
-        "1h": "1h"
-    }
-    freq_str = freq_map.get(interval, interval)
-    if interval == "5m":
-        freq_delta = pd.Timedelta(minutes=5)
-    elif interval == "15m":
-        freq_delta = pd.Timedelta(minutes=15)
-    else:
-        freq_delta = pd.Timedelta(hours=1)
-    y_timestamp = pd.Series(pd.date_range(start=context_df.index[-1] + freq_delta, periods=pred_len, freq=freq_str))
+    y_timestamp = generate_future_trading_timestamps(context_df.index[-1], interval, pred_len)
 
     predictor = KronosPredictor(model, tokenizer, device=device, max_context=2048)
     
@@ -162,7 +184,7 @@ def get_market_bias(ticker, model, tokenizer, device):
         device=device
     )
     
-    # Generate 1h Forecast (up to 40 candles)
+    # Generate 1h Forecast (up to 20 candles = 3 days)
     print(f"\n--- Generating 1h forecast for {ticker} ---")
     forecast_1h = run_forecast_for_resolution(
         fetch_ticker=fetch_ticker,
@@ -170,7 +192,35 @@ def get_market_bias(ticker, model, tokenizer, device):
         interval="1h",
         period="30d",
         context_len=128,
-        pred_len=40,
+        pred_len=20,
+        model=model,
+        tokenizer=tokenizer,
+        device=device
+    )
+
+    # Generate 4h Forecast (up to 6 candles = 3 days)
+    print(f"\n--- Generating 4h forecast for {ticker} ---")
+    forecast_4h = run_forecast_for_resolution(
+        fetch_ticker=fetch_ticker,
+        ratio=ratio,
+        interval="4h",
+        period="90d",
+        context_len=128,
+        pred_len=6,
+        model=model,
+        tokenizer=tokenizer,
+        device=device
+    )
+
+    # Generate 1d Forecast (up to 5 candles = 1 week)
+    print(f"\n--- Generating 1d forecast for {ticker} ---")
+    forecast_1d = run_forecast_for_resolution(
+        fetch_ticker=fetch_ticker,
+        ratio=ratio,
+        interval="1d",
+        period="1y",
+        context_len=128,
+        pred_len=5,
         model=model,
         tokenizer=tokenizer,
         device=device
@@ -197,11 +247,15 @@ def get_market_bias(ticker, model, tokenizer, device):
         "last_price_5m": forecast_5m["last_price"],
         "last_price_15m": last_price,
         "last_price_1h": forecast_1h["last_price"],
+        "last_price_4h": forecast_4h["last_price"],
+        "last_price_1d": forecast_1d["last_price"],
         "trend_bias": trend_bias,
         "strength_pct": round(delta_pct, 2),
         "forecast_5m": forecast_5m,
         "forecast_15m": forecast_15m,
-        "forecast_1h": forecast_1h
+        "forecast_1h": forecast_1h,
+        "forecast_4h": forecast_4h,
+        "forecast_1d": forecast_1d
     }
 
 
@@ -248,6 +302,8 @@ def main():
                 "last_price_5m": 750.0,
                 "last_price_15m": 750.0,
                 "last_price_1h": 750.0,
+                "last_price_4h": 750.0,
+                "last_price_1d": 750.0,
                 "trend_bias": "NEUTRAL",
                 "strength_pct": 0.0,
                 "forecast_5m": {
@@ -265,6 +321,20 @@ def main():
                     "candles": []
                 },
                 "forecast_1h": {
+                    "last_price": 750.0,
+                    "expected_high": 750.0,
+                    "expected_low": 750.0,
+                    "predicted_volatility_pct": 0.0,
+                    "candles": []
+                },
+                "forecast_4h": {
+                    "last_price": 750.0,
+                    "expected_high": 750.0,
+                    "expected_low": 750.0,
+                    "predicted_volatility_pct": 0.0,
+                    "candles": []
+                },
+                "forecast_1d": {
                     "last_price": 750.0,
                     "expected_high": 750.0,
                     "expected_low": 750.0,
@@ -278,6 +348,8 @@ def main():
                 "last_price_5m": 740.0,
                 "last_price_15m": 740.0,
                 "last_price_1h": 740.0,
+                "last_price_4h": 740.0,
+                "last_price_1d": 740.0,
                 "trend_bias": "NEUTRAL",
                 "strength_pct": 0.0,
                 "forecast_5m": {
@@ -295,6 +367,20 @@ def main():
                     "candles": []
                 },
                 "forecast_1h": {
+                    "last_price": 740.0,
+                    "expected_high": 740.0,
+                    "expected_low": 740.0,
+                    "predicted_volatility_pct": 0.0,
+                    "candles": []
+                },
+                "forecast_4h": {
+                    "last_price": 740.0,
+                    "expected_high": 740.0,
+                    "expected_low": 740.0,
+                    "predicted_volatility_pct": 0.0,
+                    "candles": []
+                },
+                "forecast_1d": {
                     "last_price": 740.0,
                     "expected_high": 740.0,
                     "expected_low": 740.0,
