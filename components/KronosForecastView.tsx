@@ -61,8 +61,14 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     if (!biasItem) return null;
     if (!etfData || !etfData.spot) return null;
 
-    const isMultiDay = kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W';
-    const resolutionData = isMultiDay ? biasItem.forecast_1h : biasItem.forecast_15m;
+    const is5m = kronosTimeframe === '15m' || kronosTimeframe === '30m' || kronosTimeframe === '1h' || kronosTimeframe === '2h';
+    const is1h = kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W';
+
+    const resolutionData = is5m 
+      ? biasItem.forecast_5m 
+      : is1h 
+        ? biasItem.forecast_1h 
+        : biasItem.forecast_15m;
 
     // Fallback logic to prevent crashes if JSON hasn't been re-written yet
     const activeData = resolutionData || {
@@ -84,15 +90,15 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     const currentSpot = liveEtfPrice * multiplier;
 
     let candleCount = 4;
-    if (kronosTimeframe === '15m') candleCount = 1;
-    else if (kronosTimeframe === '30m') candleCount = 2;
-    else if (kronosTimeframe === '1h') candleCount = 4;
-    else if (kronosTimeframe === '2h') candleCount = 8;
-    else if (kronosTimeframe === '4h') candleCount = 16;
-    else if (kronosTimeframe === 'EOD') candleCount = 26;
-    else if (kronosTimeframe === '2D') candleCount = 13; // 13 candles of 1h = 2 trading days
-    else if (kronosTimeframe === '3D') candleCount = 20; // 20 candles of 1h = 3 trading days
-    else if (kronosTimeframe === '1W') candleCount = 33; // 33 candles of 1h = 5 trading days (32.5h)
+    if (kronosTimeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
+    else if (kronosTimeframe === '30m') candleCount = 6;  // 6 * 5m = 30m
+    else if (kronosTimeframe === '1h') candleCount = 12;  // 12 * 5m = 1h
+    else if (kronosTimeframe === '2h') candleCount = 24;  // 24 * 5m = 2h
+    else if (kronosTimeframe === '4h') candleCount = 16;  // 16 * 15m = 4h
+    else if (kronosTimeframe === 'EOD') candleCount = 26; // 26 * 15m = 6.5h
+    else if (kronosTimeframe === '2D') candleCount = 13;  // 13 * 1h = 13h
+    else if (kronosTimeframe === '3D') candleCount = 20;  // 20 * 1h = 20h
+    else if (kronosTimeframe === '1W') candleCount = 33;  // 33 * 1h = 33h
 
     const sliced = activeData.candles.slice(0, candleCount);
 
@@ -104,10 +110,10 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
       const changePct = ((close - currentSpot) / currentSpot) * 100;
 
       // Extract time from timestamp
-      let formattedTime = isMultiDay ? `+${idx + 1}h` : `+${(idx + 1) * 15}m`;
+      let formattedTime = is5m ? `+${(idx + 1) * 5}m` : is1h ? `+${idx + 1}h` : `+${(idx + 1) * 15}m`;
       try {
         const d = new Date(c.timestamp);
-        if (isMultiDay) {
+        if (is1h) {
           formattedTime = d.toLocaleDateString([], { weekday: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else {
           formattedTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -122,7 +128,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
         close,
         changePct,
         formattedTime,
-        label: isMultiDay ? `+${idx + 1}h` : `+${(idx + 1) * 15}m`,
+        label: is5m ? `+${(idx + 1) * 5}m` : is1h ? `+${idx + 1}h` : `+${(idx + 1) * 15}m`,
         rawVolume: c.volume
       };
     });

@@ -180,8 +180,14 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     const biasItem = market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
     if (!biasItem) return null;
 
-    const isMultiDay = kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W';
-    const resolutionData = isMultiDay ? biasItem.forecast_1h : biasItem.forecast_15m;
+    const is5m = kronosTimeframe === '15m' || kronosTimeframe === '30m' || kronosTimeframe === '1h' || kronosTimeframe === '2h';
+    const is1h = kronosTimeframe === '2D' || kronosTimeframe === '3D' || kronosTimeframe === '1W';
+    
+    const resolutionData = is5m 
+      ? biasItem.forecast_5m 
+      : is1h 
+        ? biasItem.forecast_1h 
+        : biasItem.forecast_15m;
     
     // Fallback logic to prevent crashes if JSON hasn't been re-written yet
     const activeData = resolutionData || {
@@ -201,15 +207,15 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     const lastPrice = liveEtfPrice; // scale start price to match current live spot
 
     let candleCount = 4;
-    if (kronosTimeframe === '15m') candleCount = 1;
-    else if (kronosTimeframe === '30m') candleCount = 2;
-    else if (kronosTimeframe === '1h') candleCount = 4;
-    else if (kronosTimeframe === '2h') candleCount = 8;
-    else if (kronosTimeframe === '4h') candleCount = 16;
-    else if (kronosTimeframe === 'EOD') candleCount = 26;
-    else if (kronosTimeframe === '2D') candleCount = 13; // 13 candles of 1h = 2 trading days
-    else if (kronosTimeframe === '3D') candleCount = 20; // 20 candles of 1h = 3 trading days
-    else if (kronosTimeframe === '1W') candleCount = 33; // 33 candles of 1h = 5 trading days (32.5h)
+    if (kronosTimeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
+    else if (kronosTimeframe === '30m') candleCount = 6;  // 6 * 5m = 30m
+    else if (kronosTimeframe === '1h') candleCount = 12;  // 12 * 5m = 1h
+    else if (kronosTimeframe === '2h') candleCount = 24;  // 24 * 5m = 2h
+    else if (kronosTimeframe === '4h') candleCount = 16;  // 16 * 15m = 4h
+    else if (kronosTimeframe === 'EOD') candleCount = 26; // 26 * 15m = 6.5h
+    else if (kronosTimeframe === '2D') candleCount = 13;  // 13 * 1h = 13h
+    else if (kronosTimeframe === '3D') candleCount = 20;  // 20 * 1h = 20h
+    else if (kronosTimeframe === '1W') candleCount = 33;  // 33 * 1h = 33h
 
     const sliced = activeData.candles.slice(0, candleCount);
     if (sliced.length === 0) return null;

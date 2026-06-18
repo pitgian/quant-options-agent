@@ -60,11 +60,17 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
     
     x_timestamp = pd.Series(context_df.index)
     freq_map = {
+        "5m": "5min",
         "15m": "15min",
         "1h": "1h"
     }
     freq_str = freq_map.get(interval, interval)
-    freq_delta = pd.Timedelta(minutes=15) if interval == "15m" else pd.Timedelta(hours=1)
+    if interval == "5m":
+        freq_delta = pd.Timedelta(minutes=5)
+    elif interval == "15m":
+        freq_delta = pd.Timedelta(minutes=15)
+    else:
+        freq_delta = pd.Timedelta(hours=1)
     y_timestamp = pd.Series(pd.date_range(start=context_df.index[-1] + freq_delta, periods=pred_len, freq=freq_str))
 
     predictor = KronosPredictor(model, tokenizer, device=device, max_context=2048)
@@ -128,6 +134,20 @@ def get_market_bias(ticker, model, tokenizer, device):
     else:
         ratio = 1.0
         
+    # Generate 5m Forecast (up to 24 candles = 2 hours)
+    print(f"\n--- Generating 5m forecast for {ticker} ---")
+    forecast_5m = run_forecast_for_resolution(
+        fetch_ticker=fetch_ticker,
+        ratio=ratio,
+        interval="5m",
+        period="5d",
+        context_len=128,
+        pred_len=24,
+        model=model,
+        tokenizer=tokenizer,
+        device=device
+    )
+
     # Generate 15m Forecast (up to 26 candles)
     print(f"\n--- Generating 15m forecast for {ticker} ---")
     forecast_15m = run_forecast_for_resolution(
@@ -174,10 +194,12 @@ def get_market_bias(ticker, model, tokenizer, device):
     
     return {
         "ticker": ticker,
+        "last_price_5m": forecast_5m["last_price"],
         "last_price_15m": last_price,
         "last_price_1h": forecast_1h["last_price"],
         "trend_bias": trend_bias,
         "strength_pct": round(delta_pct, 2),
+        "forecast_5m": forecast_5m,
         "forecast_15m": forecast_15m,
         "forecast_1h": forecast_1h
     }
@@ -223,10 +245,18 @@ def main():
             "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "SP500_bias": {
                 "ticker": "SPY",
+                "last_price_5m": 750.0,
                 "last_price_15m": 750.0,
                 "last_price_1h": 750.0,
                 "trend_bias": "NEUTRAL",
                 "strength_pct": 0.0,
+                "forecast_5m": {
+                    "last_price": 750.0,
+                    "expected_high": 750.0,
+                    "expected_low": 750.0,
+                    "predicted_volatility_pct": 0.0,
+                    "candles": []
+                },
                 "forecast_15m": {
                     "last_price": 750.0,
                     "expected_high": 750.0,
@@ -245,10 +275,18 @@ def main():
             },
             "NASDAQ_bias": {
                 "ticker": "QQQ",
+                "last_price_5m": 740.0,
                 "last_price_15m": 740.0,
                 "last_price_1h": 740.0,
                 "trend_bias": "NEUTRAL",
                 "strength_pct": 0.0,
+                "forecast_5m": {
+                    "last_price": 740.0,
+                    "expected_high": 740.0,
+                    "expected_low": 740.0,
+                    "predicted_volatility_pct": 0.0,
+                    "candles": []
+                },
                 "forecast_15m": {
                     "last_price": 740.0,
                     "expected_high": 740.0,

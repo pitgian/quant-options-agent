@@ -257,10 +257,12 @@ export interface KronosResolutionForecast {
 
 export interface KronosForecastItem {
   ticker: string;
+  last_price_5m: number;
   last_price_15m: number;
   last_price_1h: number;
   trend_bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   strength_pct: number;
+  forecast_5m: KronosResolutionForecast;
   forecast_15m: KronosResolutionForecast;
   forecast_1h: KronosResolutionForecast;
   error?: string;
