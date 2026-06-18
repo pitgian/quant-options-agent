@@ -97,7 +97,7 @@ jobs:
           echo "Push failed after 3 attempts"
           exit 1
 
-      - name: Fallback: Commit and push to repository data branch
+      - name: "Fallback: Commit and push to repository data branch"
         if: steps.gist_push.outcome == 'failure'
         run: |
           echo "Gist push failed. Falling back to committing directly to the repository data branch..."
