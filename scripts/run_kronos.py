@@ -91,8 +91,8 @@ def get_market_bias(ticker, model, tokenizer, device):
     # Convert timestamps to Series to ensure .dt accessor works in KronosPredictor
     x_timestamp = pd.Series(context_df.index)
     
-    # Calculate future timestamps (next 26 candles, representing 6.5 hours for 15m bars)
-    pred_len = 26
+    # Calculate future timestamps (next 78 candles, representing 3 trading days of 6.5h each)
+    pred_len = 78
     freq_delta = pd.Timedelta(minutes=15)
     y_timestamp = pd.Series(pd.date_range(start=context_df.index[-1] + freq_delta, periods=pred_len, freq='15min'))
 

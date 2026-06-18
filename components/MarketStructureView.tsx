@@ -61,7 +61,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max'>('auto');
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [showKronosDetails, setShowKronosDetails] = useState(false);
-  const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD'>('1h');
+  const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD' | '2D' | '3D'>('1h');
 
   const TIMEFRAMES: { key: typeof kronosTimeframe; label: string }[] = [
     { key: '15m', label: '15m' },
@@ -69,7 +69,9 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     { key: '1h', label: '1h' },
     { key: '2h', label: '2h' },
     { key: '4h', label: '4h' },
-    { key: 'EOD', label: 'EOD' },
+    { key: 'EOD', label: 'EOD (1 G)' },
+    { key: '2D', label: '2 Giorni' },
+    { key: '3D', label: '3 Giorni' },
   ];
 
   useEffect(() => {
@@ -190,6 +192,8 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     else if (kronosTimeframe === '2h') candleCount = 8;
     else if (kronosTimeframe === '4h') candleCount = 16;
     else if (kronosTimeframe === 'EOD') candleCount = 26;
+    else if (kronosTimeframe === '2D') candleCount = 52;
+    else if (kronosTimeframe === '3D') candleCount = 78;
 
     const sliced = biasItem.candles.slice(0, candleCount);
     if (sliced.length === 0) return null;

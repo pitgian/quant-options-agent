@@ -20,7 +20,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
   } = sharedState;
 
   // Local UI State
-  const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD'>('1h');
+  const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD' | '2D' | '3D'>('1h');
   const [displayMode, setDisplayMode] = useState<'futures' | 'etf'>('futures');
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const chartRef = useRef<SVGSVGElement | null>(null);
@@ -34,7 +34,9 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     { key: '1h', label: '1h' },
     { key: '2h', label: '2h' },
     { key: '4h', label: '4h' },
-    { key: 'EOD', label: 'EOD (6.5h)' },
+    { key: 'EOD', label: 'EOD (1 G)' },
+    { key: '2D', label: '2 Giorni' },
+    { key: '3D', label: '3 Giorni' },
   ];
 
   // Get active forecast bias item
@@ -73,6 +75,8 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     else if (kronosTimeframe === '2h') candleCount = 8;
     else if (kronosTimeframe === '4h') candleCount = 16;
     else if (kronosTimeframe === 'EOD') candleCount = 26;
+    else if (kronosTimeframe === '2D') candleCount = 52;
+    else if (kronosTimeframe === '3D') candleCount = 78;
 
     const sliced = biasItem.candles.slice(0, candleCount);
 
