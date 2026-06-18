@@ -107,9 +107,12 @@ jobs:
           cp data/options_data.json /tmp/generated_data/
           cp data/kronos_forecast.json /tmp/generated_data/
           
+          # Remove local generated files to prevent checkout conflicts
+          rm -f data/options_data.json data/kronos_forecast.json
+          
           # Clean checkout data branch
           git fetch origin data
-          git checkout data
+          git checkout -B data origin/data --
           
           # Restore the generated files
           mkdir -p data
