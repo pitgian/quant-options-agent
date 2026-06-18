@@ -2,10 +2,10 @@ name: Fetch Options Data
 
 on:
   schedule:
-    # Every 5 minutes during US market hours (13:00-20:55 UTC, covers full market session)
-    - cron: '*/5 13-20 * * 1-5'
-    # Every 3 hours outside market hours (market is closed, no real-time changes)
-    - cron: '0 0-12,21-23/3 * * 1-5'
+    # Every 5 minutes during US pre-market + regular market hours (8:00-21:55 UTC, covers ~4 AM to 6 PM Eastern Time)
+    - cron: '*/5 8-21 * * 1-5'
+    # Every 3 hours outside active trading hours (market is closed, no real-time changes)
+    - cron: '0 0-7,22-23/3 * * 1-5'
     # Every 6 hours on weekends (market is closed)
     - cron: '0 */6 * * 0,6'
   workflow_dispatch:
