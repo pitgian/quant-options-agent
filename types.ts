@@ -247,17 +247,30 @@ export interface KronosPredictedCandle {
   volume: number;
 }
 
-export interface KronosForecastItem {
-  ticker: string;
+export interface KronosResolutionForecast {
   last_price: number;
-  predicted_price_1h: number;
   expected_high: number;
   expected_low: number;
   predicted_volatility_pct: number;
+  candles: KronosPredictedCandle[];
+}
+
+export interface KronosForecastItem {
+  ticker: string;
+  last_price_15m: number;
+  last_price_1h: number;
   trend_bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   strength_pct: number;
-  candles: KronosPredictedCandle[];
+  forecast_15m: KronosResolutionForecast;
+  forecast_1h: KronosResolutionForecast;
   error?: string;
+  
+  // Optional legacy properties for safety
+  last_price?: number;
+  expected_high?: number;
+  expected_low?: number;
+  predicted_volatility_pct?: number;
+  candles?: KronosPredictedCandle[];
 }
 
 export interface KronosForecast {
