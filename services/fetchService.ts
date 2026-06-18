@@ -15,9 +15,10 @@
 const GIST_USER = import.meta.env.VITE_GIST_USER;
 const GIST_ID = import.meta.env.VITE_GIST_ID;
 
-const GITHUB_DATA_URL = GIST_USER && GIST_ID 
+const REPO_DATA_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/options_data.json';
+const GIST_DATA_URL = GIST_USER && GIST_ID 
   ? `https://gist.githubusercontent.com/${GIST_USER}/${GIST_ID}/raw/options_data.json`
-  : 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/options_data.json';
+  : null;
 
 const LOCAL_DATA_URL = '/data/options_data.json';
 
@@ -146,8 +147,8 @@ let cache: CacheEntry | null = null;
 /**
  * Fetches the raw JSON data with in-memory caching.
  *
- * - Tries to fetch the latest data from GitHub Raw URL first (works in both dev and prod)
- * - Falls back to the local JSON file if offline or GitHub is down
+ * - Tries to fetch the latest data from GitHub Gist or Raw repo branch
+ * - Falls back to local JSON file
  * - Falls back to stale in-memory cache as last resort
  */
 export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJson | null> {
@@ -158,60 +159,66 @@ export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJs
     return cache.data;
   }
 
-  // Prioritize local file in dev mode, GitHub in production.
   const isDev = import.meta.env.DEV;
-  const url1 = isDev ? LOCAL_DATA_URL : GITHUB_DATA_URL;
-  const url2 = isDev ? GITHUB_DATA_URL : LOCAL_DATA_URL;
+  const primaryUrl = isDev ? LOCAL_DATA_URL : (GIST_DATA_URL || REPO_DATA_URL);
+  const backupUrl = isDev ? (GIST_DATA_URL || REPO_DATA_URL) : LOCAL_DATA_URL;
 
-  // 1. Try fetching from primary URL
-  try {
-    const response = await fetch(`${url1}?t=${Date.now()}`, {
+  const fetchJson = async (url: string): Promise<RawJson> => {
+    const response = await fetch(`${url}?t=${Date.now()}`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       cache: 'no-cache',
     });
 
     if (!response.ok) {
-      throw new Error(`Primary HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
     const data: RawJson = await response.json();
 
     if (!data.version || !data.symbols) {
-      throw new Error('Invalid data structure from primary source');
+      throw new Error('Invalid data structure');
     }
 
-    // Update cache
+    return data;
+  };
+
+  try {
+    let data = await fetchJson(primaryUrl);
+
+    // If in production and Gist is primary, check if it's stale (more than 15 mins old)
+    if (!isDev && GIST_DATA_URL && primaryUrl === GIST_DATA_URL) {
+      const generatedTime = data.generated ? new Date(data.generated).getTime() : 0;
+      const ageMs = now - generatedTime;
+      const isStale = ageMs > 15 * 60 * 1000;
+
+      if (isStale) {
+        console.warn(`Gist data is stale (${Math.round(ageMs / 1000 / 60)} minutes old). Trying to fetch from raw repo branch fallback...`);
+        try {
+          const repoData = await fetchJson(REPO_DATA_URL);
+          const repoGeneratedTime = repoData.generated ? new Date(repoData.generated).getTime() : 0;
+          if (repoGeneratedTime > generatedTime) {
+            console.log("GitHub raw repo data is newer. Using fallback data.");
+            data = repoData;
+          }
+        } catch (repoError) {
+          console.error("Failed to fetch fallback repo data, continuing with stale Gist:", repoError);
+        }
+      }
+    }
+
     cache = { timestamp: now, data };
     return data;
   } catch (primaryError) {
-    console.warn(`Failed to fetch from primary source, falling back to secondary:`, primaryError);
+    console.warn(`Failed to fetch from primary source (${primaryUrl}), falling back to backup:`, primaryError);
 
-    // 2. Fallback to secondary URL
     try {
-      const response = await fetch(`${url2}?t=${Date.now()}`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        cache: 'no-cache',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Secondary HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data: RawJson = await response.json();
-
-      if (!data.version || !data.symbols) {
-        throw new Error('Invalid data structure from secondary source');
-      }
-
-      // Update cache
+      const data = await fetchJson(backupUrl);
       cache = { timestamp: now, data };
       return data;
     } catch (secondaryError) {
       console.error('All options data sources failed:', secondaryError);
 
-      // 3. Fall back to stale in-memory cache if available
       if (cache) {
         return cache.data;
       }

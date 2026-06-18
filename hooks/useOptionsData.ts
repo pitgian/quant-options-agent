@@ -14,30 +14,63 @@ import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/d
 const GIST_USER = import.meta.env.VITE_GIST_USER;
 const GIST_ID = import.meta.env.VITE_GIST_ID;
 
-const KRONOS_GITHUB_URL = GIST_USER && GIST_ID
+const KRONOS_REPO_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
+const KRONOS_GIST_URL = GIST_USER && GIST_ID
   ? `https://gist.githubusercontent.com/${GIST_USER}/${GIST_ID}/raw/kronos_forecast.json`
-  : 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
+  : null;
 
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
 const fetchKronosForecast = async (): Promise<Response | null> => {
   const isDev = import.meta.env.DEV;
-  const primaryUrl = isDev ? KRONOS_LOCAL_URL : KRONOS_GITHUB_URL;
-  const secondaryUrl = isDev ? KRONOS_GITHUB_URL : KRONOS_LOCAL_URL;
+  
+  const fetchJson = async (url: string) => {
+    const res = await fetch(`${url}?t=${Date.now()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res;
+  };
+
+  const primaryUrl = isDev ? KRONOS_LOCAL_URL : (KRONOS_GIST_URL || KRONOS_REPO_URL);
+  const secondaryUrl = isDev ? (KRONOS_GIST_URL || KRONOS_REPO_URL) : KRONOS_LOCAL_URL;
 
   try {
-    const res = await fetch(`${primaryUrl}?t=${Date.now()}`);
-    if (res.ok) return res;
+    let res = await fetchJson(primaryUrl);
+    
+    // Check if stale in production when Gist is primary
+    if (!isDev && KRONOS_GIST_URL && primaryUrl === KRONOS_GIST_URL) {
+      try {
+        const clonedRes = res.clone();
+        const data = await clonedRes.json();
+        const generatedTime = data.generated ? new Date(data.generated).getTime() : 0;
+        const ageMs = Date.now() - generatedTime;
+        const isStale = ageMs > 15 * 60 * 1000;
+        
+        if (isStale) {
+          console.warn(`Kronos Gist forecast is stale (${Math.round(ageMs / 1000 / 60)} minutes old). Trying fallback to GitHub repo branch...`);
+          const repoRes = await fetchJson(KRONOS_REPO_URL);
+          const clonedRepoRes = repoRes.clone();
+          const repoData = await clonedRepoRes.json();
+          const repoGeneratedTime = repoData.generated ? new Date(repoData.generated).getTime() : 0;
+          if (repoGeneratedTime > generatedTime) {
+            console.log("GitHub repo Kronos forecast is newer. Using repo forecast.");
+            res = repoRes;
+          }
+        }
+      } catch (e) {
+        console.error("Error analyzing Kronos Gist freshness/fetching repo fallback:", e);
+      }
+    }
+    
+    return res;
   } catch (e) {
-    console.warn(`Failed to fetch Kronos forecast from primary (${primaryUrl}), falling back to secondary:`, e);
+    console.warn(`Failed to fetch Kronos forecast from primary (${primaryUrl}), trying secondary...`, e);
+    try {
+      return await fetchJson(secondaryUrl);
+    } catch (err) {
+      console.error(`All Kronos forecast sources failed:`, err);
+      return null;
+    }
   }
-  try {
-    const res = await fetch(`${secondaryUrl}?t=${Date.now()}`);
-    if (res.ok) return res;
-  } catch (e) {
-    console.error(`All Kronos forecast sources failed:`, e);
-  }
-  return null;
 };
 
 // ============================================================================
