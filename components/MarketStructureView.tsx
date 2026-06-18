@@ -1088,217 +1088,222 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
               </div>
             </div>
 
-            {/* Header labels for profiles */}
-            <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
-              <span className="text-right">Opzioni ETF (OI+Vol)</span>
-              <span className="text-center">Strike (F | E)</span>
-              <span className="text-left">Opzioni Indice (OI+Vol)</span>
-              <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
-            </div>
+            {/* Scrollable container for mobile responsiveness */}
+            <div className="overflow-x-auto select-none">
+              <div className="min-w-[700px] md:min-w-0">
+                {/* Header labels for profiles */}
+                <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
+                  <span className="text-right">Opzioni ETF (OI+Vol)</span>
+                  <span className="text-center">Strike (F | E)</span>
+                  <span className="text-left">Opzioni Indice (OI+Vol)</span>
+                  <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
+                </div>
 
-            {/* Chart rows */}
-            <div className="flex flex-col gap-0.5">
-              {zoomedProfile.slice().reverse().map((d) => {
-                const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
-                const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
-                const isClosest = Math.abs(d.futuresStrike - futuresSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.futuresStrike - futuresSpot)));
-                const isHVN = nodes.hvnStrikes.has(d.strike);
-                const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
-                const isLVN = !!lvnZone;
-                const isTrough = nodes.lvnStrikes.has(d.strike);
-                const isInKronosRange = !!(kronosBoundaries && d.strike >= kronosBoundaries.min && d.strike <= kronosBoundaries.max);
-                const flipPoint = indexData?.gexRegime?.flipPoint;
-                const isFlipRow = flipPoint
-                  ? Math.abs(d.strike - flipPoint) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint)))
-                  : false;
+                {/* Chart rows */}
+                <div className="flex flex-col gap-0.5">
+                  {zoomedProfile.slice().reverse().map((d) => {
+                    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+                    const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
+                    const isClosest = Math.abs(d.futuresStrike - futuresSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.futuresStrike - futuresSpot)));
+                    const isHVN = nodes.hvnStrikes.has(d.strike);
+                    const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
+                    const isLVN = !!lvnZone;
+                    const isTrough = nodes.lvnStrikes.has(d.strike);
+                    const isInKronosRange = !!(kronosBoundaries && d.strike >= kronosBoundaries.min && d.strike <= kronosBoundaries.max);
+                    const flipPoint = indexData?.gexRegime?.flipPoint;
+                    const isFlipRow = flipPoint
+                      ? Math.abs(d.strike - flipPoint) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint)))
+                      : false;
 
-                const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
-                const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
-                const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
+                    const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
+                    const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
+                    const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
 
-                // Blend backgrounds
-                let rowBg = 'transparent';
-                if (isClosest) {
-                  rowBg = 'rgba(234,179,8,0.2)'; // Yellow highlight for spot price
-                } else if (isFlipRow) {
-                  rowBg = 'rgba(249,115,22,0.08)'; // Orange highlight for GEX Flip row
-                } else if (isInKronosRange) {
-                  if (isHVN) {
-                    rowBg = 'rgba(59,130,246,0.12)'; // Soft blue base + indigo HVN blend
-                  } else if (isLVN) {
-                    rowBg = 'rgba(244,63,94,0.12)'; // Rose blend
-                  } else {
-                    rowBg = 'rgba(59,130,246,0.08)'; // Soft blue fill for general Kronos range
-                  }
-                } else if (isHVN) {
-                  rowBg = 'rgba(99,102,241,0.03)';
-                } else if (isLVN) {
-                  rowBg = 'rgba(244,63,94,0.02)';
-                }
+                    // Blend backgrounds
+                    let rowBg = 'transparent';
+                    if (isClosest) {
+                      rowBg = 'rgba(234,179,8,0.2)'; // Yellow highlight for spot price
+                    } else if (isFlipRow) {
+                      rowBg = 'rgba(249,115,22,0.08)'; // Orange highlight for GEX Flip row
+                    } else if (isInKronosRange) {
+                      if (isHVN) {
+                        rowBg = 'rgba(59,130,246,0.12)'; // Soft blue base + indigo HVN blend
+                      } else if (isLVN) {
+                        rowBg = 'rgba(244,63,94,0.12)'; // Rose blend
+                      } else {
+                        rowBg = 'rgba(59,130,246,0.08)'; // Soft blue fill for general Kronos range
+                      }
+                    } else if (isHVN) {
+                      rowBg = 'rgba(99,102,241,0.03)';
+                    } else if (isLVN) {
+                      rowBg = 'rgba(244,63,94,0.02)';
+                    }
 
-                let borderTopStyle = 'none';
-                let borderBottomStyle = 'none';
+                    let borderTopStyle = 'none';
+                    let borderBottomStyle = 'none';
 
-                if (isClosest) {
-                  borderTopStyle = '1px solid rgba(234,179,8,0.45)';
-                  borderBottomStyle = '1px solid rgba(234,179,8,0.45)';
-                } else if (isFlipRow) {
-                  borderTopStyle = '1px dashed rgba(249,115,22,0.5)';
-                  borderBottomStyle = '1px dashed rgba(249,115,22,0.5)';
-                } else {
-                  if (kronosBoundaries && d.strike === kronosBoundaries.max) {
-                    borderTopStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
-                  }
-                  if (kronosBoundaries && d.strike === kronosBoundaries.min) {
-                    borderBottomStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
-                  }
-                }
+                    if (isClosest) {
+                      borderTopStyle = '1px solid rgba(234,179,8,0.45)';
+                      borderBottomStyle = '1px solid rgba(234,179,8,0.45)';
+                    } else if (isFlipRow) {
+                      borderTopStyle = '1px dashed rgba(249,115,22,0.5)';
+                      borderBottomStyle = '1px dashed rgba(249,115,22,0.5)';
+                    } else {
+                      if (kronosBoundaries && d.strike === kronosBoundaries.max) {
+                        borderTopStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
+                      }
+                      if (kronosBoundaries && d.strike === kronosBoundaries.min) {
+                        borderBottomStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
+                      }
+                    }
 
-                return (
-                  <div
-                    key={d.strike}
-                    className="relative grid grid-cols-[1fr_150px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
-                    title={isInKronosRange ? `All'interno del Range Atteso di Kronos AI (${kronosTimeframe})` : undefined}
-                    style={{
-                      height: `${rowHeight}px`,
-                      backgroundColor: rowBg,
-                      borderTop: borderTopStyle,
-                      borderBottom: borderBottomStyle,
-                      borderLeft: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
-                      borderRight: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
-                    }}
-                  >
-                    {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
-                    {isFlipRow && rowHeight >= 18 && (
-                      <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[6.5px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
-                        ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
-                      </span>
-                    )}
-                    {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
-                      <span className="absolute left-2 -top-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos High: ${kronosRange.high.toFixed(0)}
-                      </span>
-                    )}
-                    {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
-                      <span className="absolute left-2 -bottom-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                        🎯 Kronos Low: ${kronosRange.low.toFixed(0)}
-                      </span>
-                    )}
-
-                    {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
-                    <div className="flex justify-end w-full pr-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                    return (
                       <div
-                        className="h-full rounded-l flex items-center justify-end pr-1.5 overflow-hidden"
+                        key={d.strike}
+                        className="relative grid grid-cols-[1fr_150px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
+                        title={isInKronosRange ? `All'interno del Range Atteso di Kronos AI (${kronosTimeframe})` : undefined}
                         style={{
-                          width: `${Math.max(2, etfBarWidth)}%`,
-                          backgroundColor: isInKronosRange
-                            ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(59,130,246,0.45)')
-                            : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(59,130,246,0.22)'),
+                          height: `${rowHeight}px`,
+                          backgroundColor: rowBg,
+                          borderTop: borderTopStyle,
+                          borderBottom: borderBottomStyle,
+                          borderLeft: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
+                          borderRight: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
                         }}
                       >
-                        {etfBarWidth > 18 && rowHeight >= 18 && (
-                          <span className="text-[8px] font-mono text-blue-200">
-                            {formatCompact(d.etfVolume)}
+                        {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
+                        {isFlipRow && rowHeight >= 18 && (
+                          <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[6.5px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
+                            ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
                           </span>
                         )}
-                      </div>
-                    </div>
-
-                    {/* Column 2: Center Strike Price */}
-                    <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
-                      <span
-                        className={`font-bold transition-colors shrink-0 ${
-                          rowHeight < 15 ? 'text-[7.5px]' :
-                          rowHeight < 20 ? 'text-[8.5px]' :
-                          rowHeight < 26 ? 'text-[9.5px]' : 'text-[11px]'
-                        }`}
-                        style={{
-                          color: isClosest ? '#ffffff' : isHVN ? '#818cf8' : isLVN ? '#fb7185' : '#94a3b8',
-                          backgroundColor: isClosest ? '#2563eb' : 'transparent',
-                          padding: isClosest ? '1.5px 5px' : '0',
-                          borderRadius: isClosest ? '4px' : '0',
-                          lineHeight: 1,
-                        }}
-                      >
-                        F: {d.futuresStrike.toFixed(0)} | E: {d.etfStrike.toFixed(0)}
-                      </span>
-                      {isClosest && rowHeight >= 18 && (
-                        <span className="absolute -bottom-3 text-[6.5px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
-                          Spot: F: {(() => {
-                            const fs = market === 'SP500' ? 'ES' : 'NQ';
-                            return (liveSpot[fs as keyof typeof liveSpot] || indexSpot).toFixed(1);
-                          })()} | E: {etfCashSpot.toFixed(2)}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Column 4: Index Options profile (oriented left) */}
-                    <div className="flex justify-start w-full pl-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
-                      <div
-                        className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
-                        style={{
-                          width: `${Math.max(2, indexBarWidth)}%`,
-                          backgroundColor: isInKronosRange
-                            ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(129,140,248,0.45)')
-                            : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(129,140,248,0.22)'),
-                        }}
-                      >
-                        {indexBarWidth > 18 && rowHeight >= 18 && (
-                          <span className="text-[8px] font-mono text-indigo-200">
-                            {formatCompact(d.indexVolume)}
+                        {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
+                          <span className="absolute left-2 -top-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
+                            🎯 Kronos High: ${kronosRange.high.toFixed(0)}
                           </span>
                         )}
-                      </div>
-                    </div>
-
-                    {/* Column 5: Futures Volume profile (oriented left) */}
-                    <div className="flex justify-start w-full pl-1 relative animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
-                      <div
-                        className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
-                        style={{
-                          width: `${Math.max(2, futBarWidth)}%`,
-                          backgroundColor: isInKronosRange
-                            ? (isHVN ? 'rgba(129,140,248,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(34,197,94,0.45)')
-                            : (isHVN ? 'rgba(129,140,248,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(34,197,94,0.22)'),
-                          borderLeft: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
-                          borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
-                        }}
-                      >
-                        {futBarWidth > 18 && rowHeight >= 18 && (
-                          <span className="text-[8px] font-mono text-green-200">
-                            {formatCompact(hasFuturesData ? d.futuresVolume : d.indexVolume)}
+                        {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
+                          <span className="absolute left-2 -bottom-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
+                            🎯 Kronos Low: ${kronosRange.low.toFixed(0)}
                           </span>
                         )}
-                      </div>
 
-                      {/* Right-aligned node badges overlay */}
-                      {rowHeight >= 14 && (
-                        <div 
-                          className="absolute right-2 top-0 flex gap-1 items-center"
-                          style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                        >
-                          {isHVN && (
-                            <span 
-                              className="px-1 py-0.5 rounded text-[7px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"
-                              style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
-                            >
-                              HVN
-                            </span>
-                          )}
-                          {isLVN && isTrough && (
-                            <span 
-                              className="px-1 py-0.5 rounded text-[7px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase"
-                              style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
-                            >
-                              LVN Zone
+                        {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
+                        <div className="flex justify-end w-full pr-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                          <div
+                            className="h-full rounded-l flex items-center justify-end pr-1.5 overflow-hidden"
+                            style={{
+                              width: `${Math.max(2, etfBarWidth)}%`,
+                              backgroundColor: isInKronosRange
+                                ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(59,130,246,0.45)')
+                                : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(59,130,246,0.22)'),
+                            }}
+                          >
+                            {etfBarWidth > 18 && rowHeight >= 18 && (
+                              <span className="text-[8px] font-mono text-blue-200">
+                                {formatCompact(d.etfVolume)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Column 2: Center Strike Price */}
+                        <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
+                          <span
+                            className={`font-bold transition-colors shrink-0 ${
+                              rowHeight < 15 ? 'text-[7.5px]' :
+                              rowHeight < 20 ? 'text-[8.5px]' :
+                              rowHeight < 26 ? 'text-[9.5px]' : 'text-[11px]'
+                            }`}
+                            style={{
+                              color: isClosest ? '#ffffff' : isHVN ? '#818cf8' : isLVN ? '#fb7185' : '#94a3b8',
+                              backgroundColor: isClosest ? '#2563eb' : 'transparent',
+                              padding: isClosest ? '1.5px 5px' : '0',
+                              borderRadius: isClosest ? '4px' : '0',
+                              lineHeight: 1,
+                            }}
+                          >
+                            F: {d.futuresStrike.toFixed(0)} | E: {d.etfStrike.toFixed(0)}
+                          </span>
+                          {isClosest && rowHeight >= 18 && (
+                            <span className="absolute -bottom-3 text-[6.5px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
+                              Spot: F: {(() => {
+                                const fs = market === 'SP500' ? 'ES' : 'NQ';
+                                return (liveSpot[fs as keyof typeof liveSpot] || indexSpot).toFixed(1);
+                              })()} | E: {etfCashSpot.toFixed(2)}
                             </span>
                           )}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+
+                        {/* Column 4: Index Options profile (oriented left) */}
+                        <div className="flex justify-start w-full pl-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                          <div
+                            className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
+                            style={{
+                              width: `${Math.max(2, indexBarWidth)}%`,
+                              backgroundColor: isInKronosRange
+                                ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(129,140,248,0.45)')
+                                : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(129,140,248,0.22)'),
+                            }}
+                          >
+                            {indexBarWidth > 18 && rowHeight >= 18 && (
+                              <span className="text-[8px] font-mono text-indigo-200">
+                                {formatCompact(d.indexVolume)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Column 5: Futures Volume profile (oriented left) */}
+                        <div className="flex justify-start w-full pl-1 relative animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                          <div
+                            className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
+                            style={{
+                              width: `${Math.max(2, futBarWidth)}%`,
+                              backgroundColor: isInKronosRange
+                                ? (isHVN ? 'rgba(129,140,248,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(34,197,94,0.45)')
+                                : (isHVN ? 'rgba(129,140,248,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(34,197,94,0.22)'),
+                              borderLeft: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
+                              borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
+                            }}
+                          >
+                            {futBarWidth > 18 && rowHeight >= 18 && (
+                              <span className="text-[8px] font-mono text-green-200">
+                                {formatCompact(hasFuturesData ? d.futuresVolume : d.indexVolume)}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Right-aligned node badges overlay */}
+                          {rowHeight >= 14 && (
+                            <div 
+                              className="absolute right-2 top-0 flex gap-1 items-center"
+                              style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
+                            >
+                              {isHVN && (
+                                <span 
+                                  className="px-1 py-0.5 rounded text-[7px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"
+                                  style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
+                                >
+                                  HVN
+                                </span>
+                              )}
+                              {isLVN && isTrough && (
+                                <span 
+                                  className="px-1 py-0.5 rounded text-[7px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase"
+                                  style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
+                                >
+                                  LVN Zone
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
 

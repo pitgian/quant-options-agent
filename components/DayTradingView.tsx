@@ -210,7 +210,7 @@ const LevelRow: React.FC<LevelRowProps> = ({
     <div
       onMouseEnter={() => onHover(level.strike)}
       onMouseLeave={() => onHover(null)}
-      className="flex flex-col px-3 py-2 rounded-lg transition-all duration-150 cursor-default"
+      className="flex flex-col px-2 sm:px-3 py-2 rounded-lg transition-all duration-150 cursor-default"
       style={{
         backgroundColor: isHovered
           ? (isCross ? 'rgba(245,158,11,0.08)' : (isResistance ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)'))
@@ -218,14 +218,14 @@ const LevelRow: React.FC<LevelRowProps> = ({
         borderLeft: isCross ? '2px solid rgba(245,158,11,0.4)' : 'none',
       }}
     >
-      <div className="grid grid-cols-[80px_160px_54px_1fr] gap-2.5 items-center">
+      <div className="grid grid-cols-[65px_1fr_45px] sm:grid-cols-[80px_160px_54px_1fr] gap-2 sm:gap-2.5 items-center">
         {/* Strike price */}
         <div className="flex flex-col">
-          <span className="font-mono text-sm font-bold" style={{ color }}>
+          <span className="font-mono text-xs sm:text-sm font-bold" style={{ color }}>
             ${level.strike.toFixed(0)}
           </span>
           {futuresEquivalent != null && futuresSymbol && (
-            <span className="text-[9px] font-mono text-gray-500 font-semibold whitespace-nowrap">
+            <span className="text-[8px] sm:text-[9px] font-mono text-gray-500 font-semibold whitespace-nowrap">
               {futuresSymbol} ~{futuresEquivalent.toFixed(0)}
             </span>
           )}
@@ -235,14 +235,14 @@ const LevelRow: React.FC<LevelRowProps> = ({
         <div className="flex items-center gap-1 flex-wrap">
           {isCross ? (
             <span
-              className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/10"
+              className="text-[8px] sm:text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/10"
               title="Confluenza Cross-Symbol tra ETF e Indice"
             >
               ★ Confl.
             </span>
           ) : (
             <span
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+              className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded"
               style={{
                 backgroundColor: isResistance ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
                 color,
@@ -254,7 +254,7 @@ const LevelRow: React.FC<LevelRowProps> = ({
 
           {isKrHigh && (
             <span
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20"
+              className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20"
               title="Massimo previsto da Kronos AI"
             >
               🎯 Kr High
@@ -263,7 +263,7 @@ const LevelRow: React.FC<LevelRowProps> = ({
 
           {isKrLow && (
             <span
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20"
+              className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20"
               title="Minimo previsto da Kronos AI"
             >
               🎯 Kr Low
@@ -273,27 +273,33 @@ const LevelRow: React.FC<LevelRowProps> = ({
 
         {/* Distance */}
         <span
-          className="text-xs font-mono font-semibold text-right"
+          className="text-[10px] sm:text-xs font-mono font-semibold text-right"
           style={{ color }}
         >
           {formatDistance(level.distance)}
         </span>
 
-        {/* OI/Vol visual bars */}
-        <div className="flex justify-end pl-1 shrink-0">
+        {/* OI/Vol visual bars: visible on desktop, hidden on mobile */}
+        <div className="hidden sm:flex justify-end pl-1 shrink-0">
           <OIVolBars oi={level.totalOI} vol={level.totalVolume} maxOI={maxOI} maxVol={maxVol} />
         </div>
       </div>
 
+      {/* Mobile-only inline text metrics row */}
+      <div className="sm:hidden mt-1.5 flex justify-between items-center text-[9px] text-gray-500 border-t border-slate-800/25 pt-1 font-semibold">
+        <span>OI: <strong className="text-gray-400 font-mono">{formatCompact(level.totalOI)}</strong></span>
+        <span>Vol: <strong className="text-gray-400 font-mono">{formatCompact(level.totalVolume)}</strong></span>
+      </div>
+
       {/* Cross-symbol paired info sub-row */}
       {isCross && level.pairedSymbol && level.pairedStrike != null && (
-        <div className="flex items-center gap-1.5 mt-1.5 pl-[80px]">
+        <div className="flex items-center gap-1.5 mt-1.5 pl-3 sm:pl-[80px]">
           <span className="text-[10px] text-amber-400/50 font-bold">↳</span>
-          <span className="text-[10px] text-gray-500">
+          <span className="text-[9px] sm:text-[10px] text-gray-500">
             {level.pairedSymbol}: <strong className="text-gray-300 font-mono">${level.pairedStrike.toFixed(0)}</strong>
             {level.pairedWallType && (
-              <span className="ml-1.5 px-1 py-0.2 text-[8px] font-bold rounded bg-amber-400/10 text-amber-400/70 border border-amber-400/10 uppercase">
-                {level.pairedWallType === 'put' ? 'Put Wall' : level.pairedWallType === 'call' ? 'Call Wall' : level.pairedWallType}
+              <span className="ml-1.5 px-1 py-0.2 text-[8px] font-bold rounded bg-amber-400/10 text-amber-400/70 border border-amber-400/10 uppercase font-mono">
+                {level.pairedWallType === 'put' ? 'Put' : level.pairedWallType === 'call' ? 'Call' : level.pairedWallType}
               </span>
             )}
             {level.pairedOI != null && (
@@ -533,7 +539,7 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
   const futuresSpot = liveSpot[futuresSymbol] || 0;
 
   return (
-    <div className="bg-[#161b22] border border-slate-850 rounded-2xl p-5 lg:p-6 flex flex-col gap-5 shadow-xl transition-all hover:border-slate-800">
+    <div className="bg-[#161b22] border border-slate-850 rounded-2xl p-3.5 sm:p-5 lg:p-6 flex flex-col gap-4 sm:gap-5 shadow-xl transition-all hover:border-slate-800">
       {/* Column Title & Selector */}
       <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
         <div className="flex items-baseline gap-2">
@@ -805,21 +811,21 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
     <div className="min-h-screen flex flex-col" style={{ background: '#0d1117' }}>
       
       {/* GLOBAL CONTROL HEADER */}
-      <header className="border-b border-gray-800 bg-[#161b22]/50 px-6 py-3">
-        <div className="max-w-[1850px] mx-auto flex items-center justify-between gap-4 flex-wrap">
+      <header className="border-b border-gray-800 bg-[#161b22]/50 px-4 py-3 sm:px-6">
+        <div className="max-w-[1850px] mx-auto flex items-center justify-between gap-3 flex-wrap">
           
-          <div className="flex items-center gap-4 flex-wrap">
-            <h1 className="text-sm font-bold text-gray-200">🎯 Livelli Intraday (Dual Market View)</h1>
+          <div className="flex items-center gap-2.5 sm:gap-4 flex-wrap">
+            <h1 className="text-xs sm:text-sm font-bold text-gray-200">🎯 Livelli Intraday <span className="hidden sm:inline">(Dual Market View)</span></h1>
             
             {/* Kronos global Timeframe */}
-            <div className="flex items-center gap-1.5 ml-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider">Kronos:</span>
-              <div className="flex items-center bg-[#0d1117] rounded-lg p-0.5 border border-slate-850">
+              <div className="flex items-center bg-[#0d1117] rounded-lg p-0.5 border border-slate-850 overflow-x-auto max-w-[180px] sm:max-w-none">
                 {KRONOS_TIMEFRAMES.map((tf) => (
                   <button
                     key={tf.key}
                     onClick={() => setKronosTimeframe(tf.key)}
-                    className="px-2 py-1 rounded text-[9px] font-extrabold transition-all duration-150"
+                    className="px-1.5 py-0.5 sm:px-2 sm:py-1 rounded text-[8px] sm:text-[9px] font-extrabold transition-all duration-150 whitespace-nowrap"
                     style={{
                       backgroundColor: kronosTimeframe === tf.key ? '#1e293b' : 'transparent',
                       color: kronosTimeframe === tf.key ? '#e2e8f0' : '#64748b',

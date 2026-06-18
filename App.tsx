@@ -11,53 +11,56 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col text-slate-100" style={{ backgroundColor: '#0d1117' }}>
       {/* Sleek Navigation Header */}
-      <nav className="border-b border-gray-800 bg-[#161b22] px-6 py-4">
-        <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4 flex-wrap">
+      <nav className="border-b border-gray-800 bg-[#161b22] px-4 py-3 sm:px-6 sm:py-4">
+        <div className="max-w-[1850px] mx-auto flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
             <div className="flex items-center gap-2">
-              <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
-                Gamma & Volatility Analytics Portal
+              <span className="text-sm sm:text-base md:text-xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent whitespace-nowrap">
+                GEX & Volatility Portal
               </span>
-              <span className="text-[10px] uppercase font-bold tracking-widest bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">
+              <span className="text-[9px] uppercase font-bold tracking-widest bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/20">
                 PRO
               </span>
             </div>
             
             {/* Elegant Tab Navigation */}
-            <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800 ml-0 md:ml-4 shrink-0">
+            <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800 w-full sm:w-auto justify-between sm:justify-start">
               <button
                 onClick={() => setActiveTab('dashboard')}
-                className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-150"
+                className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-md text-[11px] sm:text-xs font-semibold transition-all duration-150"
                 style={{
                   backgroundColor: activeTab === 'dashboard' ? '#1e293b' : 'transparent',
                   color: activeTab === 'dashboard' ? '#e2e8f0' : '#64748b',
                 }}
               >
-                📊 Dashboard Volumi
+                <span className="hidden sm:inline">📊 Dashboard Volumi</span>
+                <span className="sm:hidden">📊 Volumi</span>
               </button>
               <button
                 onClick={() => setActiveTab('levels')}
-                className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-150"
+                className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-md text-[11px] sm:text-xs font-semibold transition-all duration-150"
                 style={{
                   backgroundColor: activeTab === 'levels' ? '#1e293b' : 'transparent',
                   color: activeTab === 'levels' ? '#e2e8f0' : '#64748b',
                 }}
               >
-                🎯 Livelli Intraday
+                <span className="hidden sm:inline">🎯 Livelli Intraday</span>
+                <span className="sm:hidden">🎯 Livelli</span>
               </button>
               <button
                 onClick={() => setActiveTab('kronos')}
-                className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-150"
+                className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-md text-[11px] sm:text-xs font-semibold transition-all duration-150"
                 style={{
                   backgroundColor: activeTab === 'kronos' ? '#1e293b' : 'transparent',
                   color: activeTab === 'kronos' ? '#e2e8f0' : '#64748b',
                 }}
               >
-                🎯 Proiezioni Kronos AI
+                <span className="hidden sm:inline">🎯 Proiezioni Kronos AI</span>
+                <span className="sm:hidden">🎯 Kronos</span>
               </button>
             </div>
           </div>
-          <div className="text-xs text-gray-500 font-semibold tracking-wider uppercase">
+          <div className="hidden md:block text-[10px] sm:text-xs text-gray-500 font-semibold tracking-wider uppercase">
             {activeTab === 'dashboard' ? '3-Profile Unified Dashboard' : 
              activeTab === 'levels' ? 'Day Trading Key Levels' : 'Kronos AI Detailed Forecast'}
           </div>
