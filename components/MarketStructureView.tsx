@@ -1091,7 +1091,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             {/* Header labels for profiles */}
             <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
               <span className="text-right">Opzioni ETF (OI+Vol)</span>
-              <span className="text-center">Strike</span>
+              <span className="text-center">Strike (F | E)</span>
               <span className="text-left">Opzioni Indice (OI+Vol)</span>
               <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
             </div>
@@ -1220,14 +1220,14 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                           lineHeight: 1,
                         }}
                       >
-                        {d.futuresStrike.toFixed(0)}
+                        F: {d.futuresStrike.toFixed(0)} | E: {d.etfStrike.toFixed(0)}
                       </span>
                       {isClosest && rowHeight >= 18 && (
                         <span className="absolute -bottom-3 text-[6.5px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
-                          Spot: {(() => {
+                          Spot: F: {(() => {
                             const fs = market === 'SP500' ? 'ES' : 'NQ';
                             return (liveSpot[fs as keyof typeof liveSpot] || indexSpot).toFixed(1);
-                          })()}
+                          })()} | E: {etfCashSpot.toFixed(2)}
                         </span>
                       )}
                     </div>
