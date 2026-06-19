@@ -1018,7 +1018,7 @@ def fetch_futures_volume_profile(
     try:
         futures_ticker = yf.Ticker(futures_symbol)
         # Fetch futures candles based on period and interval
-        hist = futures_ticker.history(period=period, interval=interval)
+        hist = futures_ticker.history(period=period, interval=interval, prepost=True)
         if hist.empty:
             logger.warning(f"⚠️ No futures data returned for {futures_symbol}")
             return {}
