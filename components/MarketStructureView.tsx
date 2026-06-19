@@ -1101,9 +1101,17 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
 
                 {/* Chart rows */}
                 <div className="flex flex-col gap-0.5">
-                  {zoomedProfile.slice().reverse().map((d) => {
-                    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
-                    const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
+                  {zoomedProfile.length === 0 ? (
+                    <div className="text-center py-12 bg-slate-900/20 border border-dashed border-slate-800 rounded-xl my-4 text-gray-500 text-xs flex flex-col items-center justify-center gap-2">
+                      <span>📭 Nessun dato disponibile per questa scadenza</span>
+                      <span className="text-[10px] text-gray-600 max-w-sm px-4">
+                        (Nessuna opzione attiva trovata per la scadenza selezionata, ad esempio 0 DTE durante i giorni festivi o i fine settimana).
+                      </span>
+                    </div>
+                  ) : (
+                    zoomedProfile.slice().reverse().map((d) => {
+                      const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+                      const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
                     const isClosest = Math.abs(d.futuresStrike - futuresSpot) === Math.min(...zoomedProfile.map(x => Math.abs(x.futuresStrike - futuresSpot)));
                     const isHVN = nodes.hvnStrikes.has(d.strike);
                     const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
@@ -1301,7 +1309,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
                         </div>
                       </div>
                     );
-                  })}
+                  }))}
                 </div>
               </div>
             </div>
