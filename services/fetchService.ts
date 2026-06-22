@@ -41,13 +41,11 @@ export interface RawSymbolData {
   spot: number;
   generated: string;
   expiries: RawExpiry[];
-  walls?: {
-    put_walls: RawWall[];
-    call_walls: RawWall[];
-    confluence_levels?: RawConfluenceLevel[];
-  };
+  /**
+   * Net GEX across all strikes. Consumed by run_kronos.py as a covariate;
+   * the frontend recomputes per-strike GEX from `expiries` (see gexService).
+   */
   total_net_gex?: number;
-  gex_flip_point?: number | null;
   futures_volume_profile?: Record<string, number>;
   futures_volume_profiles?: Record<string, Record<string, number>>;
   volatility_skew_25d?: number;
@@ -66,37 +64,6 @@ export interface RawOption {
   oi: number;
   vol: number;
   gamma?: number;
-}
-
-export interface RawWall {
-  strike: number;
-  type: string;
-  total_oi: number;
-  total_vol: number;
-  score: number;
-  contributing_expiries: string[];
-  distance_pct: number;
-  expirations?: RawExpirationDetail[];
-  put_oi?: number;
-  put_vol?: number;
-  call_oi?: number;
-  call_vol?: number;
-  call_gex?: number;
-  put_gex?: number;
-  net_gex?: number;
-}
-
-export interface RawConfluenceLevel extends RawWall {
-  total_interest?: number;
-  confluence_ratio?: number;
-}
-
-export interface RawExpirationDetail {
-  expiration_date: string;
-  days_to_expiry: number;
-  oi: number;
-  volume: number;
-  weight: number;
 }
 
 // ============================================================================

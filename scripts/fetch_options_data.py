@@ -2032,14 +2032,30 @@ def main() -> None:
         )
 
     # Calculate cross-symbol confluence levels (SPY↔SPX, QQQ↔NDX)
+    # NOTE: this reads the per-symbol 'walls' dict, so it MUST run before we
+    # strip those internal fields from the serialized output below.
     cross_symbol_confluence = calculate_cross_symbol_confluence(symbols_data)
 
-    # Assemble top-level output (matches RawJson interface in vercelDataService.ts)
+    # Build a slim copy of symbols for serialization.
+    # The 'walls' block is computed by Python only to feed cross-symbol
+    # matching above — the frontend re-derives walls and GEX directly from
+    # the 'expiries' array (see services/index.ts), so shipping 'walls'
+    # would be ~30% dead payload (1.3 MB on a typical run).
+    # 'gex_flip_point' is also dropped (re-computed client-side with 5-strike
+    # smoothing, see gexService.computeGexFlipPoint).
+    # 'total_net_gex' is KEPT because run_kronos.py consumes it as a covariate.
+    INTERNAL_FIELDS_TO_STRIP = ("walls", "gex_flip_point")
+    output_symbols = {
+        sym: {k: v for k, v in sd.items() if k not in INTERNAL_FIELDS_TO_STRIP}
+        for sym, sd in symbols_data.items()
+    }
+
+    # Assemble top-level output (matches RawJson interface in fetchService.ts)
     now_iso = datetime.now(timezone.utc).isoformat()
     output = {
         "version": DATA_VERSION,
         "generated": now_iso,
-        "symbols": symbols_data,
+        "symbols": output_symbols,
         "cross_symbol_confluence": cross_symbol_confluence,
     }
 
