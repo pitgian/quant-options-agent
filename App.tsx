@@ -10,8 +10,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col text-slate-100" style={{ backgroundColor: '#0d1117' }}>
-      {/* Sleek Navigation Header */}
-      <nav className="border-b border-gray-800 bg-[#161b22] px-4 py-3 sm:px-6 sm:py-4">
+      {/* Sleek Navigation Header — always visible (sticky) so tabs are reachable at any scroll position */}
+      <nav className="sticky top-0 z-50 border-b border-gray-800 bg-[#161b22]/95 backdrop-blur px-4 py-2.5 sm:px-6 sm:py-3">
         <div className="max-w-[1850px] mx-auto flex items-center justify-between gap-3 flex-wrap">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
             <div className="flex items-center gap-2">
