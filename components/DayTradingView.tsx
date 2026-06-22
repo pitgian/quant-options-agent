@@ -133,14 +133,14 @@ const LevelRow: React.FC<LevelRowProps> = ({
       }}
     >
       <div className="grid grid-cols-[65px_1fr_45px] sm:grid-cols-[80px_160px_54px_1fr] gap-2 sm:gap-2.5 items-center">
-        {/* Strike price */}
+        {/* Strike price — futures-equivalent shown as co-primary (the trader operates on ES/NQ) */}
         <div className="flex flex-col">
           <span className="font-mono text-xs sm:text-sm font-bold" style={{ color }}>
             ${level.strike.toFixed(0)}
           </span>
           {futuresEquivalent != null && futuresSymbol && (
-            <span className="text-[8px] sm:text-[9px] font-mono text-gray-500 font-semibold whitespace-nowrap">
-              {futuresSymbol} ~{futuresEquivalent.toFixed(0)}
+            <span className="text-[9px] sm:text-[10px] font-mono text-blue-300 font-bold whitespace-nowrap">
+              {futuresSymbol} {futuresEquivalent.toFixed(0)}
             </span>
           )}
         </div>
@@ -490,12 +490,43 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
         </div>
       </div>
 
-      {/* Spot details and GEX Summary */}
+      {/* ⚡ FUTURES HERO BAR — the price the trader actually operates on (ES/NQ) */}
+      {futuresSpot > 0 && (
+        <div className="bg-gradient-to-r from-blue-500/15 to-indigo-500/10 border border-blue-500/30 rounded-xl p-3.5 flex items-center justify-between gap-3">
+          <div className="flex flex-col">
+            <span className="text-[9px] text-blue-300 uppercase font-extrabold tracking-widest flex items-center gap-1">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+              {futuresSymbol} FUTURES · LIVE
+            </span>
+            <span className="text-2xl sm:text-3xl font-mono font-extrabold text-white mt-0.5 leading-none">
+              ${futuresSpot.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+            </span>
+          </div>
+          <div className="flex flex-col items-end text-right">
+            <span className="text-[9px] text-gray-400 uppercase font-bold tracking-wider">Basis vs {indexSymbol}</span>
+            <span
+              className="text-sm font-mono font-bold mt-0.5"
+              style={{ color: futuresBasis >= 0 ? '#4ade80' : '#f87171' }}
+              title={`${futuresSymbol} − ${indexSymbol} (premium/discount sul fair value)`}
+            >
+              {futuresBasis >= 0 ? '+' : ''}{futuresBasis.toFixed(1)} pts
+              <span className="text-[10px] text-gray-500 ml-1">
+                ({futuresBasis >= 0 ? '+' : ''}{(futuresBasis / indexSpot * 100).toFixed(2)}%)
+              </span>
+            </span>
+            <span className="text-[8px] text-gray-500 mt-0.5 font-mono">
+              1 {indexSymbol} = {(indexToEtfRatio).toFixed(2)} {etfSymbol}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Spot context & GEX Summary */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[#0d1117]/40 border border-slate-850 rounded-xl p-4">
-        {/* Spot info cell */}
+        {/* Spot info cell — secondary context (ETF + Index cash) */}
         <div className="flex flex-col justify-center">
-          <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Spot Price ({activeSymbol})</span>
-          <span className="text-xl font-mono font-bold text-white mt-0.5">
+          <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Cash Reference ({activeSymbol})</span>
+          <span className="text-lg font-mono font-bold text-slate-200 mt-0.5">
             ${spot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
           <div className="mt-2 text-[9px] text-gray-400 space-y-0.5 font-semibold border-t border-slate-850 pt-2">
@@ -506,10 +537,6 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
             <div className="flex justify-between">
               <span>Cash Index ({indexSymbol}):</span>
               <span className="font-mono text-gray-300">${indexSpot > 0 ? indexSpot.toLocaleString(undefined, { maximumFractionDigits: 1 }) : 'N/A'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Futures Spot ({futuresSymbol}):</span>
-              <span className="font-mono text-gray-300">${futuresSpot > 0 ? futuresSpot.toLocaleString(undefined, { maximumFractionDigits: 1 }) : 'N/A'}</span>
             </div>
           </div>
         </div>
@@ -618,12 +645,20 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
           </div>
         )}
 
-        {/* SPOT BASILINE */}
+        {/* SPOT BASELINE — shows both the active cash symbol AND the live futures price the trader uses */}
         <div className="flex items-center gap-3 my-1.5 px-2">
           <div className="h-px flex-1" style={{ background: 'linear-gradient(to right, transparent, rgba(59,130,246,0.3), transparent)' }} />
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">Spot</span>
-            <span className="text-xs font-mono font-bold text-blue-300">${spot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">Spot {activeSymbol}</span>
+              <span className="text-xs font-mono font-bold text-blue-300">${spot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            {futuresSpot > 0 && (
+              <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700/50">
+                <span className="text-[10px] font-extrabold text-blue-300 uppercase tracking-wider">⚡ {futuresSymbol}</span>
+                <span className="text-xs font-mono font-extrabold text-white">${futuresSpot.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
+              </div>
+            )}
           </div>
           <div className="h-px flex-1" style={{ background: 'linear-gradient(to right, rgba(59,130,246,0.3), transparent)' }} />
         </div>
