@@ -102,9 +102,21 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       const indexStrikeData = indexByStrike.get(strike);
       const etfStrikeData = etfByStrike.get(etfStrike);
 
-      // Volume + OI for Index and ETF
-      const indexVolume = indexStrikeData ? (indexStrikeData.callOI + indexStrikeData.putOI + indexStrikeData.callVolume + indexStrikeData.putVolume) : 0;
-      const etfVolume = etfStrikeData ? (etfStrikeData.callOI + etfStrikeData.putOI + etfStrikeData.callVolume + etfStrikeData.putVolume) : 0;
+      // OI + Volume per side (Index) — exposed separately so the chart can render
+      // stacked put/call bars. A put wall shows up as a long red bar with little
+      // green; a call wall as a long green bar with little red.
+      const idxCallOI    = indexStrikeData?.callOI    ?? 0;
+      const idxPutOI     = indexStrikeData?.putOI     ?? 0;
+      const idxCallVol   = indexStrikeData?.callVolume ?? 0;
+      const idxPutVol    = indexStrikeData?.putVolume  ?? 0;
+      const etfCallOI    = etfStrikeData?.callOI    ?? 0;
+      const etfPutOI     = etfStrikeData?.putOI     ?? 0;
+      const etfCallVol   = etfStrikeData?.callVolume ?? 0;
+      const etfPutVol    = etfStrikeData?.putVolume  ?? 0;
+
+      // Volume + OI for Index and ETF (kept as totals for back-compat / normalization)
+      const indexVolume = idxCallOI + idxPutOI + idxCallVol + idxPutVol;
+      const etfVolume = etfCallOI + etfPutOI + etfCallVol + etfPutVol;
 
       // Look up in futures volume profile based on selected timeframe
       let futuresVolume = 0;
@@ -150,6 +162,16 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
         indexVolume,
         etfVolume,
         futuresVolume,
+        // Per-side breakdown for stacked put/call bars
+        indexCallInterest: idxCallOI + idxCallVol,
+        indexPutInterest:  idxPutOI  + idxPutVol,
+        etfCallInterest:   etfCallOI + etfCallVol,
+        etfPutInterest:    etfPutOI  + etfPutVol,
+        // OI-only breakdown (for the dominance view)
+        indexCallOI: idxCallOI,
+        indexPutOI:  idxPutOI,
+        etfCallOI:   etfCallOI,
+        etfPutOI:    etfPutOI,
         distancePct,
       };
     });
@@ -453,16 +475,24 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   }, [fairValueAreas, mergedZones, indexData, liveSpot, market]);
 
   // ---- Max values for bar sizing ----
-  const { maxEtfVolume, maxIndexVolume, maxFuturesVolume } = useMemo(() => {
+  const { maxEtfVolume, maxIndexVolume, maxFuturesVolume, maxIndexCall, maxIndexPut, maxEtfCall, maxEtfPut } = useMemo(() => {
     let maxEtf = 1;
     let maxIdx = 1;
     let maxFut = 1;
+    let maxIdxCall = 1;
+    let maxIdxPut = 1;
+    let maxEtfCall = 1;
+    let maxEtfPut = 1;
     for (const d of zoomedProfile) {
       if (d.etfVolume > maxEtf) maxEtf = d.etfVolume;
       if (d.indexVolume > maxIdx) maxIdx = d.indexVolume;
       if (d.futuresVolume > maxFut) maxFut = d.futuresVolume;
+      if (d.indexCallInterest > maxIdxCall) maxIdxCall = d.indexCallInterest;
+      if (d.indexPutInterest  > maxIdxPut)  maxIdxPut  = d.indexPutInterest;
+      if (d.etfCallInterest   > maxEtfCall) maxEtfCall = d.etfCallInterest;
+      if (d.etfPutInterest    > maxEtfPut)  maxEtfPut  = d.etfPutInterest;
     }
-    return { maxEtfVolume: maxEtf, maxIndexVolume: maxIdx, maxFuturesVolume: maxFut };
+    return { maxEtfVolume: maxEtf, maxIndexVolume: maxIdx, maxFuturesVolume: maxFut, maxIndexCall: maxIdxCall, maxIndexPut: maxIdxPut, maxEtfCall: maxEtfCall, maxEtfPut: maxEtfPut };
   }, [zoomedProfile]);
 
   if (loading) return <LoadingState />;
@@ -823,12 +853,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 </p>
                 <div className="flex flex-wrap gap-4 mt-3 pt-3 border-t border-slate-850 text-[10px] text-gray-400">
                   <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500/40"></span>
-                    <span><strong>Opzioni ETF:</strong> {etfData.symbol} OI+Vol</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500/40"></span>
-                    <span><strong>Opzioni Indice:</strong> {indexData.symbol} OI+Vol</span>
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: 'linear-gradient(to right, #10b981 50%, #ef4444 50%)' }}></span>
+                    <span><strong>Opzioni:</strong> metà verde = Calls (wall di resistenza) · metà rossa = Puts (wall di supporto)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
@@ -904,6 +930,16 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
                     const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
                     const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
+
+                    // Per-side stacked widths for Index column (OI + Volume combined).
+                    // Each side is normalized against the global max of its own side across
+                    // the zoomed window, so a put-heavy strike grows a long red bar and a
+                    // call-heavy strike grows a long green bar — making walls visible from
+                    // the bar shape alone, not from badges.
+                    const idxCallW = maxIndexCall > 0 ? (d.indexCallInterest / maxIndexCall) * 100 : 0;
+                    const idxPutW  = maxIndexPut  > 0 ? (d.indexPutInterest  / maxIndexPut)  * 100 : 0;
+                    const etfCallW = maxEtfCall   > 0 ? (d.etfCallInterest   / maxEtfCall)   * 100 : 0;
+                    const etfPutW  = maxEtfPut    > 0 ? (d.etfPutInterest    / maxEtfPut)    * 100 : 0;
 
                     // Blend backgrounds
                     let rowBg = 'transparent';
@@ -998,22 +1034,36 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           </span>
                         )}
 
-                        {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
-                        <div className="flex justify-end w-full pr-1 transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
-                          <div
-                            className="h-full rounded-l flex items-center justify-end pr-1.5 overflow-hidden"
-                            style={{
-                              width: `${Math.max(2, etfBarWidth)}%`,
-                              backgroundColor: isInKronosRange
-                                ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(59,130,246,0.45)')
-                                : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(59,130,246,0.22)'),
-                            }}
-                          >
-                            {etfBarWidth > 18 && rowHeight >= 18 && (
-                              <span className="text-[8px] font-mono text-blue-200">
-                                {formatCompact(d.etfVolume)}
-                              </span>
-                            )}
+                        {/* Column 1: ETF Options profile — stacked CALL (green) + PUT (red), mirrored vs Index */}
+                        <div className="flex justify-end w-full pr-1 transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
+                             title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}`}>
+                          <div className="flex h-full items-stretch rounded-l overflow-hidden" style={{ width: `${Math.max(2, Math.max(etfCallW, etfPutW))}%` }}>
+                            {/* Call side (green) — right half, near center */}
+                            <div
+                              className="flex items-center justify-end pr-1"
+                              style={{
+                                width: `${(etfCallW / Math.max(1, Math.max(etfCallW, etfPutW))) * 50}%`,
+                                backgroundColor: isInKronosRange
+                                  ? (isHVN ? 'rgba(16,185,129,0.65)' : 'rgba(16,185,129,0.55)')
+                                  : (isHVN ? 'rgba(16,185,129,0.40)' : 'rgba(16,185,129,0.30)'),
+                              }}
+                            >
+                              {etfBarWidth > 18 && rowHeight >= 18 && (
+                                <span className="text-[8px] font-mono text-emerald-100">
+                                  {formatCompact(d.etfVolume)}
+                                </span>
+                              )}
+                            </div>
+                            {/* Put side (red) — left half, far from center */}
+                            <div
+                              className="flex items-center justify-end pr-1"
+                              style={{
+                                width: `${(etfPutW / Math.max(1, Math.max(etfCallW, etfPutW))) * 50}%`,
+                                backgroundColor: isInKronosRange
+                                  ? (isHVN ? 'rgba(239,68,68,0.65)' : 'rgba(239,68,68,0.55)')
+                                  : (isHVN ? 'rgba(239,68,68,0.40)' : 'rgba(239,68,68,0.30)'),
+                              }}
+                            />
                           </div>
                         </div>
 
@@ -1045,22 +1095,39 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           )}
                         </div>
 
-                        {/* Column 4: Index Options profile (oriented left) */}
-                        <div className="flex justify-start w-full pl-1 transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
-                          <div
-                            className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
-                            style={{
-                              width: `${Math.max(2, indexBarWidth)}%`,
-                              backgroundColor: isInKronosRange
-                                ? (isHVN ? 'rgba(99,102,241,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(129,140,248,0.45)')
-                                : (isHVN ? 'rgba(99,102,241,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(129,140,248,0.22)'),
-                            }}
-                          >
-                            {indexBarWidth > 18 && rowHeight >= 18 && (
-                              <span className="text-[8px] font-mono text-indigo-200">
-                                {formatCompact(d.indexVolume)}
-                              </span>
-                            )}
+                        {/* Column 4: Index Options profile — stacked PUT (red) + CALL (green).
+                            Each side is normalized to its own global max, so a PUT WALL strike
+                            shows a long red bar and a CALL WALL strike a long green bar —
+                            the wall is visible from the bar shape, not just from a badge. */}
+                        <div className="flex justify-start w-full pl-1 transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
+                             title={`Index OI — Calls: ${formatCompact(d.indexCallOI)} | Puts: ${formatCompact(d.indexPutOI)}`}>
+                          <div className="flex h-full items-stretch rounded-r overflow-hidden" style={{ width: `${Math.max(2, Math.max(idxCallW, idxPutW))}%` }}>
+                            {/* Put side (red) — left half */}
+                            <div
+                              className="flex items-center justify-start pl-1"
+                              style={{
+                                width: `${(idxPutW / Math.max(1, Math.max(idxCallW, idxPutW))) * 50}%`,
+                                backgroundColor: isInKronosRange
+                                  ? (isHVN ? 'rgba(239,68,68,0.65)' : 'rgba(239,68,68,0.55)')
+                                  : (isHVN ? 'rgba(239,68,68,0.40)' : 'rgba(239,68,68,0.30)'),
+                              }}
+                            />
+                            {/* Call side (green) — right half */}
+                            <div
+                              className="flex items-center justify-start pl-1"
+                              style={{
+                                width: `${(idxCallW / Math.max(1, Math.max(idxCallW, idxPutW))) * 50}%`,
+                                backgroundColor: isInKronosRange
+                                  ? (isHVN ? 'rgba(16,185,129,0.65)' : 'rgba(16,185,129,0.55)')
+                                  : (isHVN ? 'rgba(16,185,129,0.40)' : 'rgba(16,185,129,0.30)'),
+                              }}
+                            >
+                              {indexBarWidth > 18 && rowHeight >= 18 && (
+                                <span className="text-[8px] font-mono text-emerald-100 whitespace-nowrap">
+                                  {formatCompact(d.indexVolume)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
