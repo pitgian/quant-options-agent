@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { viteStaticCopy } from 'vite-plugin-static-copy';
 import { fetchSpotPrices } from './lib/spotPrices';
 
 export default defineConfig(({ mode }) => {
@@ -48,16 +47,6 @@ export default defineConfig(({ mode }) => {
         }
       }
     ];
-    
-    // Copy data folder to dist for Vercel deployment
-    plugins.push(viteStaticCopy({
-      targets: [
-        {
-          src: 'data',
-          dest: '.'
-        }
-      ]
-    }));
     
     return {
       server: {
