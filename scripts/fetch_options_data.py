@@ -50,7 +50,6 @@ TOP_N_WALLS = 999  # Show all walls, no artificial limit
 MIN_COMBINED_OI_VOL = 1  # Include all strikes with any activity
 SCORE_OI_WEIGHT = 0.8
 SCORE_VOL_WEIGHT = 0.2
-CROSS_SIDE_ALPHA = 0.35  # Cross-side penalty factor (dealer hedging impact)
 INTER_SYMBOL_DELAY = 2  # seconds between symbols to avoid rate limiting
 
 # Confluence level settings
@@ -1470,16 +1469,10 @@ def fetch_symbol_data(
             strike = opt["strike"]
             gex_by_strike[strike] = gex_by_strike.get(strike, 0.0) + gex
 
-    # Find GEX flip point: strike where net GEX crosses from positive to negative
-    gex_flip_point: Optional[float] = None
-    sorted_gex_strikes = sorted(gex_by_strike.keys())
-    for i in range(len(sorted_gex_strikes) - 1):
-        s1, s2 = sorted_gex_strikes[i], sorted_gex_strikes[i + 1]
-        g1, g2 = gex_by_strike[s1], gex_by_strike[s2]
-        if g1 > 0 and g2 < 0:
-            # Linear interpolation to find exact zero crossing
-            gex_flip_point = round(s1 + (0 - g1) * (s2 - s1) / (g2 - g1), 2)
-            break
+    # NOTE: GEX flip point is never computed server-side. The frontend derives
+    # it with 5-strike smoothing bounded to ±5% of spot
+    # (see gexService.computeGexFlipPoint), which is more robust on dense
+    # 0DTE chains than a raw first-zero-crossing would be.
 
     # 6. Build wall structures (snake_case to match RawWall interface in vercelDataService.ts)
     put_walls = [
@@ -1617,7 +1610,6 @@ def fetch_symbol_data(
         "generated": now_iso,
         "oi_fallback_used": oi_fallback_used,
         "total_net_gex": round(total_net_gex, 2),
-        "gex_flip_point": gex_flip_point,
         "volatility_skew_25d": round(skew_value, 4),
         "put_call_oi_ratio": round(pcr_value, 4),
         "futures_volume_profile": futures_volume_profile_30d, # Keep legacy 30d profile as default
@@ -1640,8 +1632,7 @@ def fetch_symbol_data(
 
     logger.info(
         f"✅ {symbol}: {len(put_walls)} put walls, {len(call_walls)} call walls, "
-        f"{len(confluence_levels)} confluence levels identified "
-        f"(cross-side α={CROSS_SIDE_ALPHA})"
+        f"{len(confluence_levels)} confluence levels identified"
     )
     return result
 
@@ -2073,10 +2064,8 @@ def main() -> None:
     # matching above — the frontend re-derives walls and GEX directly from
     # the 'expiries' array (see services/index.ts), so shipping 'walls'
     # would be ~30% dead payload (1.3 MB on a typical run).
-    # 'gex_flip_point' is also dropped (re-computed client-side with 5-strike
-    # smoothing, see gexService.computeGexFlipPoint).
     # 'total_net_gex' is KEPT because run_kronos.py consumes it as a covariate.
-    INTERNAL_FIELDS_TO_STRIP = ("walls", "gex_flip_point")
+    INTERNAL_FIELDS_TO_STRIP = ("walls",)
     output_symbols = {
         sym: {k: v for k, v in sd.items() if k not in INTERNAL_FIELDS_TO_STRIP}
         for sym, sd in symbols_data.items()

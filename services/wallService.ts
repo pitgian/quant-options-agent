@@ -1,12 +1,15 @@
 /**
  * Wall Service
  *
- * Computes put/call walls from raw expiration data using simple
- * weighted scoring with proximity boost for day trading relevance.
+ * Computes put/call walls from raw expiration data with the unified scoring
+ * formula (Python <-> TS parity, see docs/python-ts-parity.md):
  *
- * Scoring formula: score = (weighted_OI × 0.7 + weighted_Vol × 0.3) × proximityBoost
- *   where weights include time decay: timeWeight = 1 / (1 + DTE / 7)
- *   and proximityBoost decays from 1.0 (at spot) to MIN_PROXIMITY_BOOST at PROXIMITY_BOOST_RANGE%+
+ *   score = (own_oi · w_oi + own_vol · w_vol) · exp(-|dist%| / 2.0)
+ *
+ *   where w_oi/w_vol depend on the nearest DTE bucket (0DTE trusts volume,
+ *   long DTE trusts OI), and the Laplacian distance decay keeps an intraday
+ *   focus without zeroing far structural levels. The same time decay
+ *   (timeWeight = 1 / (1 + DTE / 7)) is applied during aggregation.
  *
  * Returns max 7 walls per side, normalized to 0-100.
  *
