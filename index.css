@@ -30,3 +30,31 @@ body {
 .animate-fadeIn {
   animation: fadeIn 0.2s ease-out forwards;
 }
+
+/* ---------------------------------------------------------------------------
+ * Custom dark-theme scrollbar for inline scrollable panels.
+ *
+ * Referenced via the `custom-scrollbar` class in MarketStructureView's
+ * Kronos timeline panel. Previously the class was used in the JSX but never
+ * defined, so the panel fell back to the browser default scrollbar
+ * (jarringly light on the dark theme).
+ * ------------------------------------------------------------------------- */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #1e293b;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #1e293b;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}

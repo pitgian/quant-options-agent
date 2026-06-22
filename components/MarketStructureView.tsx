@@ -954,7 +954,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                         )}
 
                         {/* Column 1: ETF Options profile (oriented right, aligns to center) */}
-                        <div className="flex justify-end w-full pr-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                        <div className="flex justify-end w-full pr-1 transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                           <div
                             className="h-full rounded-l flex items-center justify-end pr-1.5 overflow-hidden"
                             style={{
@@ -1001,7 +1001,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                         </div>
 
                         {/* Column 4: Index Options profile (oriented left) */}
-                        <div className="flex justify-start w-full pl-1 animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                        <div className="flex justify-start w-full pl-1 transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                           <div
                             className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
                             style={{
@@ -1020,7 +1020,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                         </div>
 
                         {/* Column 5: Futures Volume profile (oriented left) */}
-                        <div className="flex justify-start w-full pl-1 relative animate-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
+                        <div className="flex justify-start w-full pl-1 relative transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
                           <div
                             className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
                             style={{
