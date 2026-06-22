@@ -13,6 +13,7 @@ import { useOptionsData } from '../hooks/useOptionsData';
 import { formatCompact, formatStrike, formatDistance, formatGEX, formatTimestamp } from '../utils/formatting';
 import { EXPIRY_OPTIONS } from '../lib/expiry';
 import { KRONOS_TIMEFRAMES, getActiveKronosForecast as computeKronosForecast, type KronosTimeframe } from '../lib/kronos';
+import { DayTradingHeader } from './DayTradingHeader';
 import { IconRefresh } from './Icons';
 import { LoadingState } from './LoadingState';
 import { ErrorState } from './ErrorState';
@@ -697,7 +698,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
     liveSpot,
   } = state;
 
-  const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD' | '2D' | '3D' | '1W'>('1h');
+  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1h');
   const [showCrossSymbol, setShowCrossSymbol] = useState(true);
   const [flashVisible, setFlashVisible] = useState(false);
 
@@ -724,91 +725,19 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
     <div className="min-h-screen flex flex-col" style={{ background: '#0d1117' }}>
       
       {/* GLOBAL CONTROL HEADER */}
-      <header className="border-b border-gray-800 bg-[#161b22]/50 px-4 py-3 sm:px-6">
-        <div className="max-w-[1850px] mx-auto flex items-center justify-between gap-3 flex-wrap">
-          
-          <div className="flex items-center gap-2.5 sm:gap-4 flex-wrap">
-            <h1 className="text-xs sm:text-sm font-bold text-gray-200">🎯 Livelli Intraday <span className="hidden sm:inline">(Dual Market View)</span></h1>
-            
-            {/* Kronos global Timeframe */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider">Kronos:</span>
-              <div className="flex items-center bg-[#0d1117] rounded-lg p-0.5 border border-slate-850 overflow-x-auto max-w-[180px] sm:max-w-none">
-                {KRONOS_TIMEFRAMES.map((tf) => (
-                  <button
-                    key={tf.key}
-                    onClick={() => setKronosTimeframe(tf.key)}
-                    className="px-1.5 py-0.5 sm:px-2 sm:py-1 rounded text-[8px] sm:text-[9px] font-extrabold transition-all duration-150 whitespace-nowrap"
-                    style={{
-                      backgroundColor: kronosTimeframe === tf.key ? '#1e293b' : 'transparent',
-                      color: kronosTimeframe === tf.key ? '#e2e8f0' : '#64748b',
-                    }}
-                  >
-                    {tf.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Expiry filter */}
-            <select
-              value={expiryFilter}
-              onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
-              className="bg-[#161b22] border border-slate-800 text-gray-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 font-semibold"
-            >
-              {EXPIRY_OPTIONS.map((opt) => (
-                <option key={opt.key} value={opt.key}>{opt.label}</option>
-              ))}
-            </select>
-
-            {/* Cross-symbol toggle */}
-            <button
-              onClick={() => setShowCrossSymbol(!showCrossSymbol)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-all duration-150"
-              style={{
-                backgroundColor: showCrossSymbol ? 'rgba(245,158,11,0.15)' : 'transparent',
-                borderColor: showCrossSymbol ? 'rgba(245,158,11,0.25)' : 'transparent',
-                color: showCrossSymbol ? '#f59e0b' : '#64748b',
-                borderWidth: '1px'
-              }}
-              title={showCrossSymbol ? 'Nascondi confluenze' : 'Mostra confluenze'}
-            >
-              <span>★ Confluenze</span>
-            </button>
-
-            {/* Refresh button */}
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-              title={lastUpdatedText ? `Aggiornato: ${lastUpdatedText}` : 'Aggiorna'}
-            >
-              <IconRefresh className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              {lastUpdatedText && (
-                <span className="text-[10px] text-gray-500 font-semibold font-mono">{lastUpdatedText}</span>
-              )}
-            </button>
-
-            {/* Background refresh indicator */}
-            {isBackgroundRefreshing && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-blue-400/80 animate-pulse font-semibold">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400 animate-ping" />
-                Aggiornamento…
-              </span>
-            )}
-
-            {/* Flash on new data */}
-            {flashVisible && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/10 text-green-400 animate-pulse border border-green-500/20">
-                ✓ Aggiornato
-              </span>
-            )}
-          </div>
-        </div>
-      </header>
-
+      <DayTradingHeader
+        kronosTimeframe={kronosTimeframe}
+        setKronosTimeframe={setKronosTimeframe}
+        expiryFilter={expiryFilter}
+        setExpiryFilter={setExpiryFilter}
+        showCrossSymbol={showCrossSymbol}
+        setShowCrossSymbol={setShowCrossSymbol}
+        refreshing={refreshing}
+        handleRefresh={handleRefresh}
+        lastUpdatedText={lastUpdatedText}
+        isBackgroundRefreshing={isBackgroundRefreshing}
+        flashVisible={flashVisible}
+      />
       {/* MAIN CONTENT AREA */}
       <main className="flex-1 px-6 py-6">
         <div className="max-w-[1850px] mx-auto flex flex-col gap-4">
