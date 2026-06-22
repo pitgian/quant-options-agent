@@ -11,7 +11,7 @@
  */
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { ExpiryFilter } from '../types';
+import { ExpiryFilter, DayTradingLevel } from '../types';
 import { useOptionsData } from '../hooks/useOptionsData';
 import { formatCompact, formatTimestamp } from '../utils/formatting';
 import { IconRefresh } from './Icons';
@@ -217,6 +217,22 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   const hasFuturesData = useMemo(() => {
     return zoomedProfile.some(d => d.futuresVolume > 0);
   }, [zoomedProfile]);
+
+  // ---- Wall lookups (put walls = supports below spot, call walls = resistances above) ----
+  // The chart previously rendered only raw per-strike volumes + HVN/LVN nodes, with no
+  // indication of which strikes are actual PUT/CALL WALLS. Users couldn't tell a wall
+  // from any other high-volume strike. These maps let the chart row loop tag each wall
+  // strike with a colored border + floating badge, consistent with the existing
+  // GEX-Flip / Kronos badges.
+  const { callWallByStrike, putWallByStrike } = useMemo(() => {
+    const call = new Map<number, DayTradingLevel>();
+    const put = new Map<number, DayTradingLevel>();
+    if (indexData) {
+      for (const l of indexData.resistance) call.set(l.strike, l);
+      for (const l of indexData.support) put.set(l.strike, l);
+    }
+    return { callWallByStrike: call, putWallByStrike: put };
+  }, [indexData]);
 
   // ---- Node detection (HVN & LVN) using Futures/Combined volume ----
   const nodes = useMemo(() => {
@@ -880,6 +896,11 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                       ? Math.abs(d.strike - flipPoint) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint)))
                       : false;
 
+                    // Wall lookup: is this strike a calculated PUT or CALL wall?
+                    const callWall = callWallByStrike.get(d.strike);
+                    const putWall = putWallByStrike.get(d.strike);
+                    const isWall = !!(callWall || putWall);
+
                     const etfBarWidth = (d.etfVolume / maxEtfVolume) * 100;
                     const indexBarWidth = (d.indexVolume / maxIndexVolume) * 100;
                     const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
@@ -932,15 +953,39 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           backgroundColor: rowBg,
                           borderTop: borderTopStyle,
                           borderBottom: borderBottomStyle,
-                          borderLeft: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
+                          borderLeft: isWall
+                            ? (callWall ? '4px solid #10b981' : '4px solid #ef4444')
+                            : (isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none'),
                           borderRight: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
                         }}
                       >
-                        {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
-                        {isFlipRow && rowHeight >= 18 && (
-                          <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[8px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
-                            ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
-                          </span>
+                        {/* Floating Labels at the absolute left of the row.
+                            Grouped in a flex container so PUT/CALL WALL badges sit
+                            next to GEX-Flip / Kronos without overlapping. */}
+                        {(isWall || isFlipRow) && rowHeight >= 18 && (
+                          <div className="absolute left-2 top-1/2 transform -translate-y-1/2 flex items-center gap-1 z-30">
+                            {isFlipRow && (
+                              <span className="text-[8px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap shadow-md">
+                                ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
+                              </span>
+                            )}
+                            {callWall && (
+                              <span
+                                className="text-[8px] font-extrabold uppercase tracking-wider bg-emerald-600 text-white px-1.5 py-0.5 rounded border border-emerald-300 whitespace-nowrap shadow-md"
+                                title={`Call Wall — score ${callWall.strength}/100, OI ${Math.round(callWall.totalOI).toLocaleString()}, ${callWall.distance}% dallo spot`}
+                              >
+                                🔺 CALL WALL · {formatCompact(callWall.totalOI)} OI
+                              </span>
+                            )}
+                            {putWall && (
+                              <span
+                                className="text-[8px] font-extrabold uppercase tracking-wider bg-red-600 text-white px-1.5 py-0.5 rounded border border-red-300 whitespace-nowrap shadow-md"
+                                title={`Put Wall — score ${putWall.strength}/100, OI ${Math.round(putWall.totalOI).toLocaleString()}, ${putWall.distance}% dallo spot`}
+                              >
+                                🔻 PUT WALL · {formatCompact(putWall.totalOI)} OI
+                              </span>
+                            )}
+                          </div>
                         )}
                         {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
                           <span className="absolute left-2 -top-2.5 text-[8px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
