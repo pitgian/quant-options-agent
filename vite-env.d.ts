@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_DATA_URL: string;
-  readonly VITE_API_URL: string;
-  readonly VITE_GEMINI_API_KEY: string;
-  readonly VITE_GLM_API_KEY: string;
+  /** GitHub user owning the data Gist (optional — falls back to repo `data` branch). */
+  readonly VITE_GIST_USER?: string;
+  /** GitHub Gist id hosting the generated JSON (optional — falls back to repo `data` branch). */
+  readonly VITE_GIST_ID?: string;
 }
 
 interface ImportMeta {
