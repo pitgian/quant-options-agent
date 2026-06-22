@@ -689,7 +689,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             </g>
                           ))}
                         </svg>
-                        <div className="flex justify-between w-full text-[7px] text-gray-500 px-1 mt-1 font-mono">
+                        <div className="flex justify-between w-full text-[8px] text-gray-500 px-1 mt-1 font-mono">
                           <span>Spot</span>
                           {kronosTimeframe !== '15m' && (
                             <span>
@@ -938,17 +938,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                       >
                         {/* Floating Labels at the absolute left of the row to prevent strike price overlap */}
                         {isFlipRow && rowHeight >= 18 && (
-                          <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[6.5px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
+                          <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[8px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
                             ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
                           </span>
                         )}
                         {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
-                          <span className="absolute left-2 -top-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
+                          <span className="absolute left-2 -top-2.5 text-[8px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
                             🎯 Kronos High: ${kronosRange.high.toFixed(0)}
                           </span>
                         )}
                         {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
-                          <span className="absolute left-2 -bottom-2.5 text-[6.5px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
+                          <span className="absolute left-2 -bottom-2.5 text-[8px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
                             🎯 Kronos Low: ${kronosRange.low.toFixed(0)}
                           </span>
                         )}
@@ -991,7 +991,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             F: {d.futuresStrike.toFixed(0)} | E: {d.etfStrike.toFixed(0)}
                           </span>
                           {isClosest && rowHeight >= 18 && (
-                            <span className="absolute -bottom-3 text-[6.5px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
+                            <span className="absolute -bottom-3 text-[8px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
                               Spot: F: {(() => {
                                 const fs = market === 'SP500' ? 'ES' : 'NQ';
                                 return (liveSpot[fs as keyof typeof liveSpot] || indexSpot).toFixed(1);
@@ -1047,7 +1047,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             >
                               {isHVN && (
                                 <span 
-                                  className="px-1 py-0.5 rounded text-[7px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"
+                                  className="px-1 py-0.5 rounded text-[8px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"
                                   style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
                                 >
                                   HVN
@@ -1055,7 +1055,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               )}
                               {isLVN && isTrough && (
                                 <span 
-                                  className="px-1 py-0.5 rounded text-[7px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase"
+                                  className="px-1 py-0.5 rounded text-[8px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase"
                                   style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}
                                 >
                                   LVN Zone
