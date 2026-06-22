@@ -11,6 +11,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { ExpiryFilter, DayTradingLevel, DayTradingData, KronosForecast } from '../types';
 import { useOptionsData } from '../hooks/useOptionsData';
 import { formatCompact, formatStrike, formatDistance, formatGEX, formatTimestamp } from '../utils/formatting';
+import { EXPIRY_OPTIONS } from '../lib/expiry';
+import { KRONOS_TIMEFRAMES, getActiveKronosForecast as computeKronosForecast, type KronosTimeframe } from '../lib/kronos';
 import { IconRefresh } from './Icons';
 import { LoadingState } from './LoadingState';
 import { ErrorState } from './ErrorState';
@@ -19,115 +21,26 @@ import { ErrorState } from './ErrorState';
 // Constants
 // ---------------------------------------------------------------------------
 
-const EXPIRY_OPTIONS: { key: ExpiryFilter; label: string }[] = [
-  { key: '0dte', label: '0 DTE' },
-  { key: '1-7dte', label: '1-7 DTE' },
-  { key: '8-30dte', label: '8-30 DTE' },
-  { key: '30+dte', label: '30+ DTE' },
-  { key: 'all', label: 'All' },
-];
-
-const KRONOS_TIMEFRAMES: { key: '15m' | '30m' | '1h' | '2h' | '4h' | 'EOD' | '2D' | '3D' | '1W'; label: string }[] = [
-  { key: '15m', label: '15m' },
-  { key: '30m', label: '30m' },
-  { key: '1h', label: '1h' },
-  { key: '2h', label: '2h' },
-  { key: '4h', label: '4h' },
-  { key: 'EOD', label: 'EOD (1 G)' },
-  { key: '2D', label: '2 Giorni' },
-  { key: '3D', label: '3 Giorni' },
-  { key: '1W', label: '1 Settimana' },
-];
+// EXPIRY_OPTIONS and KRONOS_TIMEFRAMES now live in lib/expiry.ts and lib/kronos.ts.
 
 // ---------------------------------------------------------------------------
 // Helper Functions
 // ---------------------------------------------------------------------------
 
-/** Extract and compute scaled forecast ranges based on selected timeframe */
+// ---------------------------------------------------------------------------
+// Kronos forecast extraction/scaling now lives in lib/kronos.ts
+// (getActiveKronosForecast). Previously this file carried a local copy of
+// the same ~90-line timeframe→resolution + candle-scaling logic. The thin
+// wrapper below preserves the original (biasItem, etfData, timeframe)
+// call signature used by the JSX in this component.
+// ---------------------------------------------------------------------------
 function getActiveKronosForecast(
-  biasItem: any,
-  etfData: DayTradingData,
-  timeframe: string
+  biasItem: KronosForecast['SP500_bias'] | null | undefined,
+  etfData: DayTradingData | null,
+  timeframe: KronosTimeframe
 ) {
-  if (!biasItem || !etfData || !etfData.spot) return null;
-
-  const is5m = timeframe === '15m' || timeframe === '30m';
-  const is15m = timeframe === '1h' || timeframe === '2h';
-  const is1h = timeframe === '4h' || timeframe === 'EOD';
-  const is4h = timeframe === '2D' || timeframe === '3D';
-  const isDaily = timeframe === '1W';
-  const isStable = is4h || isDaily;
-  
-  const resolutionData = is5m 
-    ? biasItem.forecast_5m 
-    : is15m
-      ? biasItem.forecast_15m
-      : is1h 
-        ? biasItem.forecast_1h 
-        : is4h
-          ? biasItem.forecast_4h
-          : biasItem.forecast_1d;
-  
-  const activeData = resolutionData || {
-    last_price: biasItem.last_price || 0,
-    expected_high: biasItem.expected_high || 0,
-    expected_low: biasItem.expected_low || 0,
-    predicted_volatility_pct: biasItem.predicted_volatility_pct || 0,
-    candles: biasItem.candles || []
-  };
-
-  if (!activeData || !activeData.candles || activeData.candles.length === 0) return null;
-
-  const forecastLastPrice = activeData.last_price || etfData.spot;
-  const liveEtfPrice = etfData.spot;
-  const scaleRatio = isStable ? 1.0 : liveEtfPrice / forecastLastPrice;
-  const lastPrice = isStable ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
-
-  let candleCount = 4;
-  if (timeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
-  else if (timeframe === '30m') candleCount = 6;  // 6 * 5m = 30m
-  else if (timeframe === '1h') candleCount = 4;   // 4 * 15m = 1h
-  else if (timeframe === '2h') candleCount = 8;   // 8 * 15m = 2h
-  else if (timeframe === '4h') candleCount = 4;   // 4 * 1h = 4h
-  else if (timeframe === 'EOD') candleCount = 7;  // 7 * 1h = 7h (EOD)
-  else if (timeframe === '2D') candleCount = 4;   // 4 * 4h = 16h
-  else if (timeframe === '3D') candleCount = 6;   // 6 * 4h = 24h
-  else if (timeframe === '1W') candleCount = 5;   // 5 * 1d = 5 days (1 week)
-
-  const sliced = activeData.candles.slice(0, candleCount);
-  if (sliced.length === 0) return null;
-
-  const scaledCandles = sliced.map((c: any) => ({
-    ...c,
-    open: c.open * scaleRatio,
-    high: c.high * scaleRatio,
-    low: c.low * scaleRatio,
-    close: c.close * scaleRatio
-  }));
-
-  const targetPrice = scaledCandles[scaledCandles.length - 1].close;
-  const expectedHigh = Math.max(lastPrice, ...scaledCandles.map((c: any) => c.high));
-  const expectedLow = Math.min(lastPrice, ...scaledCandles.map((c: any) => c.low));
-  const volatilityPct = ((expectedHigh - expectedLow) / lastPrice) * 100;
-  const deltaPct = ((targetPrice - lastPrice) / lastPrice) * 100;
-
-  let trendBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-  if (deltaPct > 0.05) {
-    trendBias = 'BULLISH';
-  } else if (deltaPct < -0.05) {
-    trendBias = 'BEARISH';
-  }
-
-  return {
-    lastPrice,
-    targetPrice,
-    expectedHigh,
-    expectedLow,
-    volatilityPct,
-    trendBias,
-    strengthPct: deltaPct,
-    candles: scaledCandles
-  };
+  if (!etfData) return null;
+  return computeKronosForecast(biasItem, etfData.spot, timeframe);
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +320,7 @@ interface MarketLevelsColumnProps {
   indexData: DayTradingData | null;
   liveSpot: any;
   kronosForecast: KronosForecast | null;
-  kronosTimeframe: string;
+  kronosTimeframe: KronosTimeframe;
   showCrossSymbol: boolean;
 }
 

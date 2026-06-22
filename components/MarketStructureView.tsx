@@ -17,14 +17,8 @@ import { formatCompact, formatTimestamp } from '../utils/formatting';
 import { IconRefresh } from './Icons';
 import { LoadingState } from './LoadingState';
 import { ErrorState } from './ErrorState';
-
-const EXPIRY_OPTIONS: { key: ExpiryFilter; label: string }[] = [
-  { key: '0dte', label: '0 DTE' },
-  { key: '1-7dte', label: '1-7 DTE' },
-  { key: '8-30dte', label: '8-30 DTE' },
-  { key: '30+dte', label: '30+ DTE' },
-  { key: 'all', label: 'Tutte le scadenze' },
-];
+import { EXPIRY_OPTIONS } from '../lib/expiry';
+import { KRONOS_TIMEFRAMES, getActiveKronosForecast, type KronosTimeframe } from '../lib/kronos';
 
 const ZOOM_OPTIONS = [
   { label: '± 1.5%', value: 1.5 },
@@ -61,19 +55,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   const [selectedFuturesTf, setSelectedFuturesTf] = useState<'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max'>('auto');
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [showKronosDetails, setShowKronosDetails] = useState(false);
-  const [kronosTimeframe, setKronosTimeframe] = useState<'15m' | '30m' | '1h' | '2h' | '4h' | 'EOD' | '2D' | '3D' | '1W'>('1h');
-
-  const TIMEFRAMES: { key: typeof kronosTimeframe; label: string }[] = [
-    { key: '15m', label: '15m' },
-    { key: '30m', label: '30m' },
-    { key: '1h', label: '1h' },
-    { key: '2h', label: '2h' },
-    { key: '4h', label: '4h' },
-    { key: 'EOD', label: 'EOD (1 G)' },
-    { key: '2D', label: '2 Giorni' },
-    { key: '3D', label: '3 Giorni' },
-    { key: '1W', label: '1 Settimana' },
-  ];
+  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1h');
 
   useEffect(() => {
     if (showUpdatedFlash) {
@@ -175,94 +157,12 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
   }, [profileData, zoomPct]);
 
   // ---- Active Kronos Forecast based on timeframe selection ----
+  // ---- Active Kronos Forecast based on timeframe selection ----
+  // (timeframe→resolution mapping + candle scaling now lives in lib/kronos.ts)
   const activeKronosForecast = useMemo(() => {
     if (!kronosForecast || !etfData || !etfData.spot) return null;
     const biasItem = market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
-    if (!biasItem) return null;
-
-    const is5m = kronosTimeframe === '15m' || kronosTimeframe === '30m';
-    const is15m = kronosTimeframe === '1h' || kronosTimeframe === '2h';
-    const is1h = kronosTimeframe === '4h' || kronosTimeframe === 'EOD';
-    const is4h = kronosTimeframe === '2D' || kronosTimeframe === '3D';
-    const isDaily = kronosTimeframe === '1W';
-    const isStable = is4h || isDaily;
-    
-    const resolutionData = is5m 
-      ? biasItem.forecast_5m 
-      : is15m
-        ? biasItem.forecast_15m
-        : is1h 
-          ? biasItem.forecast_1h 
-          : is4h
-            ? biasItem.forecast_4h
-            : biasItem.forecast_1d;
-    
-    // Fallback logic to prevent crashes if JSON hasn't been re-written yet
-    const activeData = resolutionData || {
-      last_price: biasItem.last_price || 0,
-      expected_high: biasItem.expected_high || 0,
-      expected_low: biasItem.expected_low || 0,
-      predicted_volatility_pct: biasItem.predicted_volatility_pct || 0,
-      candles: biasItem.candles || []
-    };
-
-    if (!activeData || !activeData.candles || activeData.candles.length === 0) return null;
-
-    const forecastLastPrice = activeData.last_price || etfData.spot;
-    const liveEtfPrice = etfData.spot;
-    // For multiday forecasts (4h and 1d candles), keep scaleRatio at 1.0 to prevent sub-second jitters.
-    // For intraday forecasts, scale dynamically to align with current price.
-    const scaleRatio = isStable ? 1.0 : liveEtfPrice / forecastLastPrice;
-
-    // Scale start price to match current live spot for intraday, or use static model price for multiday to remain stable.
-    const lastPrice = isStable ? (activeData.last_price || liveEtfPrice) : liveEtfPrice;
-
-    let candleCount = 4;
-    if (kronosTimeframe === '15m') candleCount = 3;      // 3 * 5m = 15m
-    else if (kronosTimeframe === '30m') candleCount = 6;  // 6 * 5m = 30m
-    else if (kronosTimeframe === '1h') candleCount = 4;   // 4 * 15m = 1h
-    else if (kronosTimeframe === '2h') candleCount = 8;   // 8 * 15m = 2h
-    else if (kronosTimeframe === '4h') candleCount = 4;   // 4 * 1h = 4h
-    else if (kronosTimeframe === 'EOD') candleCount = 7;  // 7 * 1h = 7h (EOD)
-    else if (kronosTimeframe === '2D') candleCount = 4;   // 4 * 4h = 16h
-    else if (kronosTimeframe === '3D') candleCount = 6;   // 6 * 4h = 24h
-    else if (kronosTimeframe === '1W') candleCount = 5;   // 5 * 1d = 5 days (1 week)
-
-    const sliced = activeData.candles.slice(0, candleCount);
-    if (sliced.length === 0) return null;
-
-    // Scale candles dynamically
-    const scaledCandles = sliced.map(c => ({
-      ...c,
-      open: c.open * scaleRatio,
-      high: c.high * scaleRatio,
-      low: c.low * scaleRatio,
-      close: c.close * scaleRatio
-    }));
-
-    const targetPrice = scaledCandles[scaledCandles.length - 1].close;
-    const expectedHigh = Math.max(lastPrice, ...scaledCandles.map(c => c.high));
-    const expectedLow = Math.min(lastPrice, ...scaledCandles.map(c => c.low));
-    const volatilityPct = ((expectedHigh - expectedLow) / lastPrice) * 100;
-    const deltaPct = ((targetPrice - lastPrice) / lastPrice) * 100;
-
-    let trendBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-    if (deltaPct > 0.05) {
-      trendBias = 'BULLISH';
-    } else if (deltaPct < -0.05) {
-      trendBias = 'BEARISH';
-    }
-
-    return {
-      lastPrice,
-      targetPrice,
-      expectedHigh,
-      expectedLow,
-      volatilityPct,
-      trendBias,
-      strengthPct: deltaPct,
-      candles: scaledCandles
-    };
+    return getActiveKronosForecast(biasItem, etfData.spot, kronosTimeframe);
   }, [kronosForecast, market, kronosTimeframe, etfData]);
 
   // ---- Kronos expected price range in Futures terms ----
@@ -681,7 +581,7 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Kronos:</span>
               <div className="flex items-center bg-slate-900 rounded-lg p-0.5 border border-slate-800">
-                {TIMEFRAMES.map((tf) => (
+                {KRONOS_TIMEFRAMES.map((tf) => (
                   <button
                     key={tf.key}
                     onClick={() => setKronosTimeframe(tf.key)}
