@@ -722,18 +722,28 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
   }, [biasItem, etfData, futuresRatio, displayMode, kronosTimeframe]);
 
   return (
-    <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 flex flex-col gap-6">
-      <KronosControlBar
-        market={market}
-        setMarket={setMarket}
-        kronosTimeframe={kronosTimeframe}
-        setKronosTimeframe={setKronosTimeframe}
-        displayMode={displayMode}
-        setDisplayMode={setDisplayMode}
-        refreshing={refreshing}
-        handleRefresh={handleRefresh}
-        timeSinceUpdate={timeSinceUpdate}
-      />
+    <div className="flex-1 flex flex-col">
+      {/* Sticky control bar — full width, sticks just below the App nav */}
+      <div
+        className="sticky z-40 bg-[#161b22]/95 backdrop-blur border-b border-slate-800"
+        style={{ top: 'var(--app-nav-h, 0px)' }}
+      >
+        <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-3">
+          <KronosControlBar
+            market={market}
+            setMarket={setMarket}
+            kronosTimeframe={kronosTimeframe}
+            setKronosTimeframe={setKronosTimeframe}
+            displayMode={displayMode}
+            setDisplayMode={setDisplayMode}
+            refreshing={refreshing}
+            handleRefresh={handleRefresh}
+            timeSinceUpdate={timeSinceUpdate}
+          />
+        </div>
+      </div>
+
+      <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6 w-full">
 
       {!kronosForecast ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[400px] bg-[#161b22] border border-slate-800 rounded-2xl">
@@ -766,6 +776,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
           />
         </>
       )}
+      </div>
     </div>
   );
 };

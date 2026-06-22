@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
 import { MarketStructureView } from './components/MarketStructureView';
 import { DayTradingView } from './components/DayTradingView';
 import { KronosForecastView } from './components/KronosForecastView';
@@ -7,11 +7,28 @@ import { useOptionsData } from './hooks/useOptionsData';
 export default function App() {
   const sharedState = useOptionsData();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'levels' | 'kronos'>('dashboard');
+  const navRef = useRef<HTMLElement>(null);
+
+  // Publish the nav height as a CSS variable so each view's filter header can
+  // stick exactly below the nav. The nav height is responsive (taller on
+  // mobile where the title + tabs stack into two rows), so we re-measure on
+  // resize via ResizeObserver instead of hardcoding a value.
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const update = () => {
+      document.documentElement.style.setProperty('--app-nav-h', `${nav.offsetHeight}px`);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(nav);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col text-slate-100" style={{ backgroundColor: '#0d1117' }}>
       {/* Sleek Navigation Header — always visible (sticky) so tabs are reachable at any scroll position */}
-      <nav className="sticky top-0 z-50 border-b border-gray-800 bg-[#161b22]/95 backdrop-blur px-4 py-2.5 sm:px-6 sm:py-3">
+      <nav ref={navRef} className="sticky top-0 z-50 border-b border-gray-800 bg-[#161b22]/95 backdrop-blur px-4 py-2.5 sm:px-6 sm:py-3">
         <div className="max-w-[1850px] mx-auto flex items-center justify-between gap-3 flex-wrap">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
             <div className="flex items-center gap-2">

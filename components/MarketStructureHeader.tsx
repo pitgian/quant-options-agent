@@ -53,7 +53,10 @@ export function MarketStructureHeader({
   isBackgroundRefreshing, flashVisible,
 }: MarketStructureHeaderProps) {
   return (
-    <header className="border-b border-gray-800 bg-[#161b22]/95 backdrop-blur px-4 py-3">
+    <header
+      className="sticky z-40 border-b border-gray-800 bg-[#161b22]/95 backdrop-blur px-4 py-3"
+      style={{ top: 'var(--app-nav-h, 0px)' }}
+    >
       <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 flex-wrap">
         {/* Market selector (S&P 500 vs Nasdaq 100) */}
         <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-800">
