@@ -673,12 +673,11 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
 // ---------------------------------------------------------------------------
 
 interface DayTradingViewProps {
-  sharedState?: any;
+  sharedState: ReturnType<typeof useOptionsData>;
 }
 
 export function DayTradingView({ sharedState }: DayTradingViewProps) {
-  const localState = useOptionsData();
-  const state = sharedState || localState;
+  const state = sharedState;
 
   const {
     loading,

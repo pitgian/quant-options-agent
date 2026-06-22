@@ -22,9 +22,8 @@ import { KRONOS_TIMEFRAMES, getActiveKronosForecast, type KronosTimeframe } from
 import { MarketStructureHeader, type FuturesTimeframe } from './MarketStructureHeader';
 import { StructuralAnalysisCard, LegendCard, type StructuralAnalysis } from './MarketStructurePanels';
 
-export function MarketStructureView({ sharedState }: { sharedState?: any }) {
-  const localState = useOptionsData();
-  const state = sharedState || localState;
+export function MarketStructureView({ sharedState }: { sharedState: ReturnType<typeof useOptionsData> }) {
+  const state = sharedState;
 
   const {
     loading,
@@ -83,6 +82,15 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
     const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
     const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexSpot;
 
+    // Index strikes by value so the per-strike lookups below are O(1) instead
+    // of O(n). Previously each iteration did .find() on the full
+    // gexStrikeData array, making the whole merge O(strikes × strikes)
+    // (~40k iterations on a typical ~200-strike chain, every render).
+    const etfByStrike = new Map(etfData.gexStrikeData.map(d => [d.strike, d]));
+    // indexData.gexStrikeData is the iteration source, but we still look it up
+    // by strike below — index it too for clarity and O(1) access.
+    const indexByStrike = new Map(indexData.gexStrikeData.map(d => [d.strike, d]));
+
     // Get all strikes from the Index data and sort them ascending
     const strikes = indexData.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
     if (strikes.length === 0) return [];
@@ -91,8 +99,8 @@ export function MarketStructureView({ sharedState }: { sharedState?: any }) {
       // Find corresponding ETF strike
       const etfStrike = Math.round(strike / ratio);
 
-      const indexStrikeData = indexData.gexStrikeData.find(d => d.strike === strike);
-      const etfStrikeData = etfData.gexStrikeData.find(d => d.strike === etfStrike);
+      const indexStrikeData = indexByStrike.get(strike);
+      const etfStrikeData = etfByStrike.get(etfStrike);
 
       // Volume + OI for Index and ETF
       const indexVolume = indexStrikeData ? (indexStrikeData.callOI + indexStrikeData.putOI + indexStrikeData.callVolume + indexStrikeData.putVolume) : 0;
