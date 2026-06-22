@@ -1,52 +1,75 @@
 name: Fetch Options Data
 
+# =============================================================================
+# Two-job pipeline (refactored 2026-06-22).
+#
+# PROBLEM this fixes:
+#   Previously a single job ran fetch-options → train-adapter → run-kronos →
+#   push, all under ONE concurrency group with cancel-in-progress: true.
+#   The job took ~8 minutes (Kronos model download + 20 epochs of adapter
+#   training), but the cron fires every 5 minutes during market hours.
+#   Result: every run was cancelled mid-flight by the next cron tick, so the
+#   data branch was NEVER updated during market hours — exactly when it
+#   matters most. Last successful data update was 05:49 UTC (pre-market),
+#   every run after that died in "Train covariate adapters".
+#
+# FIX:
+#   Split into two jobs with INDEPENDENT concurrency groups:
+#
+#     JOB 1 "fetch-options"   (critical, ~2-3 min)
+#       - fetches options data, pushes options_data.json + options_history.json
+#       - cancel-in-progress: FALSE (queue) — this job MUST complete, never kill
+#       - concurrency group: fetch-options-data
+#
+#     JOB 2 "kronos-forecast"  (non-critical, ~5-10 min)
+#       - needs: fetch-options (runs after data is published)
+#       - trains adapter ONLY if the existing one is > 24h old (was every 5 min!)
+#       - runs Kronos, pushes kronos_forecast.json + covariate_adapter.pth
+#       - cancel-in-progress: TRUE — safe to kill, options data already saved
+#       - concurrency group: kronos-forecast
+#
+#   If Kronos is slow and gets cancelled, the options data is still fresh.
+# =============================================================================
+
 on:
   schedule:
-    # Every 5 minutes during US pre-market + regular market hours (8:00-21:55 UTC, covers ~4 AM to 6 PM Eastern Time)
+    # Every 5 minutes during US pre-market + regular market hours
     - cron: '*/5 8-21 * * 1-5'
-    # Every 3 hours outside active trading hours (market is closed, no real-time changes)
+    # Every 3 hours outside active trading hours
     - cron: '0 0-7,22-23/3 * * 1-5'
-    # Every 6 hours on weekends (market is closed)
+    # Every 6 hours on weekends
     - cron: '0 */6 * * 0,6'
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-# Previene esecuzioni simultanee - cancella quelle in corso e avvia la nuova
-concurrency:
-  group: fetch-options-data
-  cancel-in-progress: true
-
+# ============================================================================
+# JOB 1: Fetch options data + push (CRITICAL)
+# ============================================================================
 jobs:
-  fetch-data:
+  fetch-options:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+    concurrency:
+      group: fetch-options-data
+      # FALSE: this job must finish. Queue runs instead of killing them.
+      # The job is fast (~2-3 min) so the queue never grows beyond 1.
+      cancel-in-progress: false
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: true
           fetch-depth: 0
-        
-      - name: Cache Hugging Face models
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface
-          key: hf-models-kronos-${{ hashFiles('scripts/run_kronos.py') }}
-          restore-keys: |
-            hf-models-kronos-
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Cache virtualenv
         id: cache-venv
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('scripts/requirements.txt') }}
@@ -57,18 +80,15 @@ jobs:
           python -m venv .venv
           source .venv/bin/activate
           python -m pip install --upgrade pip
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r scripts/requirements.txt
-          
-      - name: Restore state from repository data branch
+
+      - name: Restore options_history.json from data branch
         continue-on-error: true
         run: |
           git fetch origin data || true
           git checkout origin/data -- data/options_history.json || true
-          git checkout origin/data -- scripts/model/covariate_adapter.pth || true
 
-      - name: Restore state from Gist
-        id: gist_restore
+      - name: Restore options_history.json from Gist
         continue-on-error: true
         run: |
           if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
@@ -76,30 +96,180 @@ jobs:
             exit 0
           fi
           git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo_restore
-          if [ -f gist_repo_restore/options_history.json ]; then
+          if [ -f gist_repo_restore/options_history.json ] && [ ! -f data/options_history.json ]; then
             echo "Restoring options_history.json from Gist..."
             mkdir -p data
             cp -f gist_repo_restore/options_history.json data/
           fi
-          if [ -f gist_repo_restore/covariate_adapter.pth ]; then
-            echo "Restoring covariate_adapter.pth from Gist..."
-            mkdir -p scripts/model
-            cp -f gist_repo_restore/covariate_adapter.pth scripts/model/
-          fi
           rm -rf gist_repo_restore
 
       - name: Fetch options data
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
           source .venv/bin/activate
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
         env:
           TZ: America/New_York
-          AI_API_KEY: ${{ secrets.AI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
 
-      - name: Train covariate adapters
+      - name: Push to Gist
+        id: gist_push
+        continue-on-error: true
+        run: |
+          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
+            echo "GH_PAT or GIST_ID secret is missing. Skipping Gist update."
+            exit 1
+          fi
+          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo
+          cp data/options_data.json gist_repo/
+          cp data/options_history.json gist_repo/ || true
+          cd gist_repo
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add options_data.json options_history.json
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to push to Gist"
+            exit 0
+          fi
+          git commit -m "chore: update options data [job 1]"
+          for i in 1 2 3; do
+            if git push origin main || git push origin master; then
+              echo "Push to Gist successful"
+              exit 0
+            fi
+            git pull --rebase origin main || git pull --rebase origin master
+          done
+          echo "Gist push failed after 3 attempts"
+          exit 1
+
+      - name: Fallback — push to repository data branch
+        if: steps.gist_push.outcome == 'failure'
+        run: |
+          echo "Gist push failed. Pushing to the repository data branch..."
+          mkdir -p /tmp/generated_data
+          cp data/options_data.json /tmp/generated_data/
+          cp data/options_history.json /tmp/generated_data/ || true
+          rm -f data/options_data.json data/options_history.json
+          git fetch origin data
+          git checkout -B data origin/data --
+          mkdir -p data
+          cp /tmp/generated_data/options_data.json data/
+          cp /tmp/generated_data/options_history.json data/ || true
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/options_data.json data/options_history.json
+          if [ ! -f vercel.json ]; then
+            echo '{"ignoreCommand": "exit 0"}' > vercel.json
+            git add vercel.json
+          fi
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit on data branch."
+            exit 0
+          fi
+          git commit -m "chore: update options data [job 1 fallback] [skip ci]"
+          git push origin data
+
+  # ============================================================================
+  # JOB 2: Kronos forecast (non-critical, runs after job 1)
+  # ============================================================================
+  kronos-forecast:
+    needs: fetch-options
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: kronos-forecast
+      # TRUE: safe to kill — the options data is already saved by job 1.
+      # If Kronos is slow and a newer run starts, the old one is cancelled.
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-kronos-${{ hashFiles('scripts/run_kronos.py') }}
+          restore-keys: |
+            hf-models-kronos-
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Cache virtualenv (with torch)
+        id: cache-venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-torch-${{ runner.os }}-${{ hashFiles('scripts/requirements.txt') }}
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r scripts/requirements.txt
+
+      - name: Restore state from data branch (fetched by job 1)
+        continue-on-error: true
+        run: |
+          git fetch origin data || true
+          # Pull the freshly-fetched options data from job 1
+          git checkout origin/data -- data/options_data.json || true
+          git checkout origin/data -- data/options_history.json || true
+          # Pull the existing adapter (may be reused if recent enough)
+          git checkout origin/data -- scripts/model/covariate_adapter.pth || true
+
+      - name: Restore state from Gist (fallback if data branch missing)
+        continue-on-error: true
+        run: |
+          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
+            exit 0
+          fi
+          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo_restore
+          [ -f gist_repo_restore/options_history.json ] && [ ! -f data/options_history.json ] && cp -f gist_repo_restore/options_history.json data/ && mkdir -p data
+          [ -f gist_repo_restore/covariate_adapter.pth ] && [ ! -f scripts/model/covariate_adapter.pth ] && mkdir -p scripts/model && cp -f gist_repo_restore/covariate_adapter.pth scripts/model/
+          rm -rf gist_repo_restore
+
+      - name: Check if adapter training is needed (only if > 24h old)
+        id: train_check
+        run: |
+          if [ ! -f scripts/model/covariate_adapter.pth ]; then
+            echo "Adapter missing, will train."
+            echo "should_train=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Check the commit timestamp of the last change to the adapter on the data branch
+          git fetch origin data || true
+          LAST_TRAIN_TS=$(git log -1 --format="%ct" origin/data -- scripts/model/covariate_adapter.pth 2>/dev/null || echo 0)
+          if [ "$LAST_TRAIN_TS" = "0" ]; then
+            echo "No commit history for adapter, will train."
+            echo "should_train=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          NOW_TS=$(date +%s)
+          AGE_HOURS=$(( (NOW_TS - LAST_TRAIN_TS) / 3600 ))
+          echo "Adapter is $AGE_HOURS hours old."
+          if [ $AGE_HOURS -ge 24 ]; then
+            echo "Adapter is older than 24h, will train."
+            echo "should_train=true" >> $GITHUB_OUTPUT
+          else
+            echo "Adapter is fresh (<24h), skipping training."
+            echo "should_train=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Train covariate adapters (daily, not every run)
+        if: steps.train_check.outputs.should_train == 'true'
         timeout-minutes: 15
         run: |
           source .venv/bin/activate
@@ -117,96 +287,56 @@ jobs:
           TZ: America/New_York
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
 
-      - name: Commit and push to Gist
+      - name: Push to Gist
         id: gist_push
         continue-on-error: true
         run: |
-          # Check if secrets are provided
           if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
-            echo "GH_PAT or GIST_ID secret is missing. Skipping Gist update."
             exit 1
           fi
-
-          # 1. Clone the gist repository
           git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo
-          
-          # 2. Copy the generated files
-          cp data/options_data.json gist_repo/
           cp data/kronos_forecast.json gist_repo/
-          cp data/options_history.json gist_repo/ || true
           cp scripts/model/covariate_adapter.pth gist_repo/ || true
-          
-          # 3. Configure Git and commit
           cd gist_repo
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          
-          git add options_data.json kronos_forecast.json options_history.json covariate_adapter.pth
-          
+          git add kronos_forecast.json covariate_adapter.pth
           if git diff --quiet && git diff --staged --quiet; then
-            echo "Nessun cambiamento da committare nel gist"
+            echo "No changes to push to Gist"
             exit 0
           fi
-          
-          git commit -m "chore: update options data and model state"
-          
-          # 4. Push to Gist
+          git commit -m "chore: update Kronos forecast [job 2]"
           for i in 1 2 3; do
             if git push origin main || git push origin master; then
-              echo "Push to Gist successful"
               exit 0
             fi
-            echo "Push failed, attempt $i. Fetching and rebasing..."
             git pull --rebase origin main || git pull --rebase origin master
           done
-          
-          echo "Push failed after 3 attempts"
           exit 1
 
-      - name: "Fallback: Commit and push to repository data branch"
+      - name: Fallback — push to repository data branch
         if: steps.gist_push.outcome == 'failure'
         run: |
-          echo "Gist push failed. Falling back to committing directly to the repository data branch..."
-          
-          # Keep only the generated files we need
+          echo "Gist push failed. Pushing to the repository data branch..."
           mkdir -p /tmp/generated_data
-          cp data/options_data.json /tmp/generated_data/
           cp data/kronos_forecast.json /tmp/generated_data/
-          cp data/options_history.json /tmp/generated_data/ || true
           cp scripts/model/covariate_adapter.pth /tmp/generated_data/ || true
-          
-          # Remove local generated files to prevent checkout conflicts
-          rm -f data/options_data.json data/kronos_forecast.json data/options_history.json scripts/model/covariate_adapter.pth
-          
-          # Clean checkout data branch
+          rm -f data/kronos_forecast.json scripts/model/covariate_adapter.pth
           git fetch origin data
           git checkout -B data origin/data --
-          
-          # Restore the generated files
-          mkdir -p data
-          cp /tmp/generated_data/options_data.json data/
+          mkdir -p data scripts/model
           cp /tmp/generated_data/kronos_forecast.json data/
-          cp /tmp/generated_data/options_history.json data/ || true
-          mkdir -p scripts/model
           cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
-          
-          # Configure Git
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          
-          # Add and commit
-          git add data/options_data.json data/kronos_forecast.json data/options_history.json scripts/model/covariate_adapter.pth
-          
-          # Generate vercel.json if missing to ignore builds
+          git add data/kronos_forecast.json scripts/model/covariate_adapter.pth
           if [ ! -f vercel.json ]; then
             echo '{"ignoreCommand": "exit 0"}' > vercel.json
             git add vercel.json
           fi
-          
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes to commit on data branch."
             exit 0
           fi
-          
-          git commit -m "chore: update options data and model state [fallback] [skip ci]"
+          git commit -m "chore: update Kronos forecast [job 2 fallback] [skip ci]"
           git push origin data
