@@ -16,11 +16,24 @@ import {
 
 const SPOT = 500;
 
-/** Builds a single 0-DTE expiry with the given options. */
+/**
+ * Builds a single 0-DTE expiry with the given options.
+ *
+ * The expiry date is set to TODAY's calendar date (truncated to YYYY-MM-DD,
+ * which JS parses as midnight UTC). This makes the test deterministic: the
+ * expiry is always in the past relative to `new Date()` inside the service,
+ * so DTE is clamped to 0 regardless of when the test runs.
+ *
+ * Previously this used `Date.now() + 6h` to model "expires in 6 hours", but
+ * once truncated to YYYY-MM-DD that becomes midnight of whichever day the
+ * 6h offset lands on — which rolls into tomorrow if the test runs after
+ * 18:00 UTC, making DTE=1 and breaking the assertion. That flakiness kept
+ * the CI red on every evening push.
+ */
 function build0DteExpiry(options: Array<{ strike: number; side: 'CALL' | 'PUT'; oi: number; vol?: number; gamma?: number }>): RawExpiry[] {
   return [{
     label: '0DTE',
-    date: new Date(Date.now() + 6 * 3600 * 1000).toISOString().slice(0, 10),
+    date: new Date().toISOString().slice(0, 10),
     options: options.map(o => ({ vol: 0, ...o })),
   }];
 }
