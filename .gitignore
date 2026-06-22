@@ -42,3 +42,14 @@ ENV/
 # Vercel
 .vercel/
 .vercel
+
+# Generated data & model artifacts (produced by GitHub Actions on the
+# `data` branch / Gist; should never be committed on master)
+data/options_data.json
+data/options_history.json
+data/kronos_forecast.json
+data/tv_levels.json
+scripts/model/covariate_adapter.pth
+
+# Local scratch / experiments
+scratch/
