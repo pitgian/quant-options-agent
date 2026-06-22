@@ -129,6 +129,22 @@ python scripts/fetch_options_data.py --symbol ALL --output data/options_data.jso
 python scripts/run_kronos.py
 ```
 
+### Tests
+
+The quantitative core (gamma estimation, GEX aggregation, gamma-flip detection,
+regime classification and wall scoring) is covered by unit tests with Vitest:
+
+```bash
+npm test            # run once
+npm run test:watch  # watch mode during development
+```
+
+These tests document the intended behaviour of the math and guard against
+regressions when refactoring the duplicated Python / TypeScript implementations.
+
+A CI workflow (`.github/workflows/ci.yml`) runs typecheck, tests and build on
+every push and pull request to `master`.
+
 ## Build for Production
 
 ```bash
