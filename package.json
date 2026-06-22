@@ -7,6 +7,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "auto-update": "venv/bin/python scripts/auto_updater.py",
+    "parity:fixtures": ".venv/bin/python scripts/test/generate_parity_fixtures.py",
+    "parity:compare": ".venv/bin/python scripts/test/compare_wall_scoring.py",
     "test": "vitest run",
     "test:watch": "vitest"
   },

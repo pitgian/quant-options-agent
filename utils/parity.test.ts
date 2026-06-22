@@ -16,11 +16,13 @@ import { join } from 'path';
 import { estimateGamma } from './gammaEstimate';
 import { computeGEXPerStrike } from '../services/gexService';
 import type { RawExpiry } from '../services/gexService';
+import { computeWallScore } from '../services/wallService';
 
 interface Fixtures {
   gamma_cases: Array<{ spot: number; strike: number; dte: number; symbol: string; implied_vol: number; expected_gamma: number }>;
   gex_cases: Array<{ strike: number; side: 'CALL' | 'PUT'; oi: number; dte: number; gamma: number; expected_gex: number }>;
   dte_weight_cases: Array<{ dte: number; expected_oi_weight: number; expected_vol_weight: number }>;
+  wall_score_cases: Array<{ own_oi: number; own_vol: number; nearest_dte: number; strike: number; spot: number; expected_score: number }>;
 }
 
 const FIXTURES_PATH = join(__dirname, '..', 'scripts', 'test', 'parity_fixtures.json');
@@ -76,25 +78,11 @@ describe('Python <-> TS parity: GEX per strike', () => {
   }
 });
 
-describe('Python <-> TS parity: DTE-dependent wall weights', () => {
-  // These are hardcoded in BOTH _score_and_rank (Python) and computeTopWalls (TS).
-  // The test documents them and would catch a unilateral change.
-  for (const c of fixtures.dte_weight_cases) {
-    it(`DTE=${c.dte} uses OI=${c.expected_oi_weight} / Vol=${c.expected_vol_weight}`, () => {
-      // Read the constants directly from the TS implementation to assert they match.
-      // (Importing them is fragile; we just confirm the documented values.)
-      expect(c.expected_oi_weight + c.expected_vol_weight).toBeCloseTo(1.0, 6);
-      // Spot-check the expected buckets
-      if (c.dte === 0) {
-        expect(c.expected_oi_weight).toBe(0.25);
-        expect(c.expected_vol_weight).toBe(0.75);
-      } else if (c.dte <= 3) {
-        expect(c.expected_oi_weight).toBe(0.50);
-        expect(c.expected_vol_weight).toBe(0.50);
-      } else {
-        expect(c.expected_oi_weight).toBe(0.70);
-        expect(c.expected_vol_weight).toBe(0.30);
-      }
+describe('Python <-> TS parity: unified wall score', () => {
+  for (const c of fixtures.wall_score_cases) {
+    it(`wall_score(oi=${c.own_oi}, vol=${c.own_vol}, dte=${c.nearest_dte}, K=${c.strike}, spot=${c.spot}) matches Python`, () => {
+      const ts = computeWallScore(c.own_oi, c.own_vol, c.nearest_dte, c.strike, c.spot);
+      expect(ts).toBeCloseTo(c.expected_score, 4);
     });
   }
 });

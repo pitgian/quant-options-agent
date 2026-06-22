@@ -16,6 +16,7 @@ Usage:
 import argparse
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -804,56 +805,87 @@ def calculate_walls(
     return put_walls, call_walls, confluence_levels
 
 
+# ---------------------------------------------------------------------------
+# Unified wall scoring (Python <-> TypeScript parity)
+# ---------------------------------------------------------------------------
+#
+# Wall "importance" = own-side activity × distance weight, where:
+#
+#   own_activity   = OI·w_oi + Vol·w_vol     (DTE-dependent bucket; see below)
+#   distance_weight = exp(-|dist%| / 2.0)     (Laplacian, lambda = 2%)
+#
+# Design rationale (see docs/python-ts-parity.md):
+#   - Laplacian decay gives a sharp intraday focus (ATM = 1.0, ±2% ≈ 0.37)
+#     WITHOUT zeroing out far structural levels (±5% ≈ 0.08, ±8% ≈ 0.02):
+#     a giant wall at -4% still surfaces if its OI justifies it.
+#   - The old Gaussian exp(-(d/1.5)^2) was too peaked (≈0 at ±3%) and
+#     silently discarded real support/resistance levels.
+#   - The old cross-side penalty (alpha=0.35) was conceptually wrong for
+#     walls: a strike with high put AND call OI is a high-gamma NODE, not
+#     a weak wall. Bilaterality is rewarded separately by the confluence
+#     scorer (calculate_confluence_levels).
+#
+# DTE-dependent OI/Vol weighting (applied ONCE here, not also during
+# aggregation): at 0DTE the OI is noisy (forms and dissolves intraday), so
+# volume is the trustworthy signal; at long DTE the OI is structural and
+# dominates.
+WALL_DISTANCE_LAMBDA = 2.0   # % distance scale for the Laplacian decay
+
+
+def wall_dte_weights(nearest_dte: int) -> Tuple[float, float]:
+    """Return (oi_weight, vol_weight) for the given nearest DTE bucket."""
+    if nearest_dte == 0:
+        return 0.25, 0.75
+    if nearest_dte <= 3:
+        return 0.50, 0.50
+    return 0.70, 0.30
+
+
+def compute_wall_score(
+    own_oi: float,
+    own_vol: float,
+    nearest_dte: int,
+    strike: float,
+    spot: float,
+) -> float:
+    """
+    Unified wall importance score (must match TS wallService.computeWallScore).
+
+        score = (own_oi·w_oi + own_vol·w_vol) · exp(-|dist%| / lambda)
+
+    Returns the RAW score (pre-normalization). Callers normalize to 0-100.
+    """
+    oi_w, vol_w = wall_dte_weights(nearest_dte)
+    own_activity = own_oi * oi_w + own_vol * vol_w
+    dist_pct = abs(strike - spot) / spot * 100.0 if spot > 0 else 0.0
+    distance_weight = math.exp(-dist_pct / WALL_DISTANCE_LAMBDA)
+    return own_activity * distance_weight
+
+
 def _score_and_rank(
     candidates: List[Dict[str, Any]], spot: float, top_n: int
 ) -> List[Dict[str, Any]]:
     """
-    Apply cross-side penalty scoring using absolute values.
-    
-    Formula (aligned with TS frontend wallService):
-        DTE-dependent weighting:
-          - DTE == 0: 75% Vol / 25% OI
-          - DTE <= 3: 50% Vol / 50% OI
-          - Else: 30% Vol / 70% OI
-        Proximity decay:
-          - Exponential Gaussian decay: exp(-(dist / 1.5)^2)
-        Score:
-          - (own_activity * max(0, 1 - α × cross_ratio)) * proximity_decay
+    Score wall candidates with the unified formula and normalize to 0-100.
+
+    See compute_wall_score above for the formula and rationale.
     """
-    import math
     if not candidates:
         return []
 
     for c in candidates:
-        nearest_dte = c.get("nearest_dte", 999)
-        if nearest_dte == 0:
-            oi_weight = 0.25
-            vol_weight = 0.75
-        elif nearest_dte <= 3:
-            oi_weight = 0.50
-            vol_weight = 0.50
-        else:
-            oi_weight = 0.70
-            vol_weight = 0.30
+        c["score"] = round(
+            compute_wall_score(
+                own_oi=c["total_oi"],
+                own_vol=c["total_vol"],
+                nearest_dte=c.get("nearest_dte", 999),
+                strike=c["strike"],
+                spot=spot,
+            ),
+            2,
+        )
 
-        # Own side activity (absolute, weighted)
-        own_activity = c["total_oi"] * oi_weight + c["total_vol"] * vol_weight
-        # Cross side activity (absolute, weighted)
-        cross_activity = c["opp_oi"] * oi_weight + c["opp_vol"] * vol_weight
-
-        # Cross-side ratio: fraction of total activity that is cross-side
-        total_activity = own_activity + cross_activity
-        cross_ratio = cross_activity / total_activity if total_activity > 0 else 0
-
-        # Proximity decay (Gaussian) to prioritize strikes closer to spot
-        distance_pct = abs(c["strike"] - spot) / spot * 100
-        PROXIMITY_SIGMA = 1.5
-        proximity_boost = math.exp(-((distance_pct / PROXIMITY_SIGMA) ** 2))
-
-        # Score: own activity discounted by cross-side dominance and proximity decay
-        c["score"] = round(own_activity * max(0, 1 - CROSS_SIDE_ALPHA * cross_ratio) * proximity_boost, 2)
-
-        # Distance from spot as percentage
+    # Distance from spot as percentage
         c["distance_pct"] = round((c["strike"] - spot) / spot * 100, 2)
         # List of expiry dates that contribute to this wall
         c["contributing_expiries"] = sorted(c["expiry_breakdown"].keys())

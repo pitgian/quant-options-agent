@@ -20,7 +20,8 @@ implementations agree to 4+ decimal places.
 | Black-Scholes `estimate_gamma` | `fetch_options_data.py:estimate_gamma` | `utils/gammaEstimate.ts:estimateGamma` | ✅ 135 cases |
 | GEX per strike `oi·γ·100·S²·sign·tw` | `fetch_symbol_data` inline | `services/gexService.ts:computeGEXPerStrike` | ✅ |
 | Time decay `1/(1+dte/7)` | inline | inline | ✅ |
-| DTE weights `{0: .25/.75, ≤3: .5/.5, else: .7/.3}` | `_score_and_rank` | `services/wallService.ts:computeTopWalls` | ✅ |
+| **Unified wall score** `(oi·w_oi+vol·w_vol)·exp(-\|dist%\|/2)` | `fetch_options_data.py:compute_wall_score` | `services/wallService.ts:computeWallScore` | ✅ 168 cases |
+| DTE weights `{0: .25/.75, ≤3: .5/.5, else: .7/.3}` | `wall_dte_weights` | `wallDteWeights` | ✅ (via wall_score) |
 
 **Regenerate the fixtures** after touching the Python math:
 
@@ -46,18 +47,33 @@ design. If you ever unify them, delete the divergence note here.
 
 The TS version is more robust on dense 0DTE chains (where Python's "first"
 crossing can land on a noise spike far from spot). The frontend uses the TS
-value; the Python value is currently unused downstream.
+  value; the Python value is **unused downstream** (and stripped from the JSON
+  by the `d3e20ea1` payload cleanup) — it's only computed as an intermediate
+  diagnostic.
 
-### Wall scoring
+### ~~Wall scoring~~ (UNIFIED — was divergent until 2026-06-22)
 
-- **Python** (`_score_and_rank`): `own_activity · max(0, 1 - α·cross_ratio) ·
-  gaussian_proximity_decay`, with `α = 0.35` and `σ = 1.5%`.
-- **TypeScript** (`wallService.computeTopWalls`): `own_activity` only, **no**
-  cross-side penalty and **no** proximity decay (commented inline).
+Both implementations now use a single unified score:
 
-The Python scoring feeds the cross-symbol confluence matching; the TS scoring
-feeds the dashboard walls. They are not directly comparable. Aligning them is a
-product decision (the TS version was deliberately simplified).
+    score = (own_oi·w_oi + own_vol·w_vol) · exp(-|dist%| / 2.0)
+
+Previously the Python version applied an additional cross-side penalty
+(`1 - α·cross_ratio`, `α = 0.35`) and a Gaussian decay
+(`exp(-(dist/1.5)²)`), while the TS version applied **no** distance decay at
+all. The divergence was unintended and produced non-comparable rankings.
+
+Design choices in the unified formula:
+  - **Laplacian decay (λ = 2%)** instead of Gaussian: keeps a sharp intraday
+    focus (ATM = 1.0, ±2% ≈ 0.37) without zeroing far structural levels
+    (±5% ≈ 0.08). The old Gaussian was ≈0 already at ±3%, silently discarding
+    real support/resistance walls.
+  - **Cross-side penalty removed**: a strike with high put AND call OI is a
+    high-gamma NODE, not a weak wall. Bilaterality is rewarded separately by
+    `calculate_confluence_levels`.
+
+The confluence scorer still uses its own distinct formula (interest + balance
++ proximity) because it measures bilateral "node-ness", a different question
+from single-side "wall importance".
 
 ## When to update this document
 

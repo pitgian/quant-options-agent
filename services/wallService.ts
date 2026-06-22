@@ -23,8 +23,56 @@ import { estimateGamma } from '../utils/gammaEstimate';
 
 const CONTRACT_SIZE = 100;
 const MAX_WALLS_PER_SIDE = 7;
-const PROXIMITY_BOOST_RANGE = 10; // % distance for proximity boost decay
-const MIN_PROXIMITY_BOOST = 0.3;  // minimum boost factor
+
+// ---------------------------------------------------------------------------
+// Unified wall scoring (Python <-> TypeScript parity)
+// ---------------------------------------------------------------------------
+//
+// Wall "importance" = own-side activity × distance weight, where:
+//
+//   own_activity    = OI·w_oi + Vol·w_vol     (DTE-dependent bucket)
+//   distance_weight = exp(-|dist%| / 2.0)      (Laplacian, lambda = 2%)
+//
+// Design rationale (see docs/python-ts-parity.md):
+//   - Laplacian decay gives a sharp intraday focus (ATM = 1.0, ±2% ≈ 0.37)
+//     WITHOUT zeroing out far structural levels (±5% ≈ 0.08, ±8% ≈ 0.02):
+//     a giant wall at -4% still surfaces if its OI justifies it.
+//   - The old "no proximity decay" version ranked a +4% wall above a +0.5%
+//     wall purely on OI, which is wrong for day trading.
+//
+// DTE-dependent OI/Vol weighting: at 0DTE the OI is noisy (forms and
+// dissolves intraday), so volume is the trustworthy signal; at long DTE the
+// OI is structural and dominates.
+const WALL_DISTANCE_LAMBDA = 2.0;   // % distance scale for the Laplacian decay
+
+/** Returns the (oi_weight, vol_weight) tuple for the given nearest DTE bucket. */
+function wallDteWeights(nearestDTE: number): [number, number] {
+  if (nearestDTE === 0) return [0.25, 0.75];
+  if (nearestDTE <= 3) return [0.50, 0.50];
+  return [0.70, 0.30];
+}
+
+/**
+ * Unified wall importance score. MUST match Python
+ * `scripts/fetch_options_data.py:compute_wall_score`.
+ *
+ *   score = (own_oi·w_oi + own_vol·w_vol) · exp(-|dist%| / lambda)
+ *
+ * Returns the RAW score (pre-normalization). Callers normalize to 0-100.
+ */
+export function computeWallScore(
+  ownOI: number,
+  ownVol: number,
+  nearestDTE: number,
+  strike: number,
+  spot: number,
+): number {
+  const [oiWeight, volWeight] = wallDteWeights(nearestDTE);
+  const ownActivity = ownOI * oiWeight + ownVol * volWeight;
+  const distPct = spot > 0 ? (Math.abs(strike - spot) / spot) * 100 : 0;
+  const distanceWeight = Math.exp(-distPct / WALL_DISTANCE_LAMBDA);
+  return ownActivity * distanceWeight;
+}
 
 // ============================================================================
 // INTERNAL TYPES
@@ -117,24 +165,16 @@ export function computeWalls(
 
     if (entries.length === 0) return [];
 
-    // Score: weighted OI + Volume with proximity boost
+    // Score: unified formula (own activity × Laplacian distance decay).
+    // See computeWallScore above. The old code computed own_activity inline
+    // and applied NO distance decay — which over-weighted far strikes.
     const scored = entries.map(([strike, data]) => {
-      // DTE-dependent dynamic weighting (Volume is more important for intraday 0DTE/1DTE)
-      let oiWeight = 0.7;
-      let volWeight = 0.3;
-      if (data.nearestDTE === 0) {
-        oiWeight = 0.25;
-        volWeight = 0.75;
-      } else if (data.nearestDTE <= 3) {
-        oiWeight = 0.50;
-        volWeight = 0.50;
-      }
-      const baseScore = data.oi * oiWeight + data.vol * volWeight;
-      const rawScore = baseScore; // No proximity penalty decay
+      const rawScore = computeWallScore(data.oi, data.vol, data.nearestDTE, strike, spotPrice);
       const crossData = oppositeMap.get(strike);
       const distance = spotPrice > 0
         ? Math.round((Math.abs(strike - spotPrice) / spotPrice) * 10000) / 100
-        : 0;      return {
+        : 0;
+      return {
         strike,
         rawScore,
         type: wallType,

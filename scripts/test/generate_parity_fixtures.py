@@ -104,6 +104,29 @@ def gen_dte_weight_cases():
     return cases
 
 
+def gen_wall_score_cases(mod):
+    """
+    Unified wall importance score. MUST match TS wallService.computeWallScore:
+        score = (own_oi·w_oi + own_vol·w_vol) · exp(-|dist%| / 2.0)
+    """
+    cases = []
+    for spot in [500.0, 600.0]:
+        for strike_offset_pct in [-5.0, -2.0, -0.5, 0.0, 0.5, 2.0, 5.0]:
+            strike = spot * (1 + strike_offset_pct / 100)
+            for own_oi, own_vol in [(1000, 0), (0, 1000), (500, 500)]:
+                for dte in [0, 2, 7, 30]:
+                    score = mod.compute_wall_score(
+                        own_oi=own_oi, own_vol=own_vol,
+                        nearest_dte=dte, strike=strike, spot=spot,
+                    )
+                    cases.append({
+                        "own_oi": own_oi, "own_vol": own_vol,
+                        "nearest_dte": dte, "strike": round(strike, 4), "spot": spot,
+                        "expected_score": score,
+                    })
+    return cases
+
+
 def main():
     mod = load_fod_module()
     fixtures = {
@@ -113,13 +136,15 @@ def main():
         "gamma_cases": gen_gamma_cases(mod),
         "gex_cases": gen_gex_cases(mod),
         "dte_weight_cases": gen_dte_weight_cases(),
+        "wall_score_cases": gen_wall_score_cases(mod),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT, "w") as f:
         json.dump(fixtures, f, indent=2)
     print(f"Wrote {len(fixtures['gamma_cases'])} gamma cases, "
           f"{len(fixtures['gex_cases'])} GEX cases, "
-          f"{len(fixtures['dte_weight_cases'])} DTE-weight cases")
+          f"{len(fixtures['dte_weight_cases'])} DTE-weight cases, "
+          f"{len(fixtures['wall_score_cases'])} wall-score cases")
     print(f"  -> {OUT}")
 
 
