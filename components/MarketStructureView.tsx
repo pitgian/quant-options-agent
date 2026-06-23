@@ -941,8 +941,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     <span><strong>Value Area High/Low</strong> — range col 70% del volume del tf selezionato</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-0.5 rounded-sm" style={{ backgroundColor: 'rgba(148,163,184,0.5)' }}></span>
-                    <span><strong>Trattino grigio:</strong> strike già mostrato sulla riga principale (griglia ETF più fine di quella livello)</span>
+                    <span className="inline-block h-2.5 w-5 rounded-sm" style={{ background: 'linear-gradient(to right, rgba(16,185,129,0.7) 50%, rgba(239,68,68,0.7) 50%)', opacity: 0.4 }}></span>
+                    <span><strong>Barra sbiadita:</strong> livello di griglia tra due strike (dati dallo strike più vicino — ETF/Indice hanno griglia più grossolana del prezzo livello)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
@@ -1119,15 +1119,13 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             Top strip (amber) = today's volume (independent scale, intraday flow).
                             When OI is 0 (pre-market), the whole bar shows volume in orange.
                             Level-centric grid: each row looks up the nearest ETF strike to this
-                            row's price level, so the ETF bar always reflects the level you're
-                            reading across the row. When multiple grid levels round to the same
-                            ETF strike (ETF grid is coarser than the level grid), only the primary
-                            level renders the full bar; duplicates show a thin connector so the
-                            row stays aligned for cross-row reading without showing identical bars. */}
-                        {d.etfIsPrimary ? (
+                            row's price level. Multiple grid levels can round to the same ETF strike
+                            (ETF grid is coarser than the level grid); those duplicate levels render
+                            the SAME bar at reduced opacity so the data is always visible and the
+                            primary level (nearest to the strike's true price) still stands out. */}
                           <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
+                               style={{ height: `${Math.max(4, rowHeight - 4)}px`, opacity: d.etfIsPrimary ? 1 : 0.4 }}
+                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}${d.etfIsPrimary ? '' : ' (livello adiacente allo strike)'}`}>
                             <div className="flex h-full items-stretch rounded-l overflow-hidden" style={{ width: `${Math.max(2, etfBarWidth)}%` }}>
                               {etfHasOI ? (
                                 <>
@@ -1135,7 +1133,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                                   <div style={{ width: `${etfPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
                                   {/* CALL (green) — resistance side */}
                                   <div className="flex items-center justify-end pr-1" style={{ width: `${etfCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {etfOIWidth > 22 && rowHeight >= 18 && (
+                                    {etfOIWidth > 22 && rowHeight >= 18 && d.etfIsPrimary && (
                                       <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(etfTotalOI)}</span>
                                     )}
                                   </div>
@@ -1143,7 +1141,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               ) : (
                                 /* OI not yet settled (pre-market 0DTE) — show today's volume in orange */
                                 <div className="h-full w-full flex items-center justify-end pr-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {etfVolWidth > 22 && rowHeight >= 18 && (
+                                  {etfVolWidth > 22 && rowHeight >= 18 && d.etfIsPrimary && (
                                     <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.etfTotalVol)}</span>
                                   )}
                                 </div>
@@ -1155,17 +1153,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               <div className="absolute top-0 rounded-l-sm" style={{ right: '4px', width: `calc(${etfVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.55)' }} />
                             )}
                           </div>
-                        ) : (
-                          /* Duplicate ETF strike (same SPY strike as the primary level nearby) —
-                              thin gray connector keeps the row aligned for cross-column reading
-                              without repeating the identical bar. */
-                          <div className="relative flex justify-end w-full pr-1"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                               title={`ETF ${d.etfStrike} — livello già mostrato sulla riga principale vicina`}>
-                            <div className="absolute top-1/2 -translate-y-1/2 right-1 rounded-sm"
-                                 style={{ width: '2px', height: '55%', backgroundColor: 'rgba(148,163,184,0.28)' }} />
-                          </div>
-                        )}
 
                         {/* Column 2: Center Strike Price */}
                         <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
@@ -1197,12 +1184,11 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
 
                         {/* Column 4: Index Options — OI bar (put/call split, rounded-r) + volume strip.
                             Same design as the ETF bar. Bottom = OI structural, top strip (amber) = volume.
-                            indexIsPrimary guards against duplicate Index-strike bars (same mechanism as
-                            the ETF column, though the Index grid rarely duplicates at default zoom). */}
-                        {d.indexIsPrimary ? (
+                            Duplicate Index-strike levels (rare at default zoom) render at reduced
+                            opacity — data stays visible, primary level stands out. */}
                           <div className="relative flex justify-start w-full pl-1 transition-all duration-300"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                               title={`Index OI — Calls: ${formatCompact(d.indexCallOI)} | Puts: ${formatCompact(d.indexPutOI)}${idxHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.indexTotalVol)}`}>
+                               style={{ height: `${Math.max(4, rowHeight - 4)}px`, opacity: d.indexIsPrimary ? 1 : 0.4 }}
+                               title={`Index OI — Calls: ${formatCompact(d.indexCallOI)} | Puts: ${formatCompact(d.indexPutOI)}${idxHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.indexTotalVol)}${d.indexIsPrimary ? '' : ' (livello adiacente allo strike)'}`}>
                             <div className="flex h-full items-stretch rounded-r overflow-hidden" style={{ width: `${Math.max(2, idxBarWidth)}%` }}>
                               {idxHasOI ? (
                                 <>
@@ -1210,14 +1196,14 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                                   <div style={{ width: `${idxPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
                                   {/* CALL (green) — resistance side */}
                                   <div className="flex items-center justify-start pl-1" style={{ width: `${idxCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {idxOIWidth > 22 && rowHeight >= 18 && (
+                                    {idxOIWidth > 22 && rowHeight >= 18 && d.indexIsPrimary && (
                                       <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(idxTotalOI)}</span>
                                     )}
                                   </div>
                                 </>
                               ) : (
                                 <div className="h-full w-full flex items-center justify-start pl-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {idxVolWidth > 22 && rowHeight >= 18 && (
+                                  {idxVolWidth > 22 && rowHeight >= 18 && d.indexIsPrimary && (
                                     <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.indexTotalVol)}</span>
                                   )}
                                 </div>
@@ -1228,15 +1214,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               <div className="absolute top-0 rounded-r-sm" style={{ left: '4px', width: `calc(${idxVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.55)' }} />
                             )}
                           </div>
-                        ) : (
-                          /* Duplicate Index strike — thin gray connector (mirrors the ETF column). */
-                          <div className="relative flex justify-start w-full pl-1"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                               title={`Index ${d.strike.toFixed(0)} — livello già mostrato`}>
-                            <div className="absolute top-1/2 -translate-y-1/2 left-1 rounded-sm"
-                                 style={{ width: '2px', height: '55%', backgroundColor: 'rgba(148,163,184,0.28)' }} />
-                          </div>
-                        )}
 
                         {/* Column 5: Futures Volume profile (oriented left) */}
                         <div className="flex justify-start w-full pl-1 relative transition-all duration-300" style={{ height: `${Math.max(4, rowHeight - 4)}px` }}>
