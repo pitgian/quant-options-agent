@@ -1,1 +1,9 @@
-{"ignoreCommand": "true", "git": {"deploymentEnabled": {"master": true}}}
+{
+  "$comment": "Branch data contains only generated JSON (options_data, kronos_forecast, history). It MUST NOT be deployed by Vercel — deploying it 565x/day (every 5min cron) exhausts the free-tier 100 deploys/day quota. Both belt and suspenders: deploymentEnabled.data=false AND ignoreCommand=exit 0.",
+  "git": {
+    "deploymentEnabled": {
+      "data": false
+    }
+  },
+  "ignoreCommand": "exit 0"
+}
