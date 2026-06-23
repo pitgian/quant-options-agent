@@ -82,115 +82,110 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
     const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexSpot;
 
-    // Index strikes by value so the per-strike lookups below are O(1) instead
-    // of O(n). Previously each iteration did .find() on the full
-    // gexStrikeData array, making the whole merge O(strikes × strikes)
-    // (~40k iterations on a typical ~200-strike chain, every render).
+    // ---- Level-centric grid (Option A) ----
+    // The chart axis is a uniform grid of PRICE LEVELS spaced by % from the
+    // futures spot, NOT the SPX strike grid. Each row is one price level; at
+    // that level we independently look up the nearest ETF strike, nearest
+    // Index strike, and interpolate the futures volume. This makes ETF / Index
+    // / Futures align on every horizontal row — you can read across a row and
+    // see all three flows at the SAME distance from spot.
+    //
+    // Field names are preserved (strike, futuresStrike, etfStrike) so the
+    // downstream HVN/LVN, Kronos-boundary, and Fair-Value-Area logic — which
+    // keys off `strike` as a unique row id — keeps working unchanged.
     const etfByStrike = new Map(etfData.gexStrikeData.map(d => [d.strike, d]));
-    // indexData.gexStrikeData is the iteration source, but we still look it up
-    // by strike below — index it too for clarity and O(1) access.
     const indexByStrike = new Map(indexData.gexStrikeData.map(d => [d.strike, d]));
+    const indexStrikes = indexData.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
+    const etfStrikes  = etfData.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
+    if (indexStrikes.length === 0 || etfStrikes.length === 0) return [];
 
-    // Get all strikes from the Index data and sort them ascending
-    const strikes = indexData.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
-    if (strikes.length === 0) return [];
-
-    // De-duplicate ETF strikes: the chart is indexed on Index strikes (5-pt grid),
-    // but the ETF has a ~10-pt grid. Multiple Index strikes map to the same ETF
-    // strike. For each unique etfStrike, pick the Index strike nearest to its
-    // true price (etfStrike * ratio) as "primary"; duplicates render a thin
-    // connector instead of a full bar so the chart doesn't show identical bars.
-    const etfPrimaryStrike = new Map<number, number>();
-    for (const s of strikes) {
-      const es = Math.round(s / ratio);
-      const trueSpx = es * ratio;
-      const cur = etfPrimaryStrike.get(es);
-      if (cur === undefined || Math.abs(s - trueSpx) < Math.abs(cur - trueSpx)) {
-        etfPrimaryStrike.set(es, s);
+    // ---- Resolve the futures volume profile for the selected timeframe ----
+    // Keys are price strings on the index/futures scale; we interpolate
+    // linearly between neighbours so volume exists at every continuous level.
+    let futProfile: Record<string, number> | null = null;
+    if (indexData.futuresVolumeProfiles) {
+      let tf = '30d';
+      if (selectedFuturesTf === 'auto') {
+        if (expiryFilter === '0dte') tf = '2d';
+        else if (expiryFilter === '1-7dte') tf = '7d';
+        else if (expiryFilter === '8-30dte') tf = '30d';
+        else if (expiryFilter === '30+dte') tf = '90d';
+        else if (expiryFilter === 'all') tf = '30d';
+      } else {
+        tf = selectedFuturesTf;
       }
+      futProfile = indexData.futuresVolumeProfiles[tf] ?? indexData.futuresVolumeProfile ?? null;
+    } else if (indexData.futuresVolumeProfile) {
+      futProfile = indexData.futuresVolumeProfile;
     }
+    const futPrices = futProfile ? Object.keys(futProfile).map(Number).sort((a, b) => a - b) : [];
+    const futuresVolAt = (price: number): number => {
+      if (futPrices.length === 0) return 0;
+      if (price <= futPrices[0]) return futProfile![futPrices[0]] || 0;
+      if (price >= futPrices[futPrices.length - 1]) return futProfile![futPrices[futPrices.length - 1]] || 0;
+      let lo = 0, hi = futPrices.length - 1;
+      while (lo + 1 < hi) { const mid = (lo + hi) >> 1; if (futPrices[mid] <= price) lo = mid; else hi = mid; }
+      const p0 = futPrices[lo], p1 = futPrices[hi];
+      const v0 = futProfile![p0] || 0, v1 = futProfile![p1] || 0;
+      const t = p1 === p0 ? 0 : (price - p0) / (p1 - p0);
+      return v0 + (v1 - v0) * t;
+    };
 
-    return strikes.map(strike => {
-      // Find corresponding ETF strike
-      const etfStrike = Math.round(strike / ratio);
+    // ---- Build the level grid ----
+    // Uniform % step from futuresSpot; ~100 rows regardless of zoom so the
+    // bar density stays readable. Level prices are real (non-rounded) futures
+    // prices so they can be copied straight to an execution chart.
+    const targetRows = 100;
+    const stepPct = Math.max(0.01, (2 * zoomPct) / targetRows);
+    const rows: any[] = [];
+    let idxPtr = 0, etfPtr = 0; // moving pointers for O(1)-amortized nearest-strike walk
 
-      const indexStrikeData = indexByStrike.get(strike);
-      const etfStrikeData = etfByStrike.get(etfStrike);
+    for (let i = 0; i <= targetRows; i++) {
+      const dPct = -zoomPct + i * stepPct;
+      if (Math.abs(dPct) > zoomPct + 1e-9) continue;
 
-      // OI + Volume per side (Index) — exposed separately so the chart can render
-      // stacked put/call bars. A put wall shows up as a long red bar with little
-      // green; a call wall as a long green bar with little red.
-      const idxCallOI    = indexStrikeData?.callOI    ?? 0;
-      const idxPutOI     = indexStrikeData?.putOI     ?? 0;
-      const idxCallVol   = indexStrikeData?.callVolume ?? 0;
-      const idxPutVol    = indexStrikeData?.putVolume  ?? 0;
-      const etfCallOI    = etfStrikeData?.callOI    ?? 0;
-      const etfPutOI     = etfStrikeData?.putOI     ?? 0;
-      const etfCallVol   = etfStrikeData?.callVolume ?? 0;
-      const etfPutVol    = etfStrikeData?.putVolume  ?? 0;
+      const levelPrice = futuresSpot * (1 + dPct / 100); // ES/futures scale (~ SPX)
+      const etfPrice   = etfSpot   * (1 + dPct / 100);   // SPY scale
 
-      // Volume + OI for Index and ETF (kept as totals for back-compat / normalization)
+      // nearest Index strike to the futures-scale level price (monotonic walk)
+      while (idxPtr + 1 < indexStrikes.length && Math.abs(indexStrikes[idxPtr + 1] - levelPrice) < Math.abs(indexStrikes[idxPtr] - levelPrice)) idxPtr++;
+      // nearest ETF strike to the ETF-scale level price
+      while (etfPtr + 1 < etfStrikes.length && Math.abs(etfStrikes[etfPtr + 1] - etfPrice) < Math.abs(etfStrikes[etfPtr] - etfPrice)) etfPtr++;
+
+      const indexStrikeData = indexByStrike.get(indexStrikes[idxPtr]);
+      const etfStrikeData   = etfByStrike.get(etfStrikes[etfPtr]);
+
+      const idxCallOI  = indexStrikeData?.callOI    ?? 0;
+      const idxPutOI   = indexStrikeData?.putOI     ?? 0;
+      const idxCallVol = indexStrikeData?.callVolume ?? 0;
+      const idxPutVol  = indexStrikeData?.putVolume  ?? 0;
+      const etfCallOI  = etfStrikeData?.callOI    ?? 0;
+      const etfPutOI   = etfStrikeData?.putOI     ?? 0;
+      const etfCallVol = etfStrikeData?.callVolume ?? 0;
+      const etfPutVol  = etfStrikeData?.putVolume  ?? 0;
+
       const indexVolume = idxCallOI + idxPutOI + idxCallVol + idxPutVol;
-      const etfVolume = etfCallOI + etfPutOI + etfCallVol + etfPutVol;
+      const etfVolume   = etfCallOI + etfPutOI + etfCallVol + etfPutVol;
+      const futuresVolume = futuresVolAt(levelPrice);
 
-      // Look up in futures volume profile based on selected timeframe
-      let futuresVolume = 0;
-      if (indexData.futuresVolumeProfiles) {
-        let tf = '30d';
-        if (selectedFuturesTf === 'auto') {
-          if (expiryFilter === '0dte') tf = '2d';
-          else if (expiryFilter === '1-7dte') tf = '7d';
-          else if (expiryFilter === '8-30dte') tf = '30d';
-          else if (expiryFilter === '30+dte') tf = '90d';
-          else if (expiryFilter === 'all') tf = '30d';
-        } else {
-          tf = selectedFuturesTf;
-        }
-
-        const profileForTf = indexData.futuresVolumeProfiles[tf];
-        if (profileForTf) {
-          futuresVolume = profileForTf[strike.toString()]
-            || profileForTf[strike.toFixed(1)]
-            || profileForTf[strike.toFixed(2)]
-            || profileForTf[strike.toFixed(0)]
-            || 0;
-        }
-      } else if (indexData.futuresVolumeProfile) {
-        const exactVal = indexData.futuresVolumeProfile[strike.toString()]
-          || indexData.futuresVolumeProfile[strike.toFixed(1)]
-          || indexData.futuresVolumeProfile[strike.toFixed(2)]
-          || indexData.futuresVolumeProfile[strike.toFixed(0)]
-          || 0;
-        futuresVolume = exactVal;
-      }
-
-      // Compute futures-equivalent strike price
-      const futuresStrike = strike * basisMultiplier;
-
-      // Distance should be calculated using the futures-equivalent strike compared to the futures spot price
-      const distancePct = ((futuresStrike - futuresSpot) / futuresSpot) * 100;
-
-      return {
-        strike,
-        etfStrike,
-        futuresStrike,
-        indexVolume,
-        etfVolume,
-        futuresVolume,
-        // OI per side (defines walls) + Volume per side (today's flow)
-        indexCallOI: idxCallOI   ?? 0,
-        indexPutOI:  idxPutOI    ?? 0,
-        etfCallOI:   etfCallOI   ?? 0,
-        etfPutOI:    etfPutOI    ?? 0,
-        indexTotalOI:  (idxCallOI  ?? 0) + (idxPutOI  ?? 0),
-        indexTotalVol: (idxCallVol ?? 0) + (idxPutVol ?? 0),
-        etfTotalOI:    (etfCallOI  ?? 0) + (etfPutOI  ?? 0),
-        etfTotalVol:   (etfCallVol ?? 0) + (etfPutVol ?? 0),
-        etfIsPrimary:  etfPrimaryStrike.get(etfStrike) === strike,
-        distancePct,
-      };
-    });
-  }, [indexData, etfData, expiryFilter, selectedFuturesTf, basisMultiplier, liveSpot, market]);
+      rows.push({
+        strike: levelPrice,        // unique row id (futures-scale price)
+        futuresStrike: levelPrice, // alias — Kronos boundary / isClosest logic
+        etfStrike: etfStrikes[etfPtr],
+        etfPrice,                  // exact ETF price at this level (for label)
+        levelPrice,                // exact futures price (for label)
+        distancePct: dPct,
+        indexVolume, etfVolume, futuresVolume,
+        indexCallOI: idxCallOI, indexPutOI: idxPutOI,
+        etfCallOI, etfPutOI,
+        indexTotalOI: idxCallOI + idxPutOI,
+        indexTotalVol: idxCallVol + idxPutVol,
+        etfTotalOI: etfCallOI + etfPutOI,
+        etfTotalVol: etfCallVol + etfPutVol,
+      });
+    }
+    return rows;
+  }, [indexData, etfData, expiryFilter, selectedFuturesTf, basisMultiplier, liveSpot, market, zoomPct]);
 
   // ---- Filter profile based on zoom percentage around spot ----
   const zoomedProfile = useMemo(() => {
@@ -349,8 +344,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
 
     const strikes = zoomedProfile.map(d => d.strike).sort((a, b) => a - b);
     const indexSpot = indexData.spot;
-    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
-    const cashSpot = liveSpot[indexSymbol as keyof typeof liveSpot] || indexSpot;
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+    const axisSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexSpot;
 
     const areas: {
       id: number;
@@ -401,9 +396,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       }
 
       let status: 'current' | 'above' | 'below' = 'above';
-      if (cashSpot >= range.low && cashSpot <= range.high) {
+      if (axisSpot >= range.low && axisSpot <= range.high) {
         status = 'current';
-      } else if (cashSpot < range.low) {
+      } else if (axisSpot < range.low) {
         status = 'above';
       } else {
         status = 'below';
@@ -426,11 +421,12 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   const analysis = useMemo(() => {
     if (!indexData || fairValueAreas.length === 0) return null;
     
-    const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
-    const cashSpot = liveSpot[indexSymbol as keyof typeof liveSpot] || indexData.spot;
+    const indexSpot = indexData.spot;
+    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
+    const axisSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexSpot;
 
     const currentArea = fairValueAreas.find(a => a.status === 'current');
-    const currentLvnZone = mergedZones.find(z => cashSpot >= z.low && cashSpot <= z.high);
+    const currentLvnZone = mergedZones.find(z => axisSpot >= z.low && axisSpot <= z.high);
 
     if (currentLvnZone) {
       return {
@@ -447,12 +443,12 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       };
     }
 
-    const distanceToUpper = currentArea.high - cashSpot;
-    const distanceToLower = cashSpot - currentArea.low;
+    const distanceToUpper = currentArea.high - axisSpot;
+    const distanceToLower = axisSpot - currentArea.low;
 
     const nearestBoundary = distanceToUpper < distanceToLower
-      ? { low: currentArea.high, high: currentArea.high, type: 'Confine Superiore (LVN)', dist: distanceToUpper, pct: (distanceToUpper / cashSpot) * 100 }
-      : { low: currentArea.low, high: currentArea.low, type: 'Confine Inferiore (LVN)', dist: distanceToLower, pct: (distanceToLower / cashSpot) * 100 };
+      ? { low: currentArea.high, high: currentArea.high, type: 'Confine Superiore (LVN)', dist: distanceToUpper, pct: (distanceToUpper / axisSpot) * 100 }
+      : { low: currentArea.low, high: currentArea.low, type: 'Confine Inferiore (LVN)', dist: distanceToLower, pct: (distanceToLower / axisSpot) * 100 };
 
     const lvnZone = mergedZones.find(z => z.low === nearestBoundary.low || z.high === nearestBoundary.high);
     const boundaryText = lvnZone
@@ -864,8 +860,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     <span><strong>Striscia ambra in cima:</strong> Volume scambiato oggi (scala indipendente — flusso intraday)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-0.5 rounded-sm" style={{ backgroundColor: 'rgba(148,163,184,0.5)' }}></span>
-                    <span><strong>Trattino grigio:</strong> Strike ETF già mostrato (griglia ETF più grossolana di quella indice)</span>
+                    <span className="inline-block text-[9px] font-mono text-gray-400">F:7375 · E:734.5</span>
+                    <span><strong>Prezzo livello:</strong> griglia uniforme in % dallo spot (ETF/Indice/Futures allineati per riga)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
@@ -904,9 +900,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 {/* Header labels for profiles */}
                 <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
                   <span className="text-right">Opzioni ETF (OI+Vol)</span>
-                  <span className="text-center">Strike (F | E)</span>
+                  <span className="text-center">Prezzo Livello (F | E)</span>
                   <span className="text-left">Opzioni Indice (OI+Vol)</span>
-                  <span className="text-left">{hasFuturesData ? 'Volumi Futures' : 'Opzioni Indice (Vol)'}</span>
+                  <span className="text-left">Volumi Futures</span>
                 </div>
 
                 {/* Chart rows */}
@@ -930,7 +926,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     const isInKronosRange = !!(kronosBoundaries && d.strike >= kronosBoundaries.min && d.strike <= kronosBoundaries.max);
                     const flipPoint = indexData?.gexRegime?.flipPoint;
                     const isFlipRow = flipPoint
-                      ? Math.abs(d.strike - flipPoint) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint)))
+                      ? Math.abs(d.strike - flipPoint * basisMultiplier) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint * basisMultiplier)))
                       : false;
 
                     const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
@@ -1031,11 +1027,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             Bottom layer = OI (structural, defines walls), split put(red)/call(green).
                             Top strip (amber) = today's volume (independent scale, intraday flow).
                             When OI is 0 (pre-market), the whole bar shows volume in orange.
-                            DE-DUP: the ETF has a coarser strike grid than the Index, so multiple
-                            Index strikes map to the same ETF strike. Only the primary row (nearest
-                            to the ETF strike's true price) renders the full bar; duplicates show a
-                            thin gray connector to avoid identical-looking bars. */}
-                        {d.etfIsPrimary ? (
+                            Level-centric grid: each row looks up the nearest ETF strike to this
+                            row's price level, so the ETF bar always reflects the level you're
+                            reading across the row. */}
                           <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
                                style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
                                title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
@@ -1066,15 +1060,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               <div className="absolute top-0 rounded-l-sm" style={{ right: '4px', width: `calc(${etfVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.55)' }} />
                             )}
                           </div>
-                        ) : (
-                          /* Duplicate ETF strike — thin gray connector instead of a duplicate bar */
-                          <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                               title={`ETF ${d.etfStrike} — livello già mostrato sulla riga principale vicina`}>
-                            <div className="absolute top-1/2 -translate-y-1/2 right-1 rounded-sm"
-                                 style={{ width: '2px', height: '50%', backgroundColor: 'rgba(148,163,184,0.3)' }} />
-                          </div>
-                        )}
 
                         {/* Column 2: Center Strike Price */}
                         <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
@@ -1092,7 +1077,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               lineHeight: 1,
                             }}
                           >
-                            F: {d.futuresStrike.toFixed(0)} | E: {d.etfStrike.toFixed(0)}
+                            F: {d.levelPrice.toFixed(0)} | E: {d.etfPrice.toFixed(1)}
                           </span>
                           {isClosest && rowHeight >= 18 && (
                             <span className="absolute -bottom-3 text-[8px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
