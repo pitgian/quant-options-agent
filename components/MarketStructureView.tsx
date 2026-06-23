@@ -917,18 +917,25 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
 
                     // OI bar widths (normalized to max total OI) + per-side fractions.
                     // Total width shows magnitude; color split shows put/call dominance.
+                    // When OI is 0 (pre-market / freshly-listed 0DTE), bar width falls
+                    // back to today's volume and renders as a single orange bar so the
+                    // chart is never empty.
                     const idxTotalOI = d.indexCallOI + d.indexPutOI;
-                    const idxPutFrac  = idxTotalOI > 0 ? d.indexPutOI  / idxTotalOI : 0;
-                    const idxCallFrac = idxTotalOI > 0 ? d.indexCallOI / idxTotalOI : 0;
+                    const idxHasOI   = idxTotalOI > 0;
+                    const idxPutFrac  = idxHasOI ? d.indexPutOI  / idxTotalOI : 0;
+                    const idxCallFrac = idxHasOI ? d.indexCallOI / idxTotalOI : 0;
                     const idxOIWidth  = maxIndexTotalOI > 0 ? (idxTotalOI / maxIndexTotalOI) * 100 : 0;
                     // Volume overlay marker position (independent scale — today's flow)
                     const idxVolWidth = maxIndexTotalVol > 0 ? (d.indexTotalVol / maxIndexTotalVol) * 100 : 0;
+                    const idxBarWidth = idxHasOI ? idxOIWidth : idxVolWidth;
 
                     const etfTotalOI = d.etfCallOI + d.etfPutOI;
-                    const etfPutFrac  = etfTotalOI > 0 ? d.etfPutOI  / etfTotalOI : 0;
-                    const etfCallFrac = etfTotalOI > 0 ? d.etfCallOI / etfTotalOI : 0;
+                    const etfHasOI   = etfTotalOI > 0;
+                    const etfPutFrac  = etfHasOI ? d.etfPutOI  / etfTotalOI : 0;
+                    const etfCallFrac = etfHasOI ? d.etfCallOI / etfTotalOI : 0;
                     const etfOIWidth  = maxEtfTotalOI > 0 ? (etfTotalOI / maxEtfTotalOI) * 100 : 0;
                     const etfVolWidth = maxEtfTotalVol > 0 ? (d.etfTotalVol / maxEtfTotalVol) * 100 : 0;
+                    const etfBarWidth = etfHasOI ? etfOIWidth : etfVolWidth;
 
                     // Blend backgrounds
                     let rowBg = 'transparent';
@@ -1000,44 +1007,38 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           </span>
                         )}
 
-                        {/* Column 1: ETF Options — OI bar (put/call proportional split, rounded-l)
-                            + thin volume marker overlay. Falls back to volume-only bar (orange)
-                            when OI isn't available for this view, so the chart is never empty. */}
+                        {/* Column 1: ETF Options — OI bar (put/call split, rounded-l) + volume marker.
+                            Width = total OI (structural, defines walls); color split = put(red)/call(green)
+                            dominance; white marker = today's volume (independent scale). When OI is 0
+                            (pre-market), the bar falls back to volume-only (orange). */}
                         <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
                              style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                             title={`ETF — Vol oggi: ${formatCompact(d.etfVolume)}`}>
-                          {(() => {
-                            const etfOI = d.etfCallOI + d.etfPutOI;
-                            if (etfOI <= 0) {
-                              const vW = maxEtfVolume > 0 ? (d.etfVolume / maxEtfVolume) * 100 : 0;
-                              return (
-                                <div className="h-full rounded-l overflow-hidden flex items-center justify-end pr-1.5"
-                                     style={{ width: `${Math.max(2, vW)}%`, backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {vW > 22 && rowHeight >= 18 && (
-                                    <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.etfVolume)}</span>
+                             title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
+                          <div className="flex h-full items-stretch rounded-l overflow-hidden" style={{ width: `${Math.max(2, etfBarWidth)}%` }}>
+                            {etfHasOI ? (
+                              <>
+                                {/* PUT (red) — support side */}
+                                <div style={{ width: `${etfPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
+                                {/* CALL (green) — resistance side */}
+                                <div className="flex items-center justify-end pr-1" style={{ width: `${etfCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
+                                  {etfOIWidth > 22 && rowHeight >= 18 && (
+                                    <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(etfTotalOI)}</span>
                                   )}
                                 </div>
-                              );
-                            }
-                            const putFrac  = etfOI > 0 ? d.etfPutOI  / etfOI : 0;
-                            const callFrac = etfOI > 0 ? d.etfCallOI / etfOI : 0;
-                            const oiW = maxEtfTotalOI > 0 ? (etfOI / maxEtfTotalOI) * 100 : 0;
-                            return (
-                              <>
-                                <div className="flex h-full items-stretch rounded-l overflow-hidden" style={{ width: `${Math.max(2, oiW)}%` }}>
-                                  <div style={{ width: `${putFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
-                                  <div className="flex items-center justify-end pr-1" style={{ width: `${callFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {oiW > 22 && rowHeight >= 18 && (
-                                      <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(etfOI)}</span>
-                                    )}
-                                  </div>
-                                </div>
-                                {maxEtfTotalVol > 0 && (d.etfTotalVol / maxEtfTotalVol) * 100 > 1 && (
-                                  <div className="absolute top-0 h-full" style={{ right: `calc(${(d.etfTotalVol / maxEtfTotalVol) * 100}% + 4px)`, width: '2px', backgroundColor: 'rgba(255,255,255,0.9)' }} />
-                                )}
                               </>
-                            );
-                          })()}
+                            ) : (
+                              /* OI not yet settled (pre-market 0DTE) — show today's volume in orange */
+                              <div className="h-full w-full flex items-center justify-end pr-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
+                                {etfVolWidth > 22 && rowHeight >= 18 && (
+                                  <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.etfTotalVol)}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {/* Volume marker — only in OI mode (in fallback mode the bar IS the volume) */}
+                          {etfHasOI && etfVolWidth > 1 && (
+                            <div className="absolute top-0 h-full" style={{ right: `calc(${etfVolWidth}% + 4px)`, width: '2px', backgroundColor: 'rgba(255,255,255,0.9)', boxShadow: '0 0 3px rgba(255,255,255,0.55)' }} />
+                          )}
                         </div>
 
                         {/* Column 2: Center Strike Price */}
@@ -1068,49 +1069,35 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           )}
                         </div>
 
-                        {/* Column 4: Index Options — OI bar (put/call proportional, rounded-r) + volume marker.
-                            Same semantics as the ETF bar: width = total OI, split = put/call dominance,
-                            white marker = today's volume. This is the institutional options book where
+                        {/* Column 4: Index Options — OI bar (put/call split, rounded-r) + volume marker.
+                            Same semantics as the ETF bar. This is the institutional options book where
                             walls are most structural. */}
                         <div className="relative flex justify-start w-full pl-1 transition-all duration-300"
                              style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                             title={`Index — Vol: Calls ${formatCompact(d.indexVolume > 0 ? (d.indexCallOI + d.indexPutOI) : 0)} | Oggi: ${formatCompact(d.indexVolume)}`}>
-                          {/* FALLBACK visivo: se indexOI è 0 (dati OI non disponibili per questa vista),
-                              mostra il volume totale come barra unica arancione, così il chart non è vuoto. */}
-                          {(() => {
-                            const idxOI = d.indexCallOI + d.indexPutOI;
-                            if (idxOI <= 0) {
-                              // Solo volume (arancione) — fallback quando OI non è disponibile
-                              const vW = maxIndexVolume > 0 ? (d.indexVolume / maxIndexVolume) * 100 : 0;
-                              return (
-                                <div className="h-full rounded-r overflow-hidden flex items-center justify-start pl-1.5"
-                                     style={{ width: `${Math.max(2, vW)}%`, backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {vW > 22 && rowHeight >= 18 && (
-                                    <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.indexVolume)}</span>
+                             title={`Index OI — Calls: ${formatCompact(d.indexCallOI)} | Puts: ${formatCompact(d.indexPutOI)}${idxHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.indexTotalVol)}`}>
+                          <div className="flex h-full items-stretch rounded-r overflow-hidden" style={{ width: `${Math.max(2, idxBarWidth)}%` }}>
+                            {idxHasOI ? (
+                              <>
+                                {/* PUT (red) — support side */}
+                                <div style={{ width: `${idxPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
+                                {/* CALL (green) — resistance side */}
+                                <div className="flex items-center justify-start pl-1" style={{ width: `${idxCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
+                                  {idxOIWidth > 22 && rowHeight >= 18 && (
+                                    <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(idxTotalOI)}</span>
                                   )}
                                 </div>
-                              );
-                            }
-                            // OI disponibile: split put/call
-                            const putFrac  = idxOI > 0 ? d.indexPutOI  / idxOI : 0;
-                            const callFrac = idxOI > 0 ? d.indexCallOI / idxOI : 0;
-                            const oiW = maxIndexTotalOI > 0 ? (idxOI / maxIndexTotalOI) * 100 : 0;
-                            return (
-                              <>
-                                <div className="flex h-full items-stretch rounded-r overflow-hidden" style={{ width: `${Math.max(2, oiW)}%` }}>
-                                  <div style={{ width: `${putFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
-                                  <div className="flex items-center justify-start pl-1" style={{ width: `${callFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {oiW > 22 && rowHeight >= 18 && (
-                                      <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(idxOI)}</span>
-                                    )}
-                                  </div>
-                                </div>
-                                {maxIndexTotalVol > 0 && (d.indexTotalVol / maxIndexTotalVol) * 100 > 1 && (
-                                  <div className="absolute top-0 h-full" style={{ left: `calc(${(d.indexTotalVol / maxIndexTotalVol) * 100}% + 4px)`, width: '2px', backgroundColor: 'rgba(255,255,255,0.9)' }} />
-                                )}
                               </>
-                            );
-                          })()}
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-start pl-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
+                                {idxVolWidth > 22 && rowHeight >= 18 && (
+                                  <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.indexTotalVol)}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {idxHasOI && idxVolWidth > 1 && (
+                            <div className="absolute top-0 h-full" style={{ left: `calc(${idxVolWidth}% + 4px)`, width: '2px', backgroundColor: 'rgba(255,255,255,0.9)', boxShadow: '0 0 3px rgba(255,255,255,0.55)' }} />
+                          )}
                         </div>
 
                         {/* Column 5: Futures Volume profile (oriented left) */}
