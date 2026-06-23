@@ -127,12 +127,24 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     };
   }, [resolvedFuturesProfile]);
 
+  // ---- Stable structural spots ----
+  // The live-spot poller (every 15s) recreates indexData/etfData objects via
+  // adjustDataWithLiveSpot, changing their .spot and reference identity. But
+  // .gexStrikeData (the actual options chain) is preserved across ticks — it
+  // only changes on a real data refresh (~5 min). By memoizing the spot on
+  // gexStrikeData identity, the grid anchor stays frozen between refreshes,
+  // so the 101 level rows don't jitter and profileData doesn't needlessly
+  // recompute on every live tick.
+  const indexSpotStable = useMemo(() => indexData?.spot ?? 0, [indexData?.gexStrikeData]);
+  const etfSpotStable   = useMemo(() => etfData?.spot ?? 0,   [etfData?.gexStrikeData]);
+
   // ---- Extract and Merge Profile Data ----
   const profileData = useMemo(() => {
     if (!indexData || !etfData) return [];
 
-    const indexSpot = indexData.spot;
-    const etfSpot = etfData.spot;
+    // Use the STABLE structural spots so the grid doesn't move every 15s.
+    const indexSpot = indexSpotStable;
+    const etfSpot = etfSpotStable;
     const ratio = indexSpot / etfSpot;
 
     const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
@@ -258,7 +270,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       r.indexIsPrimary = idxPrimaryLevel.get(r.indexStrike) === r.levelPrice;
     }
     return rows;
-  }, [indexData, etfData, expiryFilter, selectedFuturesTf, basisMultiplier, market, zoomPct]);
+  }, [indexData?.gexStrikeData, etfData?.gexStrikeData, indexData?.futuresVolumeProfiles, indexData?.futuresVolumeProfile, resolvedFuturesProfile, expiryFilter, selectedFuturesTf, basisMultiplier, market, zoomPct, indexSpotStable, etfSpotStable]);
 
   // ---- Filter profile based on zoom percentage around spot ----
   const zoomedProfile = useMemo(() => {
@@ -941,10 +953,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     <span><strong>Value Area High/Low</strong> — range col 70% del volume del tf selezionato</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-5 rounded-sm" style={{ background: 'linear-gradient(to right, rgba(16,185,129,0.7) 50%, rgba(239,68,68,0.7) 50%)', opacity: 0.4 }}></span>
-                    <span><strong>Barra sbiadita:</strong> livello di griglia tra due strike (dati dallo strike più vicino — ETF/Indice hanno griglia più grossolana del prezzo livello)</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
                     <span>
                       <strong>Volumi Futures:</strong> Storico {
@@ -1124,8 +1132,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             the SAME bar at reduced opacity so the data is always visible and the
                             primary level (nearest to the strike's true price) still stands out. */}
                           <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px`, opacity: d.etfIsPrimary ? 1 : 0.4 }}
-                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}${d.etfIsPrimary ? '' : ' (livello adiacente allo strike)'}`}>
+                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
+                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
                             <div className="flex h-full items-stretch rounded-l overflow-hidden" style={{ width: `${Math.max(2, etfBarWidth)}%` }}>
                               {etfHasOI ? (
                                 <>
@@ -1133,7 +1141,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                                   <div style={{ width: `${etfPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
                                   {/* CALL (green) — resistance side */}
                                   <div className="flex items-center justify-end pr-1" style={{ width: `${etfCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {etfOIWidth > 22 && rowHeight >= 18 && d.etfIsPrimary && (
+                                    {etfOIWidth > 22 && rowHeight >= 18 && (
                                       <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(etfTotalOI)}</span>
                                     )}
                                   </div>
@@ -1141,7 +1149,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               ) : (
                                 /* OI not yet settled (pre-market 0DTE) — show today's volume in orange */
                                 <div className="h-full w-full flex items-center justify-end pr-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {etfVolWidth > 22 && rowHeight >= 18 && d.etfIsPrimary && (
+                                  {etfVolWidth > 22 && rowHeight >= 18 && (
                                     <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.etfTotalVol)}</span>
                                   )}
                                 </div>
@@ -1187,8 +1195,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             Duplicate Index-strike levels (rare at default zoom) render at reduced
                             opacity — data stays visible, primary level stands out. */}
                           <div className="relative flex justify-start w-full pl-1 transition-all duration-300"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px`, opacity: d.indexIsPrimary ? 1 : 0.4 }}
-                               title={`Index OI — Calls: ${formatCompact(d.indexCallOI)} | Puts: ${formatCompact(d.indexPutOI)}${idxHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.indexTotalVol)}${d.indexIsPrimary ? '' : ' (livello adiacente allo strike)'}`}>
+                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
+                               title={`Index OI — Calls: ${formatCompact(d.indexCallOI)} | Puts: ${formatCompact(d.indexPutOI)}${idxHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.indexTotalVol)}`}>
                             <div className="flex h-full items-stretch rounded-r overflow-hidden" style={{ width: `${Math.max(2, idxBarWidth)}%` }}>
                               {idxHasOI ? (
                                 <>
@@ -1196,14 +1204,14 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                                   <div style={{ width: `${idxPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
                                   {/* CALL (green) — resistance side */}
                                   <div className="flex items-center justify-start pl-1" style={{ width: `${idxCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {idxOIWidth > 22 && rowHeight >= 18 && d.indexIsPrimary && (
+                                    {idxOIWidth > 22 && rowHeight >= 18 && (
                                       <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(idxTotalOI)}</span>
                                     )}
                                   </div>
                                 </>
                               ) : (
                                 <div className="h-full w-full flex items-center justify-start pl-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {idxVolWidth > 22 && rowHeight >= 18 && d.indexIsPrimary && (
+                                  {idxVolWidth > 22 && rowHeight >= 18 && (
                                     <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.indexTotalVol)}</span>
                                   )}
                                 </div>
