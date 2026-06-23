@@ -844,7 +844,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     <span><strong>Colore barra:</strong> 🟢 Call OI (resistenza) · 🔴 Put OI (supporto)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-1 w-5 rounded-sm" style={{ backgroundColor: 'rgba(251,191,36,0.95)', boxShadow: '0 0 2px rgba(251,191,36,0.6)' }}></span>
+                    <span className="inline-block h-1 w-5 rounded-sm" style={{ backgroundColor: 'rgba(251,191,36,0.55)' }}></span>
                     <span><strong>Striscia ambra in cima:</strong> Volume scambiato oggi (scala indipendente — flusso intraday)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -1038,7 +1038,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           {/* Volume strip (amber, top) — today's traded volume, independent scale.
                               Right-aligned to match the OI bar (ETF grows from the right). */}
                           {etfHasOI && etfVolWidth > 1 && (
-                            <div className="absolute top-0 rounded-l-sm" style={{ right: '4px', width: `calc(${etfVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.95)', boxShadow: '0 0 2px rgba(251,191,36,0.6)' }} />
+                            <div className="absolute top-0 rounded-l-sm" style={{ right: '4px', width: `calc(${etfVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.55)' }} />
                           )}
                         </div>
 
@@ -1097,7 +1097,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           </div>
                           {/* Volume strip (amber, top) — left-aligned to match the OI bar (Index grows from the left) */}
                           {idxHasOI && idxVolWidth > 1 && (
-                            <div className="absolute top-0 rounded-r-sm" style={{ left: '4px', width: `calc(${idxVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.95)', boxShadow: '0 0 2px rgba(251,191,36,0.6)' }} />
+                            <div className="absolute top-0 rounded-r-sm" style={{ left: '4px', width: `calc(${idxVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.55)' }} />
                           )}
                         </div>
 
