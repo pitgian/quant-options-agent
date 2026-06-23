@@ -157,15 +157,15 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     if (indexStrikes.length === 0 || etfStrikes.length === 0) return [];
 
     // Profile + interpolation helper come from the shared resolvedFuturesProfile memo.
-    const { profile: futProfile, prices: futPrices } = resolvedFuturesProfile;
+    const { prices: futPrices, volsByPrice } = resolvedFuturesProfile;
     const futuresVolAt = (price: number): number => {
       if (futPrices.length === 0) return 0;
-      if (price <= futPrices[0]) return futProfile![futPrices[0]] || 0;
-      if (price >= futPrices[futPrices.length - 1]) return futProfile![futPrices[futPrices.length - 1]] || 0;
+      if (price <= futPrices[0]) return volsByPrice.get(futPrices[0]) || 0;
+      if (price >= futPrices[futPrices.length - 1]) return volsByPrice.get(futPrices[futPrices.length - 1]) || 0;
       let lo = 0, hi = futPrices.length - 1;
       while (lo + 1 < hi) { const mid = (lo + hi) >> 1; if (futPrices[mid] <= price) lo = mid; else hi = mid; }
       const p0 = futPrices[lo], p1 = futPrices[hi];
-      const v0 = futProfile![p0] || 0, v1 = futProfile![p1] || 0;
+      const v0 = volsByPrice.get(p0) || 0, v1 = volsByPrice.get(p1) || 0;
       const t = p1 === p0 ? 0 : (price - p0) / (p1 - p0);
       return v0 + (v1 - v0) * t;
     };
