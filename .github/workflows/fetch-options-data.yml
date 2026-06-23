@@ -160,7 +160,9 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/options_data.json data/options_history.json
           if [ ! -f vercel.json ]; then
-            echo '{"ignoreCommand": "exit 0"}' > vercel.json
+            # Disable Vercel deployments for the data branch — it receives ~565
+            # commits/day and would exhaust the 100/day free-tier deploy quota.
+            echo '{"git": {"deploymentEnabled": {"data": false}}, "ignoreCommand": "exit 0"}' > vercel.json
             git add vercel.json
           fi
           if git diff --quiet && git diff --staged --quiet; then
@@ -331,7 +333,9 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/kronos_forecast.json scripts/model/covariate_adapter.pth
           if [ ! -f vercel.json ]; then
-            echo '{"ignoreCommand": "exit 0"}' > vercel.json
+            # Disable Vercel deployments for the data branch — it receives ~565
+            # commits/day and would exhaust the 100/day free-tier deploy quota.
+            echo '{"git": {"deploymentEnabled": {"data": false}}, "ignoreCommand": "exit 0"}' > vercel.json
             git add vercel.json
           fi
           if git diff --quiet && git diff --staged --quiet; then
