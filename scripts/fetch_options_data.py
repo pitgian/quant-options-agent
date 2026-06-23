@@ -20,7 +20,12 @@ import math
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+except Exception:
+    _ET = timezone.utc  # fallback se zoneinfo non disponibile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1027,20 +1032,48 @@ def calculate_confluence_levels(
     return candidates
 
 
+def _session_start(kind: str, tz=_ET) -> datetime:
+    """
+    Returns the timezone-aware start datetime for a calendar-aligned window.
+      'daily'    → today 00:00 (intraday session from midnight)
+      'weekly'   → Monday 00:00 of the current week
+      'monthly'  → 1st of the current month 00:00
+      'quarterly'→ 1st of the current quarter 00:00
+    All in America/New_York (futures trade on US session boundaries).
+    """
+    now = datetime.now(tz)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if kind == "daily":
+        return midnight
+    if kind == "weekly":
+        # Monday=0 ... Sunday=6
+        return midnight - timedelta(days=midnight.weekday())
+    if kind == "monthly":
+        return midnight.replace(day=1)
+    if kind == "quarterly":
+        q_month = ((midnight.month - 1) // 3) * 3 + 1
+        return midnight.replace(month=q_month, day=1)
+    return midnight
+
+
 def fetch_futures_volume_profile(
     symbol: str,
     spot_price: float,
     strikes: List[float],
     period: str = "30d",
     interval: str = "1h",
+    start: Optional[datetime] = None,
 ) -> Dict[str, float]:
     """
-    Fetches futures candles for a given period and interval.
-    Scales the futures prices to match the symbol spot price.
-    Distributes volume of each candle across the symbol's option strikes
-    using a fixed price window (density overlap) to ensure consistency
-    regardless of option strike density.
-    Returns a dict mapping strike price (string) to total volume (float).
+    Fetches futures candles and distributes volume across option strikes.
+
+    Two modes:
+      - ``start=None``  → Yahoo rolling ``period`` (legacy behaviour)
+      - ``start=<dt>``  → session-based window from ``start`` to now.
+        Used for calendar-aligned profiles (daily from midnight, weekly from
+        Monday, monthly from the 1st, quarterly from quarter start). The
+        ``start`` datetime should be timezone-aware (ET preferred: futures
+        trade on US session boundaries).
     """
     # Map index/ETF symbols to correct futures contract
     futures_symbol = "ES=F" if symbol in ["SPY", "SPX"] else "NQ=F"
@@ -1049,7 +1082,13 @@ def fetch_futures_volume_profile(
     try:
         futures_ticker = yf.Ticker(futures_symbol)
         # Fetch futures candles based on period and interval
-        hist = futures_ticker.history(period=period, interval=interval, prepost=True)
+        if start is not None:
+            # Session-based window: explicit start/end. Yahoo needs naive-or-aware
+            # timestamps; pass aware datetimes directly.
+            end_dt = datetime.now(start.tzinfo) if start.tzinfo else datetime.now(timezone.utc)
+            hist = futures_ticker.history(start=start, end=end_dt, interval=interval, prepost=True)
+        else:
+            hist = futures_ticker.history(period=period, interval=interval, prepost=True)
         if hist.empty:
             logger.warning(f"⚠️ No futures data returned for {futures_symbol}")
             return {}
@@ -1588,14 +1627,17 @@ def fetch_symbol_data(
         for opt in exp_info["options"]
     })
     
-    # Pre-calculate multiple timeframes for options expiry alignment and manual selector
-    futures_volume_profile_1d = fetch_futures_volume_profile(symbol, spot, strikes, period="1d", interval="5m")
-    futures_volume_profile_2d = fetch_futures_volume_profile(symbol, spot, strikes, period="2d", interval="15m")
-    futures_volume_profile_5d = fetch_futures_volume_profile(symbol, spot, strikes, period="5d", interval="15m")
-    futures_volume_profile_7d = fetch_futures_volume_profile(symbol, spot, strikes, period="7d", interval="30m")
-    futures_volume_profile_30d = fetch_futures_volume_profile(symbol, spot, strikes, period="30d", interval="1h")
-    futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, period="90d", interval="1d")
-    futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="max", interval="1d")
+    # Pre-calculate multiple timeframes. Calendar-aligned (session-based) for the
+    # primary windows the trader uses: daily from midnight, weekly from Monday,
+    # monthly from the 1st, quarterly from quarter start. The legacy 2d/5d stay
+    # rolling (they're intermediate options, not requested as session windows).
+    futures_volume_profile_1d  = fetch_futures_volume_profile(symbol, spot, strikes, interval="5m",  start=_session_start("daily"))
+    futures_volume_profile_2d  = fetch_futures_volume_profile(symbol, spot, strikes, period="2d",   interval="15m")
+    futures_volume_profile_5d  = fetch_futures_volume_profile(symbol, spot, strikes, period="5d",   interval="15m")
+    futures_volume_profile_7d  = fetch_futures_volume_profile(symbol, spot, strikes, interval="30m", start=_session_start("weekly"))
+    futures_volume_profile_30d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1h",  start=_session_start("monthly"))
+    futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1d",  start=_session_start("quarterly"))
+    futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="max",  interval="1d")
 
     # Calculate covariates
     skew_value = calculate_volatility_skew_25d(all_options_by_expiry, spot)

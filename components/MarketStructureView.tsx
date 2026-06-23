@@ -70,6 +70,63 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     return (cashSpot && cashSpot > 0) ? (futuresSpot / cashSpot) : 1;
   }, [liveSpot, indexData, market]);
 
+  // ---- Resolve the futures volume profile for the selected timeframe ----
+  // Shared by profileData (for per-level interpolation) and futuresMP (for
+  // POC / VAH / VAL computation). Keys are price strings on the futures scale.
+  const resolvedFuturesProfile = useMemo(() => {
+    if (!indexData) return { profile: null as Record<string, number> | null, prices: [] as number[], volsByPrice: new Map<number, number>(), tf: '' };
+    let tf = '30d';
+    if (selectedFuturesTf === 'auto') {
+      if (expiryFilter === '0dte') tf = '2d';
+      else if (expiryFilter === '1-7dte') tf = '7d';
+      else if (expiryFilter === '8-30dte') tf = '30d';
+      else if (expiryFilter === '30+dte') tf = '90d';
+      else tf = '30d';
+    } else {
+      tf = selectedFuturesTf;
+    }
+    const profile = (indexData.futuresVolumeProfiles?.[tf] ?? indexData.futuresVolumeProfile ?? null);
+    // Build a Number→vol map so consumers don't hit the string-key("7345.0") vs
+    // Number(7345) mismatch. prices is the sorted numeric price axis.
+    const volsByPrice = new Map<number, number>();
+    if (profile) for (const k of Object.keys(profile)) volsByPrice.set(Number(k), profile[k] || 0);
+    const prices = Array.from(volsByPrice.keys()).sort((a, b) => a - b);
+    return { profile, prices, volsByPrice, tf };
+  }, [indexData, selectedFuturesTf, expiryFilter]);
+
+  // ---- Market Profile metrics: POC + Value Area (VAH/VAL) for the active tf ----
+  // Standard Market Profile: POC = highest-volume price; Value Area = the
+  // price range containing 70% of total volume, built by expanding from POC
+  // up/down one price-node at a time (always adding the larger side) until
+  // 70% is reached. VAH/VAL are the top/bottom of that range.
+  const futuresMP = useMemo(() => {
+    const { volsByPrice, prices } = resolvedFuturesProfile;
+    if (prices.length === 0) return null;
+    const nodes = prices.map(p => ({ price: p, vol: volsByPrice.get(p) || 0 })).filter(n => n.vol > 0);
+    if (nodes.length === 0) return null;
+    const totalVol = nodes.reduce((s, n) => s + n.vol, 0);
+    const valueTarget = totalVol * 0.70;
+    // POC = max volume node (lowest price ties)
+    let pocIdx = 0;
+    for (let i = 1; i < nodes.length; i++) if (nodes[i].vol > nodes[pocIdx].vol) pocIdx = i;
+    // Expand value area from POC
+    let lo = pocIdx, hi = pocIdx, acc = nodes[pocIdx].vol;
+    while (acc < valueTarget && (lo > 0 || hi < nodes.length - 1)) {
+      const up = hi < nodes.length - 1 ? nodes[hi + 1].vol : -1;
+      const dn = lo > 0 ? nodes[lo - 1].vol : -1;
+      if (up >= dn && up >= 0) { hi++; acc += nodes[hi].vol; }
+      else if (dn >= 0) { lo--; acc += nodes[lo].vol; }
+      else break;
+    }
+    return {
+      poc: nodes[pocIdx].price,
+      vah: nodes[hi].price,
+      val: nodes[lo].price,
+      totalVol,
+      pocVol: nodes[pocIdx].vol,
+    };
+  }, [resolvedFuturesProfile]);
+
   // ---- Extract and Merge Profile Data ----
   const profileData = useMemo(() => {
     if (!indexData || !etfData) return [];
@@ -99,26 +156,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     const etfStrikes  = etfData.gexStrikeData.map(d => d.strike).sort((a, b) => a - b);
     if (indexStrikes.length === 0 || etfStrikes.length === 0) return [];
 
-    // ---- Resolve the futures volume profile for the selected timeframe ----
-    // Keys are price strings on the index/futures scale; we interpolate
-    // linearly between neighbours so volume exists at every continuous level.
-    let futProfile: Record<string, number> | null = null;
-    if (indexData.futuresVolumeProfiles) {
-      let tf = '30d';
-      if (selectedFuturesTf === 'auto') {
-        if (expiryFilter === '0dte') tf = '2d';
-        else if (expiryFilter === '1-7dte') tf = '7d';
-        else if (expiryFilter === '8-30dte') tf = '30d';
-        else if (expiryFilter === '30+dte') tf = '90d';
-        else if (expiryFilter === 'all') tf = '30d';
-      } else {
-        tf = selectedFuturesTf;
-      }
-      futProfile = indexData.futuresVolumeProfiles[tf] ?? indexData.futuresVolumeProfile ?? null;
-    } else if (indexData.futuresVolumeProfile) {
-      futProfile = indexData.futuresVolumeProfile;
-    }
-    const futPrices = futProfile ? Object.keys(futProfile).map(Number).sort((a, b) => a - b) : [];
+    // Profile + interpolation helper come from the shared resolvedFuturesProfile memo.
+    const { profile: futProfile, prices: futPrices } = resolvedFuturesProfile;
     const futuresVolAt = (price: number): number => {
       if (futPrices.length === 0) return 0;
       if (price <= futPrices[0]) return futProfile![futPrices[0]] || 0;
@@ -860,8 +899,12 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     <span><strong>Striscia ambra in cima:</strong> Volume scambiato oggi (scala indipendente — flusso intraday)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-block text-[9px] font-mono text-gray-400">F:7375 · E:734.5</span>
-                    <span><strong>Prezzo livello:</strong> griglia uniforme in % dallo spot (ETF/Indice/Futures allineati per riga)</span>
+                    <span className="px-1 py-0.5 rounded text-[8px] font-extrabold bg-amber-500/30 text-amber-200 border border-amber-400/50 uppercase">POC</span>
+                    <span><strong>Point of Control</strong> del timeframe futures selezionato (prezzo a maggior volume)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40 uppercase">VAH · VAL</span>
+                    <span><strong>Value Area High/Low</strong> — range col 70% del volume del tf selezionato</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
@@ -930,6 +973,16 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                       : false;
 
                     const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
+
+                    // Market Profile level tags — true when this grid row is the
+                    // nearest level to the POC / VAH / VAL of the selected tf.
+                    // Makes timeframe switching visually obvious (levels move).
+                    const isPOC = !!futuresMP && zoomedProfile.length > 0 &&
+                      Math.abs(d.levelPrice - futuresMP.poc) === Math.min(...zoomedProfile.map(x => Math.abs(x.levelPrice - futuresMP.poc)));
+                    const isVAH = !!futuresMP && zoomedProfile.length > 0 &&
+                      Math.abs(d.levelPrice - futuresMP.vah) === Math.min(...zoomedProfile.map(x => Math.abs(x.levelPrice - futuresMP.vah)));
+                    const isVAL = !!futuresMP && zoomedProfile.length > 0 &&
+                      Math.abs(d.levelPrice - futuresMP.val) === Math.min(...zoomedProfile.map(x => Math.abs(x.levelPrice - futuresMP.val)));
 
                     // OI bar widths (normalized to max total OI) + per-side fractions.
                     // Total width shows magnitude; color split shows put/call dominance.
@@ -1146,6 +1199,16 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               className="absolute right-2 top-0 flex gap-1 items-center"
                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
                             >
+                              {/* Market Profile levels of the selected tf — POC/VAH/VAL */}
+                              {isVAL && (
+                                <span title={`Value Area Low (${resolvedFuturesProfile.tf})`} className="px-1 py-0.5 rounded text-[8px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40 uppercase" style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}>VAL</span>
+                              )}
+                              {isVAH && (
+                                <span title={`Value Area High (${resolvedFuturesProfile.tf})`} className="px-1 py-0.5 rounded text-[8px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40 uppercase" style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}>VAH</span>
+                              )}
+                              {isPOC && (
+                                <span title={`Point of Control (${resolvedFuturesProfile.tf})`} className="px-1 py-0.5 rounded text-[8px] font-extrabold bg-amber-500/30 text-amber-200 border border-amber-400/50 uppercase" style={{ transform: `scale(${rowHeight < 20 ? 0.75 : 0.9})`, transformOrigin: 'right center' }}>POC</span>
+                              )}
                               {isHVN && (
                                 <span 
                                   className="px-1 py-0.5 rounded text-[8px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase"

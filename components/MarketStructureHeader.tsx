@@ -159,11 +159,11 @@ export function MarketStructureHeader({
               onChange={(e) => setSelectedFuturesTf(e.target.value as FuturesTimeframe)}
               className="bg-slate-900 border border-slate-850 text-gray-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
-              <option value="auto">Auto (Allineato)</option>
-              <option value="1d">Giornaliero (5m)</option>
-              <option value="5d">Settimanale (15m)</option>
-              <option value="30d">Mensile (1h)</option>
-              <option value="90d">Trimestrale (1d)</option>
+              <option value="auto">Auto (Allineato scadenza)</option>
+              <option value="1d">Giornaliero (dalle 00:00)</option>
+              <option value="7d">Settimanale (da Lunedì)</option>
+              <option value="30d">Mensile (dal 1°)</option>
+              <option value="90d">Trimestrale (da inizio Qt.)</option>
               <option value="max">Cumulativo (Max)</option>
             </select>
           </div>
