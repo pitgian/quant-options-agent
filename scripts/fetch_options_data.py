@@ -1063,28 +1063,32 @@ def fetch_futures_volume_profile(
     period: str = "30d",
     interval: str = "1h",
     start: Optional[datetime] = None,
+    row_size: float = 1.0,
 ) -> Dict[str, float]:
     """
-    Fetches futures candles and distributes volume across option strikes.
+    Fetches futures candles and builds a volume profile on a uniform 1-point
+    price grid in NATIVE FUTURES (ES/NQ) terms — matching what TradingView
+    displays for the ES volume profile.
 
-    Two modes:
-      - ``start=None``  → Yahoo rolling ``period`` (legacy behaviour)
-      - ``start=<dt>``  → session-based window from ``start`` to now.
-        Used for calendar-aligned profiles (daily from midnight, weekly from
-        Monday, monthly from the 1st, quarterly from quarter start). The
-        ``start`` datetime should be timezone-aware (ET preferred: futures
-        trade on US session boundaries).
+    Previously this scaled futures prices down to the symbol's spot/strike grid
+    (5-point for SPX), which (a) put VAH/VAL in the wrong price scale (~100pt
+    off vs ES) and (b) bucketed too coarsely to ever land on 7427/7464.
+
+    Two modes for the time window:
+      - ``start=None``  → Yahoo rolling ``period`` (legacy)
+      - ``start=<dt>``  → session-based window (calendar-aligned)
+
+    ``row_size`` defaults to 1.0 point (ES/NQ native). Wider rows reduce JSON
+    size for long histories (90d/max) at the cost of precision.
     """
     # Map index/ETF symbols to correct futures contract
     futures_symbol = "ES=F" if symbol in ["SPY", "SPX"] else "NQ=F"
     logger.info(f"📈 Fetching futures volume profile for {symbol} using {futures_symbol} ({period}/{interval})...")
-    
+
     try:
         futures_ticker = yf.Ticker(futures_symbol)
         # Fetch futures candles based on period and interval
         if start is not None:
-            # Session-based window: explicit start/end. Yahoo needs naive-or-aware
-            # timestamps; pass aware datetimes directly.
             end_dt = datetime.now(start.tzinfo) if start.tzinfo else datetime.now(timezone.utc)
             hist = futures_ticker.history(start=start, end=end_dt, interval=interval, prepost=True)
         else:
@@ -1092,47 +1096,53 @@ def fetch_futures_volume_profile(
         if hist.empty:
             logger.warning(f"⚠️ No futures data returned for {futures_symbol}")
             return {}
-        
-        # Get the current/last close of futures to calculate scaling ratio
-        futures_last_close = hist["Close"].iloc[-1]
-        ratio = spot_price / futures_last_close
-        
-        # Define standard window width as 0.1% of the spot price
-        W = spot_price * 0.001
-        
-        # Initialize profile
-        profile = {strike: 0.0 for strike in strikes}
-        
-        # Sort strikes for fast lookups
-        strikes_sorted = sorted(strikes)
-        if not strikes_sorted:
+
+        # Determine the native futures price range, then bucket on a uniform
+        # row_size grid. Prices stay in futures (ES/NQ) terms — NO spot scaling.
+        all_highs = hist["High"].dropna()
+        all_lows  = hist["Low"].dropna()
+        if all_highs.empty:
             return {}
-            
+        price_min = float(all_lows.min())  // row_size * row_size
+        price_max = float(all_highs.max()) // row_size * row_size + row_size
+        rows = int(round((price_max - price_min) / row_size)) + 1
+        grid = [price_min + i * row_size for i in range(rows)]
+        profile = {round(p, 1): 0.0 for p in grid}
+
+        futures_last_close = float(hist["Close"].iloc[-1])
+        logger.info(f"   futures range [{price_min:.0f}..{price_max:.0f}], last={futures_last_close:.0f}, {rows} rows of {row_size}pt")
+
         for _, row in hist.iterrows():
-            high = row["High"] * ratio
-            low = row["Low"] * ratio
-            volume = row["Volume"]
-            
+            high = float(row["High"])
+            low  = float(row["Low"])
+            volume = float(row["Volume"])
             if pd.isna(high) or pd.isna(low) or pd.isna(volume) or volume <= 0:
                 continue
-                
             R = high - low
             if R < 1e-5:
-                # If range is zero, assign to the closest strike
-                closest_strike = min(strikes_sorted, key=lambda s: abs(s - (high + low)/2))
-                profile[closest_strike] += volume
+                # Zero-range candle: assign to nearest row
+                mid = (high + low) / 2
+                nearest = round(mid / row_size) * row_size
+                if nearest in profile:
+                    profile[nearest] += volume
                 continue
-                
-            # Distribute volume using the fixed price window overlap
-            for s in strikes_sorted:
-                overlap = max(0.0, min(high, s + W/2) - max(low, s - W/2))
+            # Distribute volume uniformly across the rows the candle spans
+            lo_row = math.floor(low / row_size) * row_size
+            hi_row = math.ceil(high / row_size) * row_size
+            r = lo_row
+            while r <= hi_row:
+                cell_lo = r
+                cell_hi = r + row_size
+                overlap = max(0.0, min(high, cell_hi) - max(low, cell_lo))
                 if overlap > 0:
-                    profile[s] += (volume / R) * overlap
-                
-        # Round volumes for clean JSON and serialize strike keys as strings
-        profile_str_keys = {str(strike): round(vol, 1) for strike, vol in profile.items() if vol > 0}
-        return profile_str_keys
-        
+                    rk = round(r, 1)
+                    if rk in profile:
+                        profile[rk] += (volume / R) * overlap
+                r += row_size
+
+        # Serialize with string keys, drop zero-volume rows
+        return {str(k): round(v, 1) for k, v in profile.items() if v > 0}
+
     except Exception as e:
         logger.error(f"❌ Error computing futures volume profile for {symbol}: {e}")
         return {}
@@ -1631,13 +1641,15 @@ def fetch_symbol_data(
     # primary windows the trader uses: daily from midnight, weekly from Monday,
     # monthly from the 1st, quarterly from quarter start. The legacy 2d/5d stay
     # rolling (they're intermediate options, not requested as session windows).
-    futures_volume_profile_1d  = fetch_futures_volume_profile(symbol, spot, strikes, interval="5m",  start=_session_start("daily"))
-    futures_volume_profile_2d  = fetch_futures_volume_profile(symbol, spot, strikes, period="2d",   interval="15m")
-    futures_volume_profile_5d  = fetch_futures_volume_profile(symbol, spot, strikes, period="5d",   interval="15m")
-    futures_volume_profile_7d  = fetch_futures_volume_profile(symbol, spot, strikes, interval="30m", start=_session_start("weekly"))
-    futures_volume_profile_30d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1h",  start=_session_start("monthly"))
-    futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1d",  start=_session_start("quarterly"))
-    futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="max",  interval="1d")
+    # All profiles are now in NATIVE FUTURES (ES/NQ) terms on a 1-point grid
+    # (5-point for 90d/max to keep JSON size reasonable) — matches TradingView.
+    futures_volume_profile_1d  = fetch_futures_volume_profile(symbol, spot, strikes, interval="5m",  start=_session_start("daily"),     row_size=1.0)
+    futures_volume_profile_2d  = fetch_futures_volume_profile(symbol, spot, strikes, period="2d",   interval="15m",                      row_size=1.0)
+    futures_volume_profile_5d  = fetch_futures_volume_profile(symbol, spot, strikes, period="5d",   interval="15m",                      row_size=2.0)
+    futures_volume_profile_7d  = fetch_futures_volume_profile(symbol, spot, strikes, interval="30m", start=_session_start("weekly"),    row_size=2.0)
+    futures_volume_profile_30d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1h",  start=_session_start("monthly"),   row_size=5.0)
+    futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1d",  start=_session_start("quarterly"), row_size=5.0)
+    futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="max",  interval="1d",                      row_size=5.0)
 
     # Calculate covariates
     skew_value = calculate_volatility_skew_25d(all_options_by_expiry, spot)
