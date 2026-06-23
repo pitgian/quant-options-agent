@@ -137,11 +137,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
 
     const indexSymbol = market === 'SP500' ? 'SPX' : 'NDX';
     const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
-    const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexSpot;
+    // GRID ANCHOR = structural spot from the JSON (refreshed every ~5 min by CI),
+    // NOT liveSpot (refreshed every 15s). Anchoring to the live tick would
+    // recompute the entire 101-row grid + nearest-strike walks on every tick,
+    // causing (a) visible jitter as all level prices shift and (b) main-thread
+    // jank that freezes scroll. The live spot is only used to draw the yellow
+    // 'spot' highlighter on the nearest row — see isClosest in the render loop.
+    const gridAnchor = indexSpot;
 
     // ---- Level-centric grid (Option A) ----
     // The chart axis is a uniform grid of PRICE LEVELS spaced by % from the
-    // futures spot, NOT the SPX strike grid. Each row is one price level; at
+    // structural spot, NOT the SPX strike grid. Each row is one price level; at
     // that level we independently look up the nearest ETF strike, nearest
     // Index strike, and interpolate the futures volume. This makes ETF / Index
     // / Futures align on every horizontal row — you can read across a row and
@@ -171,7 +177,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     };
 
     // ---- Build the level grid ----
-    // Uniform % step from futuresSpot; ~100 rows regardless of zoom so the
+    // Uniform % step from the structural anchor; ~100 rows regardless of zoom so the
     // bar density stays readable. Level prices are real (non-rounded) futures
     // prices so they can be copied straight to an execution chart.
     const targetRows = 100;
@@ -192,7 +198,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       const dPct = -zoomPct + i * stepPct;
       if (Math.abs(dPct) > zoomPct + 1e-9) continue;
 
-      const levelPrice = futuresSpot * (1 + dPct / 100); // ES/futures scale (~ SPX)
+      const levelPrice = gridAnchor * (1 + dPct / 100); // ES/futures scale (~ SPX)
       const etfPrice   = etfSpot   * (1 + dPct / 100);   // SPY scale
 
       // nearest Index strike to the futures-scale level price (monotonic walk)
@@ -252,7 +258,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       r.indexIsPrimary = idxPrimaryLevel.get(r.indexStrike) === r.levelPrice;
     }
     return rows;
-  }, [indexData, etfData, expiryFilter, selectedFuturesTf, basisMultiplier, liveSpot, market, zoomPct]);
+  }, [indexData, etfData, expiryFilter, selectedFuturesTf, basisMultiplier, market, zoomPct]);
 
   // ---- Filter profile based on zoom percentage around spot ----
   const zoomedProfile = useMemo(() => {
