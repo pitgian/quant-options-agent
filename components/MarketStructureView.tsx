@@ -844,8 +844,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     <span><strong>Colore barra:</strong> 🟢 Call OI (resistenza) · 🔴 Put OI (supporto)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-0.5 bg-white" style={{ boxShadow: '0 0 3px rgba(255,255,255,0.7)' }}></span>
-                    <span><strong>Marker bianco:</strong> Volume scambiato oggi (flusso intraday)</span>
+                    <span className="inline-block h-1 w-5 rounded-sm" style={{ backgroundColor: 'rgba(251,191,36,0.95)', boxShadow: '0 0 2px rgba(251,191,36,0.6)' }}></span>
+                    <span><strong>Striscia ambra in cima:</strong> Volume scambiato oggi (scala indipendente — flusso intraday)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
@@ -1007,10 +1007,10 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           </span>
                         )}
 
-                        {/* Column 1: ETF Options — OI bar (put/call split, rounded-l) + volume marker.
-                            Width = total OI (structural, defines walls); color split = put(red)/call(green)
-                            dominance; white marker = today's volume (independent scale). When OI is 0
-                            (pre-market), the bar falls back to volume-only (orange). */}
+                        {/* Column 1: ETF Options — OI bar (put/call split, rounded-l) + volume strip.
+                            Bottom layer = OI (structural, defines walls), split put(red)/call(green).
+                            Top strip (amber) = today's volume (independent scale, intraday flow).
+                            When OI is 0 (pre-market), the whole bar shows volume in orange. */}
                         <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
                              style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
                              title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
@@ -1035,9 +1035,10 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               </div>
                             )}
                           </div>
-                          {/* Volume marker — only in OI mode (in fallback mode the bar IS the volume) */}
+                          {/* Volume strip (amber, top) — today's traded volume, independent scale.
+                              Right-aligned to match the OI bar (ETF grows from the right). */}
                           {etfHasOI && etfVolWidth > 1 && (
-                            <div className="absolute top-0 h-full" style={{ right: `calc(${etfVolWidth}% + 4px)`, width: '2px', backgroundColor: 'rgba(255,255,255,0.9)', boxShadow: '0 0 3px rgba(255,255,255,0.55)' }} />
+                            <div className="absolute top-0 rounded-l-sm" style={{ right: '4px', width: `calc(${etfVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.95)', boxShadow: '0 0 2px rgba(251,191,36,0.6)' }} />
                           )}
                         </div>
 
@@ -1069,9 +1070,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           )}
                         </div>
 
-                        {/* Column 4: Index Options — OI bar (put/call split, rounded-r) + volume marker.
-                            Same semantics as the ETF bar. This is the institutional options book where
-                            walls are most structural. */}
+                        {/* Column 4: Index Options — OI bar (put/call split, rounded-r) + volume strip.
+                            Same design as the ETF bar. Bottom = OI structural, top strip (amber) = volume. */}
                         <div className="relative flex justify-start w-full pl-1 transition-all duration-300"
                              style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
                              title={`Index OI — Calls: ${formatCompact(d.indexCallOI)} | Puts: ${formatCompact(d.indexPutOI)}${idxHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.indexTotalVol)}`}>
@@ -1095,8 +1095,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               </div>
                             )}
                           </div>
+                          {/* Volume strip (amber, top) — left-aligned to match the OI bar (Index grows from the left) */}
                           {idxHasOI && idxVolWidth > 1 && (
-                            <div className="absolute top-0 h-full" style={{ left: `calc(${idxVolWidth}% + 4px)`, width: '2px', backgroundColor: 'rgba(255,255,255,0.9)', boxShadow: '0 0 3px rgba(255,255,255,0.55)' }} />
+                            <div className="absolute top-0 rounded-r-sm" style={{ left: '4px', width: `calc(${idxVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.95)', boxShadow: '0 0 2px rgba(251,191,36,0.6)' }} />
                           )}
                         </div>
 
