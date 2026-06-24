@@ -324,15 +324,17 @@ jobs:
 
       - name: Train unified covariate adapter (daily, guarded)
         if: steps.freshness.outputs.skip != 'true' && steps.train_check.outputs.should_train == 'true'
-        timeout-minutes: 15
+        timeout-minutes: 12
         # The script self-guards: it only writes a checkpoint when enough REAL
         # samples with realized future targets exist (MIN_REAL_SAMPLES).
-        # Otherwise it leaves the existing adapter untouched.
+        # Otherwise it leaves the existing adapter untouched. PYTHONUNBUFFERED
+        # streams progress so the run never looks "stuck" during baseline passes.
         run: |
           source .venv/bin/activate
           python scripts/train_adapter.py --symbols SPY QQQ --epochs 40 || true
         env:
           TZ: America/New_York
+          PYTHONUNBUFFERED: "1"
 
       - name: Run Kronos predictions
         if: steps.freshness.outputs.skip != 'true'

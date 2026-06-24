@@ -72,8 +72,23 @@ FUTURES_MAP = {"SPY": "ES=F", "QQQ": "NQ=F"}
 MIN_REAL_SAMPLES = 30
 # Require at least this many samples for a given horizon to score it.
 MIN_SAMPLES_PER_HORIZON = 5
+# Cap the number of options-history snapshots we actually turn into training
+# samples PER SYMBOL. With 500 records/symbol x 5 horizons the legacy loop ran
+# thousands of slow autoregressive Kronos forwards and blew the 15-min CI
+# budget. Subsampling to ~40 evenly-spaced snapshots per symbol keeps the
+# pipeline well under budget while preserving temporal coverage. Override via
+# the --max-records flag when running locally on a beefy machine.
+MAX_RECORDS_PER_SYMBOL = 40
+# Kronos autoregressive baseline forwards are the cost driver; batch them in
+# chunks this size to bound memory + keep CI responsive.
+BASELINE_BATCH_SIZE = 16
 
 STATS_OUTPUT_PATH = os.path.join(scripts_dir, "../data/adapter_training_stats.json")
+
+
+def _log(msg: str) -> None:
+    """Print + flush so CI shows progress immediately (no block buffering)."""
+    print(msg, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -113,41 +128,44 @@ def _run_baseline_batch(
     pred_len: int,
     device: str,
 ) -> List[np.ndarray]:
-    """Run Kronos baseline (adapter disabled) for a batch of aligned samples.
-
-    `samples` share the same pred_len; each has context_df/future_df already
-    validated. Returns a list of normalized-space baseline forecasts.
+    """Run Kronos baseline (adapter disabled) for a batch of aligned samples,
+    processed in chunks of BASELINE_BATCH_SIZE to bound memory and surface
+    progress. `samples` share the same pred_len; each has context_df/future_df
+    already validated. Returns a list of normalized-space baseline forecasts.
     """
     price_cols = predictor.price_cols
     vol_col = predictor.vol_col
     amt_vol = predictor.amt_vol
 
-    x_list, stamp_x_list, stamp_y_list = [], [], []
-    means = []
-    for s in samples:
-        ctx = s["context_df"]
+    def _prep_one(s):
+        ctx = s["context_df"].copy()
         fut = s["future_df"]
         ctx[vol_col] = ctx[vol_col].astype(float)
         ctx[amt_vol] = ctx[vol_col] * ctx[price_cols].mean(axis=1)
         x = ctx[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
         x_norm, m, sd = _normalize_block(x, predictor.clip)
-        x_list.append(x_norm)
-        means.append((m, sd))
         sx, sy = _build_stamps(ctx, fut)
-        stamp_x_list.append(sx)
-        stamp_y_list.append(sy)
+        return x_norm, sx, sy, (m, sd)
 
-    x_batch = np.stack(x_list, axis=0)
-    sx_batch = np.stack(stamp_x_list, axis=0)
-    sy_batch = np.stack(stamp_y_list, axis=0)
+    prepared = [_prep_one(s) for s in samples]
 
-    with torch.no_grad():
-        preds = predictor.generate(
-            x_batch, sx_batch, sy_batch, pred_len,
-            T=0.7, top_k=5, top_p=0.9, sample_count=1, verbose=False,
-        )  # (B, pred_len, 6)
-
-    return [preds[i] for i in range(preds.shape[0])]
+    results: List[Optional[np.ndarray]] = [None] * len(samples)
+    total = len(prepared)
+    for start in range(0, total, BASELINE_BATCH_SIZE):
+        chunk = prepared[start:start + BASELINE_BATCH_SIZE]
+        x_batch = np.stack([p[0] for p in chunk], axis=0)
+        sx_batch = np.stack([p[1] for p in chunk], axis=0)
+        sy_batch = np.stack([p[2] for p in chunk], axis=0)
+        with torch.no_grad():
+            preds = predictor.generate(
+                x_batch, sx_batch, sy_batch, pred_len,
+                T=0.7, top_k=5, top_p=0.9, sample_count=1, verbose=False,
+            )  # (B, pred_len, 6)
+        for j in range(preds.shape[0]):
+            results[start + j] = preds[j]
+        if total > BASELINE_BATCH_SIZE:
+            _log(f"      baseline {min(start + BASELINE_BATCH_SIZE, total)}/{total}")
+    return [r for r in results if r is not None]
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +180,7 @@ def build_training_samples(
     symbol: str,
     device: str,
     progress_label: str,
+    max_records: int = MAX_RECORDS_PER_SYMBOL,
 ) -> List[Dict]:
     """For each historical options snapshot with a realized future, build a
     (baseline forecast, covariates, target residual) sample for every horizon
@@ -170,8 +189,18 @@ def build_training_samples(
     # Pre-compute valid price-index positions
     n_prices = len(price_time_list)
 
-    print(f"[{progress_label}] Aligning {len(records)} snapshots against "
-          f"{n_prices} price bars...")
+    # Subsample snapshots (evenly spaced in time) so the number of slow
+    # autoregressive Kronos forwards stays bounded — otherwise 500 records x
+    # 5 horizons blows the CI time budget.
+    if max_records is not None and len(records) > max_records:
+        idx = np.linspace(0, len(records) - 1, max_records).round().astype(int)
+        idx = sorted(set(idx.tolist()))
+        records = [records[i] for i in idx]
+        _log(f"[{progress_label}] Subsampled to {len(records)} snapshots "
+             f"(cap {max_records}).")
+
+    _log(f"[{progress_label}] Aligning {len(records)} snapshots against "
+         f"{n_prices} price bars...")
 
     # Group candidate (record, horizon) alignments first, then run baseline in
     # batches per horizon to keep Kronos forward passes efficient.
@@ -213,7 +242,7 @@ def build_training_samples(
         try:
             baselines = _run_baseline_batch(predictor, per_h, pred_len, device)
         except Exception as e:
-            print(f"  [{hname}] baseline batch failed: {e}")
+            _log(f"  [{hname}] baseline batch failed: {e}")
             continue
 
         for s, base_norm in zip(per_h, baselines):
@@ -236,7 +265,7 @@ def build_training_samples(
                 "horizon": s["horizon"],
                 "symbol": symbol,
             })
-        print(f"  [{hname}] {len(per_h)} aligned samples (pred_len={pred_len})")
+        _log(f"  [{hname}] {len(per_h)} aligned samples (pred_len={pred_len})")
 
     return samples
 
@@ -311,7 +340,7 @@ def train(
         val_loss = evaluate(val_s) if val_s else float("nan")
         loss_history.append({"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss})
         if verbose and ((epoch + 1) % max(1, epochs // 10) == 0 or epoch == epochs - 1):
-            print(f"  Epoch [{epoch+1}/{epochs}] train={train_loss:.6f} val={val_loss:.6f}")
+            _log(f"  Epoch [{epoch+1}/{epochs}] train={train_loss:.6f} val={val_loss:.6f}")
 
     # Per-horizon validation MSE
     horizon_metrics: Dict[str, Dict] = {}
@@ -355,28 +384,30 @@ def main():
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--max-records", type=int, default=MAX_RECORDS_PER_SYMBOL,
+                        help="Cap snapshots per symbol (subsampling) to bound runtime.")
     parser.add_argument("--output-path", type=str, default=None)
     parser.add_argument("--stats-path", type=str, default=None)
     parser.add_argument("--force-save", action="store_true",
                         help="Save checkpoint even with fewer than MIN_REAL_SAMPLES (for testing).")
     args = parser.parse_args()
 
-    print("=" * 70)
-    print(f"🚀 Unified Kronos Covariate Adapter Training")
-    print(f"   symbols={args.symbols}  horizons={[h[0] for h in HORIZONS]}  epochs={args.epochs}")
-    print("=" * 70)
+    _log("=" * 70)
+    _log(f"🚀 Unified Kronos Covariate Adapter Training")
+    _log(f"   symbols={args.symbols}  horizons={[h[0] for h in HORIZONS]}  epochs={args.epochs}")
+    _log("=" * 70)
 
     # 1. Load options history
     history_path = os.path.join(scripts_dir, "../data/options_history.json")
     if not os.path.exists(history_path):
-        print(f"❌ No options history at {history_path}. Run fetch_options_data.py first.")
+        _log(f"❌ No options history at {history_path}. Run fetch_options_data.py first.")
         sys.exit(1)
     with open(history_path, "r") as f:
         history_data = json.load(f)
 
     # 2. Load Kronos model
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    print(f"Loading Kronos model on device: {device}...")
+    _log(f"Loading Kronos model on device: {device}...")
     tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-2k")
     model = Kronos.from_pretrained("NeoQuasar/Kronos-mini")
     predictor = KronosPredictor(model, tokenizer, device=device, max_context=2048)
@@ -392,7 +423,7 @@ def main():
         records = [r for r in history_data if r.get("symbol") == symbol]
         symbols_seen[symbol] = len(records)
         if not records:
-            print(f"[{symbol}] no history records, skipping.")
+            _log(f"[{symbol}] no history records, skipping.")
             continue
 
         timestamps = pd.to_datetime([r["timestamp"] for r in records])
@@ -407,14 +438,14 @@ def main():
 
         # Download the FINEST resolution (5m) over the window; coarser horizons
         # are resampled from it so we only hit yfinance once per symbol.
-        print(f"[{symbol}] downloading 5m prices {start_str} → {end_str} ({fetch_ticker}, ratio={ratio:.4f})...")
+        _log(f"[{symbol}] downloading 5m prices {start_str} → {end_str} ({fetch_ticker}, ratio={ratio:.4f})...")
         try:
             df = yf.download(fetch_ticker, start=start_str, end=end_str, interval="5m")
         except Exception as e:
-            print(f"[{symbol}] yfinance download failed: {e}")
+            _log(f"[{symbol}] yfinance download failed: {e}")
             continue
         if df.empty:
-            print(f"[{symbol}] empty price data, skipping.")
+            _log(f"[{symbol}] empty price data, skipping.")
             continue
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -462,25 +493,25 @@ def main():
 
             frame, time_list = utc_indexed(frame)
             if len(time_list) < CONTEXT_LEN + pred_len + 1:
-                print(f"  [{symbol}/{hname}] not enough bars yet ({len(time_list)}), skipping.")
+                _log(f"  [{symbol}/{hname}] not enough bars yet ({len(time_list)}), skipping.")
                 continue
 
             h_records = records  # all snapshots; alignment filters by availability
             per_h_samples = build_training_samples(
                 predictor, h_records, frame, time_list, symbol, device,
-                f"{symbol}/{hname}",
+                f"{symbol}/{hname}", max_records=args.max_records,
             )
             # tag horizon already set inside; just collect
             all_samples.extend(per_h_samples)
-            print(f"  [{symbol}/{hname}] produced {len(per_h_samples)} real samples")
+            _log(f"  [{symbol}/{hname}] produced {len(per_h_samples)} real samples")
 
     real_total = len(all_samples)
-    print(f"\nTotal REAL samples (all symbols × horizons): {real_total}")
-    print(f"  history records seen: {symbols_seen}")
+    _log(f"\nTotal REAL samples (all symbols × horizons): {real_total}")
+    _log(f"  history records seen: {symbols_seen}")
     per_h_counts = {}
     for s in all_samples:
         per_h_counts[s["horizon"]] = per_h_counts.get(s["horizon"], 0) + 1
-    print(f"  per-horizon real samples: {per_h_counts}")
+    _log(f"  per-horizon real samples: {per_h_counts}")
 
     # 4. GUARD — refuse to overwrite a good adapter with noise.
     save = real_total >= MIN_REAL_SAMPLES or args.force_save
@@ -503,7 +534,7 @@ def main():
                   f"Existing adapter (if any) was NOT overwritten. "
                   f"Ground-truth accumulation continues via options_history.json.")
         stats["reason"] = reason
-        print("\n⏸️  GUARD: " + reason)
+        _log("\n⏸️  GUARD: " + reason)
         _write_stats(stats, args.stats_path)
         return
 
@@ -539,8 +570,8 @@ def main():
         "final_val_loss": info["final_val_loss"],
     }
     torch.save(checkpoint, output_path)
-    print(f"\n🎉 Saved unified adapter → {output_path}")
-    print(f"   train_loss={info['final_train_loss']:.6f}  val_loss={info['final_val_loss']:.6f}")
+    _log(f"\n🎉 Saved unified adapter → {output_path}")
+    _log(f"   train_loss={info['final_train_loss']:.6f}  val_loss={info['final_val_loss']:.6f}")
 
     _write_stats(stats, args.stats_path)
 
@@ -550,7 +581,7 @@ def _write_stats(stats: Dict, stats_path: str | None) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(stats, f, indent=2)
-    print(f"📊 Wrote training stats → {path}")
+    _log(f"📊 Wrote training stats → {path}")
 
 
 if __name__ == "__main__":
