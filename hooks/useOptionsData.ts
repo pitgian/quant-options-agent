@@ -180,7 +180,10 @@ export function useOptionsData(): UseOptionsDataReturn {
     NQ?: number | null;
   }>({ SPX: null, NDX: null, SPY: null, QQQ: null, ES: null, NQ: null });
 
-  // Fetch live spot prices every 15 seconds (runs as free serverless action, no git push)
+  // Fetch live spot prices every 30 seconds (runs as free serverless action, no git push).
+  // Was 15s — too aggressive: every tick re-rendered all 101 chart rows and
+  // froze the scroll wheel for ~150ms. 30s halves the jank while still giving
+  // timely spot updates for the header price + spot highlighter.
   useEffect(() => {
     let active = true;
     const fetchLiveSpot = async () => {
@@ -206,7 +209,7 @@ export function useOptionsData(): UseOptionsDataReturn {
     };
 
     fetchLiveSpot();
-    const intervalId = setInterval(fetchLiveSpot, 15000);
+    const intervalId = setInterval(fetchLiveSpot, 30000);
 
     return () => {
       active = false;

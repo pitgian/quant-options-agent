@@ -984,7 +984,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
             </div>
 
             {/* Scrollable container for mobile responsiveness */}
-            <div className="overflow-x-auto select-none">
+            <div className="overflow-x-auto">
               <div className="min-w-[700px] md:min-w-0">
                 {/* Header labels for profiles */}
                 <div className="grid grid-cols-[1fr_150px_1fr_1fr] gap-2 mb-2 px-2 text-[9px] font-bold tracking-wider text-gray-500 uppercase">
