@@ -233,7 +233,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
         futuresStrike: idxStrike,   // alias — Kronos boundary / isClosest logic
         etfStrike: nearestEtfStrike,
         indexStrike: idxStrike,
-        etfPrice: nearestEtfStrike, // real ETF strike aligned to this Index level
+        etfPrice: nearestEtfStrike, // real ETF strike aligned to this Index level (for label)
+        etfTruePrice: etfPrice,    // exact ETF-scale price of THIS Index strike (for de-dup)
         levelPrice: idxStrike,      // real futures-scale price (for label)
         distancePct: ((idxStrike - gridAnchor) / gridAnchor) * 100,
         indexVolume, etfVolume, futuresVolume,
@@ -255,14 +256,14 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     const etfTrueLevel = new Map<number, { bestDelta: number }>(); // etfStrike → closest row seen
     for (const r of rows) {
       const cur = etfTrueLevel.get(r.etfStrike);
-      const delta = Math.abs(r.etfPrice - r.etfStrike);
+      const delta = Math.abs(r.etfTruePrice - r.etfStrike);
       if (cur === undefined || delta < cur.bestDelta) {
         etfTrueLevel.set(r.etfStrike, { bestDelta: delta });
       }
     }
     for (const r of rows) {
       const cur = etfTrueLevel.get(r.etfStrike);
-      r.etfIsPrimary = cur !== undefined && Math.abs(r.etfPrice - r.etfStrike) === cur.bestDelta;
+      r.etfIsPrimary = cur !== undefined && Math.abs(r.etfTruePrice - r.etfStrike) === cur.bestDelta;
     }
     return rows;
   }, [indexData?.gexStrikeData, etfData?.gexStrikeData, indexData?.futuresVolumeProfiles, indexData?.futuresVolumeProfile, resolvedFuturesProfile, expiryFilter, selectedFuturesTf, basisMultiplier, market, zoomPct, indexSpotStable, etfSpotStable]);
@@ -1121,14 +1122,15 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             Bottom layer = OI (structural, defines walls), split put(red)/call(green).
                             Top strip (amber) = today's volume (independent scale, intraday flow).
                             When OI is 0 (pre-market), the whole bar shows volume in orange.
-                            Level-centric grid: each row looks up the nearest ETF strike to this
-                            row's price level. Multiple grid levels can round to the same ETF strike
-                            (ETF grid is coarser than the level grid); those duplicate levels render
-                            the SAME bar at reduced opacity so the data is always visible and the
-                            primary level (nearest to the strike's true price) still stands out. */}
+                            Level-centric grid: each Index row looks up the nearest ETF strike.
+                            Several Index strikes can share one ETF strike (QQQ 1pt vs NDX 5pt);
+                            the ETF bar is rendered ONLY on the primary row (the Index strike whose
+                            true ETF price is closest to that strike) and hidden on the others,
+                            so each ETF strike appears exactly once — no duplicate numbers. */}
+                          {d.etfIsPrimary ? (
                           <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px`, opacity: d.etfIsPrimary ? 1 : 0.18 }}
-                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}${d.etfIsPrimary ? '' : ' (livello ETF già mostrato sulla riga principale)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
+                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
+                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
                             <div className="flex h-full items-stretch rounded-l overflow-hidden" style={{ width: `${Math.max(2, etfBarWidth)}%` }}>
                               {etfHasOI ? (
                                 <>
@@ -1156,6 +1158,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               <div className="absolute top-0 rounded-l-sm" style={{ right: '4px', width: `calc(${etfVolWidth}% - 4px)`, height: `${Math.min(4, Math.max(2, rowHeight / 5))}px`, backgroundColor: 'rgba(251,191,36,0.55)' }} />
                             )}
                           </div>
+                          ) : (
+                            <div className="w-full" style={{ height: `${Math.max(4, rowHeight - 4)}px` }} title="Livello ETF già mostrato sulla riga principale" />
+                          )}
 
                         {/* Column 2: Center Strike Price */}
                         <div className="flex items-center justify-center font-mono relative w-full" style={{ height: `${rowHeight}px` }}>
