@@ -25,12 +25,13 @@ Usage:
 """
 
 import argparse
+import time
 import json
 import math
 import os
 import sys
 from datetime import datetime, timezone
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -127,11 +128,19 @@ def _run_baseline_batch(
     samples: List[Dict],
     pred_len: int,
     device: str,
-) -> List[np.ndarray]:
+    deadline_s: Optional[float] = None,
+) -> Tuple[List[np.ndarray], int]:
     """Run Kronos baseline (adapter disabled) for a batch of aligned samples,
     processed in chunks of BASELINE_BATCH_SIZE to bound memory and surface
     progress. `samples` share the same pred_len; each has context_df/future_df
-    already validated. Returns a list of normalized-space baseline forecasts.
+    already validated.
+
+    If `deadline_s` (epoch seconds) is set, processing STOPS once it is reached
+    and returns only the samples completed so far — this is the hard guarantee
+    that training never freezes the CI runner regardless of CPU speed.
+
+    Returns (forecasts, consumed_count) so the caller can drop samples that
+    didn't get a baseline.
     """
     price_cols = predictor.price_cols
     vol_col = predictor.vol_col
@@ -149,9 +158,14 @@ def _run_baseline_batch(
 
     prepared = [_prep_one(s) for s in samples]
 
-    results: List[Optional[np.ndarray]] = [None] * len(samples)
+    results: List[Optional[np.ndarray]] = []
+    consumed = 0
     total = len(prepared)
+    hit_deadline = False
     for start in range(0, total, BASELINE_BATCH_SIZE):
+        if deadline_s is not None and time.time() > deadline_s:
+            hit_deadline = True
+            break
         chunk = prepared[start:start + BASELINE_BATCH_SIZE]
         x_batch = np.stack([p[0] for p in chunk], axis=0)
         sx_batch = np.stack([p[1] for p in chunk], axis=0)
@@ -162,10 +176,13 @@ def _run_baseline_batch(
                 T=0.7, top_k=5, top_p=0.9, sample_count=1, verbose=False,
             )  # (B, pred_len, 6)
         for j in range(preds.shape[0]):
-            results[start + j] = preds[j]
+            results.append(preds[j])
+        consumed += preds.shape[0]
         if total > BASELINE_BATCH_SIZE:
-            _log(f"      baseline {min(start + BASELINE_BATCH_SIZE, total)}/{total}")
-    return [r for r in results if r is not None]
+            _log(f"      baseline {consumed}/{total}")
+    if hit_deadline:
+        _log(f"      ⏱  baseline deadline reached at {consumed}/{total} samples")
+    return [r for r in results if r is not None], consumed
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +198,7 @@ def build_training_samples(
     device: str,
     progress_label: str,
     max_records: int = MAX_RECORDS_PER_SYMBOL,
+    deadline_s: Optional[float] = None,
 ) -> List[Dict]:
     """For each historical options snapshot with a realized future, build a
     (baseline forecast, covariates, target residual) sample for every horizon
@@ -238,14 +256,18 @@ def build_training_samples(
         if not per_h:
             continue
 
-        # Baseline forecasts (batched)
+        # Baseline forecasts (batched, with optional wall-clock deadline)
         try:
-            baselines = _run_baseline_batch(predictor, per_h, pred_len, device)
+            baselines, consumed = _run_baseline_batch(
+                predictor, per_h, pred_len, device, deadline_s=deadline_s,
+            )
         except Exception as e:
             _log(f"  [{hname}] baseline batch failed: {e}")
             continue
+        # If the deadline cut us short, only zip the samples we actually ran.
+        per_h_used = per_h[:consumed]
 
-        for s, base_norm in zip(per_h, baselines):
+        for s, base_norm in zip(per_h_used, baselines):
             fut = s["future_df"]
             y_actual = _prepare_block(fut, predictor)
             # Reuse the same normalization the predictor would apply at inference:
@@ -386,6 +408,10 @@ def main():
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--max-records", type=int, default=MAX_RECORDS_PER_SYMBOL,
                         help="Cap snapshots per symbol (subsampling) to bound runtime.")
+    parser.add_argument("--baseline-budget-min", type=float, default=6.0,
+                        help="Hard wall-clock budget (minutes) for ALL baseline "
+                             "Kronos forwards. Processing stops early once reached, "
+                             "guaranteeing the run never freezes the CI runner.")
     parser.add_argument("--output-path", type=str, default=None)
     parser.add_argument("--stats-path", type=str, default=None)
     parser.add_argument("--force-save", action="store_true",
@@ -416,7 +442,10 @@ def main():
     # Make sure the adapter is OFF during baseline generation
     predictor.adapter = None
 
-    # 3. Build samples across symbols + horizons
+    # 3. Build samples across symbols + horizons. Compute a shared wall-clock
+    # deadline for ALL baseline forwards so the run can never freeze the runner
+    # regardless of how slow autoregressive Kronos is on CPU.
+    baseline_deadline = time.time() + args.baseline_budget_min * 60
     all_samples: List[Dict] = []
     symbols_seen: Dict[str, int] = {}
     for symbol in args.symbols:
@@ -500,6 +529,7 @@ def main():
             per_h_samples = build_training_samples(
                 predictor, h_records, frame, time_list, symbol, device,
                 f"{symbol}/{hname}", max_records=args.max_records,
+                deadline_s=baseline_deadline,
             )
             # tag horizon already set inside; just collect
             all_samples.extend(per_h_samples)
