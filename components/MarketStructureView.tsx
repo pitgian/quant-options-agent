@@ -1178,7 +1178,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               lineHeight: 1,
                             }}
                           >
-                            F: {d.levelPrice.toFixed(0)} | E: {d.etfPrice.toFixed(1)}
+                            F: {d.levelPrice.toFixed(0)}{d.etfIsPrimary ? ` | E: ${d.etfPrice.toFixed(1)}` : ''}
                           </span>
                           {isClosest && rowHeight >= 18 && (
                             <span className="absolute -bottom-3 text-[8px] text-yellow-400 font-extrabold uppercase tracking-wider bg-[#0d1117]/95 px-1.5 py-0.5 rounded border border-yellow-500/40 z-35 shadow-md whitespace-nowrap">
