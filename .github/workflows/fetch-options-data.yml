@@ -29,6 +29,16 @@ name: Fetch Options Data
 #       - concurrency group: kronos-forecast
 #
 #   If Kronos is slow and gets cancelled, the options data is still fresh.
+#
+# UPDATE 2026-06-24 (death-spiral fix):
+#   cronjob.org triggers a workflow_dispatch every 5 minutes, but Job 2 takes
+#   ~6-10 min. With cancel-in-progress:true, every new dispatch killed the
+#   in-flight Kronos run BEFORE it could commit — so kronos_forecast.json
+#   NEVER updated during frequent triggers (only the rare 3h cron survived).
+#   Job 2 is now cancel-in-progress:false (queue) + a "freshness guard" step
+#   that skips the whole job if the published forecast is <8 min old. Queued
+#   runs then exit in seconds instead of piling up, and the run that actually
+#   needs to work is never killed mid-flight.
 # =============================================================================
 
 on:
@@ -194,9 +204,12 @@ jobs:
       contents: write
     concurrency:
       group: kronos-forecast
-      # TRUE: safe to kill — the options data is already saved by job 1.
-      # If Kronos is slow and a newer run starts, the old one is cancelled.
-      cancel-in-progress: true
+      # FALSE: do NOT kill a running Kronos run. The pipeline takes ~6-10 min
+      # but triggers arrive every 5 min (cronjob.org). With cancel-in-progress:
+      # true this caused a death-spiral where no run ever finished. Instead we
+      # QUEUE runs and let the "freshness guard" step skip the ones that arrive
+      # while the forecast is still fresh, so the queue drains in seconds.
+      cancel-in-progress: false
 
     steps:
       - name: Checkout repository
@@ -243,6 +256,7 @@ jobs:
           git checkout origin/data -- data/options_history.json || true
           # Pull the existing adapter (may be reused if recent enough)
           git checkout origin/data -- scripts/model/covariate_adapter.pth || true
+          git checkout origin/data -- data/adapter_training_stats.json || true
 
       - name: Restore state from Gist (fallback if data branch missing)
         continue-on-error: true
@@ -255,7 +269,33 @@ jobs:
           [ -f gist_repo_restore/covariate_adapter.pth ] && [ ! -f scripts/model/covariate_adapter.pth ] && mkdir -p scripts/model && cp -f gist_repo_restore/covariate_adapter.pth scripts/model/
           rm -rf gist_repo_restore
 
+      - name: Freshness guard — skip if Kronos forecast is recent
+        # Anti-pile-up: triggers fire every 5 min but a full Kronos run takes
+        # ~6-10 min. If the published forecast is younger than
+        # KRONOS_MIN_INTERVAL_MIN, this run is redundant — bail out early so
+        # queued runs drain fast instead of redoing the whole pipeline.
+        id: freshness
+        run: |
+          KRONOS_MIN_INTERVAL_MIN=8
+          LAST_TS=$(git log -1 --format="%ct" origin/data -- data/kronos_forecast.json 2>/dev/null || echo 0)
+          if [ "$LAST_TS" = "0" ]; then
+            echo "No previous Kronos forecast on data branch. Will run."
+            echo "skip=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          NOW_TS=$(date +%s)
+          AGE_MIN=$(( (NOW_TS - LAST_TS) / 60 ))
+          echo "Last published Kronos forecast is ${AGE_MIN} min old (threshold ${KRONOS_MIN_INTERVAL_MIN} min)."
+          if [ "$AGE_MIN" -lt "$KRONOS_MIN_INTERVAL_MIN" ]; then
+            echo "Forecast is fresh — skipping this run to avoid pile-up."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Forecast is stale — will regenerate."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check if adapter training is needed (only if > 24h old)
+        if: steps.freshness.outputs.skip != 'true'
         id: train_check
         run: |
           if [ ! -f scripts/model/covariate_adapter.pth ]; then
@@ -282,17 +322,20 @@ jobs:
             echo "should_train=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Train covariate adapters (daily, not every run)
-        if: steps.train_check.outputs.should_train == 'true'
+      - name: Train unified covariate adapter (daily, guarded)
+        if: steps.freshness.outputs.skip != 'true' && steps.train_check.outputs.should_train == 'true'
         timeout-minutes: 15
+        # The script self-guards: it only writes a checkpoint when enough REAL
+        # samples with realized future targets exist (MIN_REAL_SAMPLES).
+        # Otherwise it leaves the existing adapter untouched.
         run: |
           source .venv/bin/activate
-          python scripts/train_adapter.py --symbol SPY --interval 15m --epochs 20 || true
-          python scripts/train_adapter.py --symbol QQQ --interval 15m --epochs 20 || true
+          python scripts/train_adapter.py --symbols SPY QQQ --epochs 40 || true
         env:
           TZ: America/New_York
 
       - name: Run Kronos predictions
+        if: steps.freshness.outputs.skip != 'true'
         timeout-minutes: 15
         run: |
           source .venv/bin/activate
@@ -302,6 +345,7 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
 
       - name: Push to Gist
+        if: steps.freshness.outputs.skip != 'true'
         id: gist_push
         continue-on-error: true
         run: |
@@ -310,11 +354,12 @@ jobs:
           fi
           git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo
           cp data/kronos_forecast.json gist_repo/
+          cp data/adapter_training_stats.json gist_repo/ || true
           cp scripts/model/covariate_adapter.pth gist_repo/ || true
           cd gist_repo
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add kronos_forecast.json covariate_adapter.pth
+          git add kronos_forecast.json covariate_adapter.pth adapter_training_stats.json
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes to push to Gist"
             exit 0
@@ -329,21 +374,23 @@ jobs:
           exit 1
 
       - name: Fallback — push to repository data branch
-        if: steps.gist_push.outcome == 'failure'
+        if: steps.freshness.outputs.skip != 'true' && steps.gist_push.outcome == 'failure'
         run: |
           echo "Gist push failed. Pushing to the repository data branch..."
           mkdir -p /tmp/generated_data
           cp data/kronos_forecast.json /tmp/generated_data/
+          cp data/adapter_training_stats.json /tmp/generated_data/ || true
           cp scripts/model/covariate_adapter.pth /tmp/generated_data/ || true
-          rm -f data/kronos_forecast.json scripts/model/covariate_adapter.pth
+          rm -f data/kronos_forecast.json data/adapter_training_stats.json scripts/model/covariate_adapter.pth
           git fetch origin data
           git checkout -B data origin/data --
           mkdir -p data scripts/model
           cp /tmp/generated_data/kronos_forecast.json data/
+          cp /tmp/generated_data/adapter_training_stats.json data/ || true
           cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add data/kronos_forecast.json scripts/model/covariate_adapter.pth
+          git add data/kronos_forecast.json data/adapter_training_stats.json scripts/model/covariate_adapter.pth
           if [ ! -f vercel.json ]; then
             # Disable Vercel deployments for the data branch — it receives ~565
             # commits/day and would exhaust the 100/day free-tier deploy quota.

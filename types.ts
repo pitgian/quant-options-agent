@@ -249,12 +249,22 @@ export interface KronosPredictedCandle {
   volume: number;
 }
 
+export interface KronosAdapterStatus {
+  applied: boolean;
+  pred_len: number;
+  residual_norm: number | null;
+  supported: boolean;
+  reason: string | null;
+  covariates: { skew: number; pcr: number; gex_b: number } | null;
+}
+
 export interface KronosResolutionForecast {
   last_price: number;
   expected_high: number;
   expected_low: number;
   predicted_volatility_pct: number;
   candles: KronosPredictedCandle[];
+  adapter_status?: KronosAdapterStatus;
 }
 
 export interface KronosForecastItem {
@@ -285,6 +295,47 @@ export interface KronosForecast {
   updated_at: string;
   SP500_bias: KronosForecastItem;
   NASDAQ_bias: KronosForecastItem;
+}
+
+// ============================================================================
+// COVARIATE ADAPTER — training stats & health
+// ============================================================================
+
+export interface AdapterLossPoint {
+  epoch: number;
+  train_loss: number;
+  val_loss: number;
+}
+
+export interface AdapterHorizonMetric {
+  pred_len: number;
+  val_samples: number;
+  val_mse: number;
+}
+
+export interface AdapterTrainingStats {
+  version: number;
+  trained_at: string;
+  symbols: string[];
+  history_records?: Record<string, number>;
+  real_samples_total: number;
+  per_horizon_real_samples?: Record<string, number>;
+  min_real_samples_required: number;
+  saved: boolean;
+  reason?: string | null;
+  epochs?: number;
+  device?: string;
+  train_samples?: number;
+  val_samples?: number;
+  final_train_loss?: number;
+  final_val_loss?: number;
+  cov_stats?: {
+    skew: { mean: number; std: number };
+    pcr: { mean: number; std: number };
+    gex: { mean: number; std: number };
+  };
+  horizons?: Record<string, AdapterHorizonMetric>;
+  loss_history?: AdapterLossPoint[];
 }
 
 

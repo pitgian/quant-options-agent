@@ -2,11 +2,12 @@ import React, { useState, useRef, useLayoutEffect } from 'react';
 import { MarketStructureView } from './components/MarketStructureView';
 import { DayTradingView } from './components/DayTradingView';
 import { KronosForecastView } from './components/KronosForecastView';
+import { AdapterStatusView } from './components/AdapterStatusView';
 import { useOptionsData } from './hooks/useOptionsData';
 
 export default function App() {
   const sharedState = useOptionsData();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'levels' | 'kronos'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'levels' | 'kronos' | 'adapter'>('dashboard');
   const navRef = useRef<HTMLElement>(null);
 
   // Publish the nav height as a CSS variable so each view's filter header can
@@ -75,11 +76,23 @@ export default function App() {
                 <span className="hidden sm:inline">🎯 Proiezioni Kronos AI</span>
                 <span className="sm:hidden">🎯 Kronos</span>
               </button>
+              <button
+                onClick={() => setActiveTab('adapter')}
+                className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-md text-[11px] sm:text-xs font-semibold transition-all duration-150"
+                style={{
+                  backgroundColor: activeTab === 'adapter' ? '#1e293b' : 'transparent',
+                  color: activeTab === 'adapter' ? '#e2e8f0' : '#64748b',
+                }}
+              >
+                <span className="hidden sm:inline">🧠 Adapter AI</span>
+                <span className="sm:hidden">🧠 Adapter</span>
+              </button>
             </div>
           </div>
           <div className="hidden md:block text-[10px] sm:text-xs text-gray-500 font-semibold tracking-wider uppercase">
             {activeTab === 'dashboard' ? '3-Profile Unified Dashboard' : 
-             activeTab === 'levels' ? 'Day Trading Key Levels' : 'Kronos AI Detailed Forecast'}
+             activeTab === 'levels' ? 'Day Trading Key Levels' : 
+             activeTab === 'kronos' ? 'Kronos AI Detailed Forecast' : 'Covariate Adapter Health & Training'}
           </div>
         </div>
       </nav>
@@ -88,6 +101,7 @@ export default function App() {
       {activeTab === 'dashboard' && <MarketStructureView sharedState={sharedState} />}
       {activeTab === 'levels' && <DayTradingView sharedState={sharedState} />}
       {activeTab === 'kronos' && <KronosForecastView sharedState={sharedState} />}
+      {activeTab === 'adapter' && <AdapterStatusView sharedState={sharedState} />}
     </div>
   );
 }

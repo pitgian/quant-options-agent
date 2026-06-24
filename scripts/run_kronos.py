@@ -194,6 +194,10 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
         sample_count=1, 
         verbose=False
     )
+
+    # Surface adapter status so the UI can show which resolutions actually
+    # received a covariate correction (and how large it was).
+    adapter_status = predictor.adapter_diag or {"applied": False}
     
     last_price = float(context_df['close'].iloc[-1])
     expected_high = float(pred_df['high'].max())
@@ -217,7 +221,15 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
         "expected_high": round(expected_high, 2),
         "expected_low": round(expected_low, 2),
         "predicted_volatility_pct": round(predicted_volatility_pct, 3),
-        "candles": predicted_candles
+        "candles": predicted_candles,
+        "adapter_status": {
+            "applied": bool(adapter_status.get("applied")),
+            "pred_len": adapter_status.get("pred_len", pred_len),
+            "residual_norm": round(adapter_status["residual_norm"], 6) if adapter_status.get("residual_norm") is not None else None,
+            "supported": bool(adapter_status.get("supported")),
+            "reason": adapter_status.get("reason"),
+            "covariates": adapter_status.get("covariates"),
+        }
     }
 
 

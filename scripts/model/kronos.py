@@ -501,38 +501,88 @@ def calc_time_stamps(x_timestamp):
 
 
 class ResidualCovariateAdapter(nn.Module):
-    def __init__(self, pred_len, d_in=6, hidden_dim=64):
+    """
+    Unified residual covariate adapter — a single model that covers ALL
+    prediction horizons (5m / 15m / 1h / 4h / 1d) instead of one model per
+    `pred_len`.
+
+    Design:
+      * The Kronos baseline forecast is padded to MAX_PRED_LEN timesteps and
+        fed flat into an MLP.
+      * Covariates (skew, pcr, gex) are standardized with stats stored as
+        buffers (computed from the training split) so the network sees
+        comparably-scaled inputs.
+      * A learnable `pred_len` embedding tells the network which horizon is
+        active, so it can produce horizon-specific corrections.
+      * Output is always (MAX_PRED_LEN, D_IN); we slice to the actual
+        `pred_len` before returning.
+      * Weights are init'd near-zero so the adapter starts as a near no-op and
+        only diverges from the baseline once it has learned something real.
+
+    Forward args (all tensors on the same device):
+      baseline_forecast: (B, P, 6)   normalized-space Kronos baseline
+      skew, pcr, gex:    (B, 1)      raw covariate values
+      pred_len:          int or (B,) LongTensor — active horizon length
+    """
+
+    MAX_PRED_LEN = 26
+    D_IN = 6
+    COV_DIM = 3
+    HORIZON_EMB_DIM = 16
+
+    def __init__(self, hidden_dim=128, cov_mean=None, cov_std=None):
         super().__init__()
-        self.pred_len = pred_len
-        self.d_in = d_in
-        self.input_dim = (pred_len * d_in) + 3
-        self.output_dim = pred_len * d_in
-        
+        self.hidden_dim = hidden_dim
+        self.horizon_embed = nn.Embedding(self.MAX_PRED_LEN + 1, self.HORIZON_EMB_DIM)
+        self.input_dim = self.MAX_PRED_LEN * self.D_IN + self.COV_DIM + self.HORIZON_EMB_DIM
+        self.output_dim = self.MAX_PRED_LEN * self.D_IN
         self.net = nn.Sequential(
             nn.Linear(self.input_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, self.output_dim)
+            nn.GELU(),
+            nn.Linear(hidden_dim, self.output_dim),
         )
-        
-        # Initialize weights with very small values so initial adjustment is near zero
+        # Near-zero init → residual starts near zero (does not harm baseline)
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, std=0.001)
-                nn.init.zeros_(m.bias)
-                
-    def forward(self, baseline_forecast, skew, pcr, gex):
-        # baseline_forecast: (batch_size, pred_len, d_in)
-        # skew: (batch_size, 1)
-        # pcr: (batch_size, 1)
-        # gex: (batch_size, 1)
-        batch_size = baseline_forecast.size(0)
-        flat_forecast = baseline_forecast.view(batch_size, -1)
-        covariates = torch.cat([skew, pcr, gex], dim=-1) # (batch_size, 3)
-        x = torch.cat([flat_forecast, covariates], dim=-1) # (batch_size, input_dim)
-        residual = self.net(x) # (batch_size, output_dim)
-        return residual.view(batch_size, self.pred_len, self.d_in)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+        # Covariate standardization stats (set from training data).
+        # Defaults are sensible ranges for US index options.
+        if cov_mean is None:
+            cov_mean = [4.0, 1.0, 0.0]
+        if cov_std is None:
+            cov_std = [2.0, 0.5, 3.0]
+        self.register_buffer("cov_mean", torch.tensor(cov_mean, dtype=torch.float32))
+        self.register_buffer("cov_std", torch.tensor(cov_std, dtype=torch.float32))
+
+    def forward(self, baseline_forecast, skew, pcr, gex, pred_len):
+        # baseline_forecast: (B, P, 6) with P <= MAX_PRED_LEN
+        B, P, D = baseline_forecast.shape
+        assert D == self.D_IN, f"Expected {self.D_IN} features, got {D}"
+        # Pad along time axis to MAX_PRED_LEN (constant zeros) so the MLP input
+        # dim is fixed regardless of horizon.
+        if P < self.MAX_PRED_LEN:
+            pad = baseline_forecast.new_zeros(B, self.MAX_PRED_LEN - P, D)
+            baseline_padded = torch.cat([baseline_forecast, pad], dim=1)
+        else:
+            baseline_padded = baseline_forecast[:, :self.MAX_PRED_LEN, :]
+        flat = baseline_padded.reshape(B, -1)
+        # Standardize covariates with stored training stats
+        cov_raw = torch.cat([skew, pcr, gex], dim=-1)  # (B, 3)
+        cov_norm = (cov_raw - self.cov_mean) / (self.cov_std + 1e-6)
+        # Horizon embedding keyed by pred_len (clamped to valid range)
+        if isinstance(pred_len, int):
+            pl = torch.full((B,), pred_len, dtype=torch.long, device=baseline_forecast.device)
+        else:
+            pl = torch.clamp(pred_len.to(torch.long), 1, self.MAX_PRED_LEN)
+        h_emb = self.horizon_embed(pl)  # (B, 16)
+        x = torch.cat([flat, cov_norm, h_emb], dim=-1)
+        residual_full = self.net(x).view(B, self.MAX_PRED_LEN, self.D_IN)
+        # Slice back to the active horizon length
+        return residual_full[:, :P, :]
 
 
 class KronosPredictor:
@@ -561,18 +611,40 @@ class KronosPredictor:
         self.tokenizer = self.tokenizer.to(self.device)
         self.model = self.model.to(self.device)
 
-        # Try to load covariate adapter if it exists
+        # Try to load covariate adapter if it exists.
+        # v2 checkpoints are unified multi-horizon models. Legacy v1 checkpoints
+        # (single pred_len) are refused so the next training run regenerates
+        # them — applying a stale single-horizon adapter to every timeframe was
+        # silently corrupting the 5m/1h/4h/1d forecasts.
         self.adapter = None
+        self.adapter_meta = None
+        self.adapter_diag = None
         import os
         adapter_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "covariate_adapter.pth")
         if os.path.exists(adapter_path):
             try:
                 checkpoint = torch.load(adapter_path, map_location=self.device)
-                pred_len = checkpoint.get("pred_len", 24)
-                self.adapter = ResidualCovariateAdapter(pred_len=pred_len).to(self.device)
-                self.adapter.load_state_dict(checkpoint["state_dict"])
-                self.adapter.eval()
-                print(f"Loaded Residual Covariate Adapter from {adapter_path} (pred_len={pred_len})")
+                if checkpoint.get("version") != 2:
+                    print(f"Refusing legacy adapter (version={checkpoint.get('version')}) at {adapter_path}; "
+                          f"waiting for a v2 multi-horizon retrain.")
+                else:
+                    self.adapter = ResidualCovariateAdapter(
+                        hidden_dim=checkpoint.get("hidden_dim", 128),
+                        cov_mean=checkpoint.get("cov_mean"),
+                        cov_std=checkpoint.get("cov_std"),
+                    ).to(self.device)
+                    self.adapter.load_state_dict(checkpoint["state_dict"])
+                    self.adapter.eval()
+                    self.adapter_meta = {
+                        "trained_at": checkpoint.get("trained_at"),
+                        "real_samples_total": checkpoint.get("real_samples_total", 0),
+                        "final_train_loss": checkpoint.get("final_train_loss"),
+                        "final_val_loss": checkpoint.get("final_val_loss"),
+                        "supported_pred_lens": checkpoint.get("supported_pred_lens", []),
+                    }
+                    print(f"Loaded unified Residual Covariate Adapter from {adapter_path} "
+                          f"(trained {self.adapter_meta['trained_at']}, "
+                          f"real_samples={self.adapter_meta['real_samples_total']})")
             except Exception as e:
                 print(f"Warning: Failed to load covariate adapter: {e}")
 
@@ -586,6 +658,69 @@ class KronosPredictor:
                                           self.clip, T, top_k, top_p, sample_count, verbose)
         preds = preds[:, -pred_len:, :]
         return preds
+
+    def _extract_covariates(self, df, batch=False):
+        """Pull (skew, pcr, gex_in_billions) from the tail of df / list of dfs."""
+        def _one(d):
+            skew = float(d['volatility_skew_25d'].iloc[-1]) if 'volatility_skew_25d' in d.columns else 0.0
+            pcr = float(d['put_call_oi_ratio'].iloc[-1]) if 'put_call_oi_ratio' in d.columns else 1.0
+            gex = (float(d['total_net_gex'].iloc[-1]) / 1e9) if 'total_net_gex' in d.columns else 0.0
+            return skew, pcr, gex
+        if batch:
+            return [_one(d) for d in df]
+        return _one(df)
+
+    def _apply_adapter(self, preds, df, pred_len, batch=False, verbose=False):
+        """
+        Apply the unified residual covariate adapter to normalized-space
+        predictions `preds` and return (corrected_preds, diagnostics).
+
+        `preds` is (pred_len, 6) for single or (B, pred_len, 6) for batch.
+        Diagnostics describe whether the adapter ran and how big the residual
+        correction was — consumed by run_kronos.py to surface adapter status
+        in kronos_forecast.json.
+        """
+        diag = {"applied": False, "pred_len": int(pred_len), "residual_norm": None,
+                "supported": bool(self.adapter is not None), "covariates": None,
+                "reason": None}
+        if self.adapter is None:
+            diag["reason"] = "no_adapter_loaded"
+            return preds, diag
+        try:
+            if batch:
+                covs = self._extract_covariates(df, batch=True)
+                skews = [c[0] for c in covs]; pcrs = [c[1] for c in covs]; gexs = [c[2] for c in covs]
+                B = preds.shape[0]
+                diag["covariates"] = {"skew": skews[0], "pcr": pcrs[0], "gex_b": gexs[0]}
+                with torch.no_grad():
+                    base = torch.from_numpy(preds).to(self.device)
+                    sk = torch.tensor([[s] for s in skews], dtype=torch.float32, device=self.device)
+                    pc = torch.tensor([[p] for p in pcrs], dtype=torch.float32, device=self.device)
+                    gx = torch.tensor([[g] for g in gexs], dtype=torch.float32, device=self.device)
+                    residual = self.adapter(base, sk, pc, gx, pred_len).cpu().numpy()
+                preds = preds + residual
+                diag["applied"] = True
+                diag["residual_norm"] = float(np.linalg.norm(residual) / max(1, B))
+            else:
+                skew, pcr, gex = self._extract_covariates(df)
+                diag["covariates"] = {"skew": skew, "pcr": pcr, "gex_b": gex}
+                with torch.no_grad():
+                    base = torch.from_numpy(preds).unsqueeze(0).to(self.device)
+                    sk = torch.tensor([[skew]], dtype=torch.float32, device=self.device)
+                    pc = torch.tensor([[pcr]], dtype=torch.float32, device=self.device)
+                    gx = torch.tensor([[gex]], dtype=torch.float32, device=self.device)
+                    residual = self.adapter(base, sk, pc, gx, pred_len).squeeze(0).cpu().numpy()
+                preds = preds + residual
+                diag["applied"] = True
+                diag["residual_norm"] = float(np.linalg.norm(residual))
+                if verbose:
+                    print(f"Applied unified Residual Covariate Adapter "
+                          f"(pred_len={pred_len}, skew={skew:.4f}, pcr={pcr:.4f}, "
+                          f"gex={gex:.3f}B, |res|={diag['residual_norm']:.4f})")
+        except Exception as e:
+            diag["reason"] = f"error: {e}"
+            print(f"Warning: Failed to apply covariate adapter: {e}")
+        return preds, diag
 
     def predict(self, df, x_timestamp, y_timestamp, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True):
 
@@ -630,25 +765,8 @@ class KronosPredictor:
 
         preds = preds.squeeze(0)
 
-        # Apply adapter correction if available (operating in the normalized space)
-        if self.adapter is not None and self.adapter.pred_len == pred_len:
-            try:
-                current_skew = df['volatility_skew_25d'].iloc[-1] if 'volatility_skew_25d' in df.columns else 0.0
-                current_pcr = df['put_call_oi_ratio'].iloc[-1] if 'put_call_oi_ratio' in df.columns else 1.0
-                current_gex = (df['total_net_gex'].iloc[-1] / 1e9) if 'total_net_gex' in df.columns else 0.0
-                with torch.no_grad():
-                    baseline_tensor = torch.from_numpy(preds).unsqueeze(0).to(self.device)
-                    skew_tensor = torch.tensor([[current_skew]], dtype=torch.float32).to(self.device)
-                    pcr_tensor = torch.tensor([[current_pcr]], dtype=torch.float32).to(self.device)
-                    gex_tensor = torch.tensor([[current_gex]], dtype=torch.float32).to(self.device)
-                    
-                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor, gex_tensor)
-                    residual = residual_tensor.squeeze(0).cpu().numpy()
-                    preds = preds + residual
-                    if verbose:
-                        print(f"Applied Residual Covariate Adapter (skew={current_skew:.4f}, pcr={current_pcr:.4f}, gex={current_gex:.3f}B)")
-            except Exception as e:
-                print(f"Warning: Failed to apply covariate adapter: {e}")
+        # Apply unified adapter correction for any horizon (normalized space).
+        preds, self.adapter_diag = self._apply_adapter(preds, df, pred_len, verbose=verbose)
 
         # Reconstruct only the first 6 elements of means and stds as the model outputs 6 elements
         preds = preds * (x_std[:6] + 1e-5) + x_mean[:6]
@@ -755,24 +873,9 @@ class KronosPredictor:
         preds = self.generate(x_batch, x_stamp_batch, y_stamp_batch, pred_len, T, top_k, top_p, sample_count, verbose)
         # preds: (B, pred_len, feat)
 
-        # Apply adapter correction if available
-        if self.adapter is not None and self.adapter.pred_len == pred_len:
-            try:
-                skews = [df_list[i]['volatility_skew_25d'].iloc[-1] if 'volatility_skew_25d' in df_list[i].columns else 0.0 for i in range(num_series)]
-                pcrs = [df_list[i]['put_call_oi_ratio'].iloc[-1] if 'put_call_oi_ratio' in df_list[i].columns else 1.0 for i in range(num_series)]
-                gexs = [(df_list[i]['total_net_gex'].iloc[-1] / 1e9) if 'total_net_gex' in df_list[i].columns else 0.0 for i in range(num_series)]
-                
-                with torch.no_grad():
-                    baseline_tensor = torch.from_numpy(preds).to(self.device)
-                    skew_tensor = torch.tensor([[s] for s in skews], dtype=torch.float32).to(self.device)
-                    pcr_tensor = torch.tensor([[p] for p in pcrs], dtype=torch.float32).to(self.device)
-                    gex_tensor = torch.tensor([[g] for g in gexs], dtype=torch.float32).to(self.device)
-                    
-                    residual_tensor = self.adapter(baseline_tensor, skew_tensor, pcr_tensor, gex_tensor)
-                    residuals = residual_tensor.cpu().numpy()
-                    preds = preds + residuals
-            except Exception as e:
-                print(f"Warning: Failed to apply covariate adapter in batch: {e}")
+        # Apply adapter correction (unified model covers every horizon)
+        preds, _ = self._apply_adapter(preds, df_list, pred_len, batch=True)
+
 
         pred_dfs = []
         for i in range(num_series):

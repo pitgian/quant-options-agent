@@ -1,19 +1,37 @@
 #!/usr/bin/env python3
 """
-Kronos Options Covariate Adapter Training Pipeline
-Trains the ResidualCovariateAdapter MLP to adjust baseline Kronos forecasts
-using historical volatility skew and Put/Call OI ratios.
+Unified Kronos Covariate Adapter Training Pipeline
+===================================================
+
+Trains a SINGLE ResidualCovariateAdapter that corrects Kronos baseline
+forecasts across ALL prediction horizons (5m / 15m / 1h / 4h / 1d) and both
+ETF symbols (SPY, QQQ), using historical volatility skew, Put/Call OI ratio
+and Net GEX as covariates.
+
+Key differences from the legacy single-horizon trainer:
+  * One model covers every timeframe (via a learnable `pred_len` embedding),
+    instead of a separate checkpoint per pred_len.
+  * Ground-truth targets are REALIZED future price bars aligned to each
+    historical options snapshot (not synthetic noise).
+  * GUARD: if fewer than MIN_REAL_SAMPLES genuine samples with realized
+    future targets exist, training is skipped and NO checkpoint is written —
+    we never overwrite a good adapter with one fit to synthetic noise.
+  * Emits data/adapter_training_stats.json so the UI can show whether the
+    adapter is actually training on real data and how well it generalizes.
 
 Usage:
-    python scripts/train_adapter.py --symbol SPY --interval 15m --epochs 50
+    python scripts/train_adapter.py --epochs 40
+    python scripts/train_adapter.py --symbols SPY QQQ --epochs 40
 """
 
 import argparse
 import json
+import math
 import os
 import sys
-import time
 from datetime import datetime, timezone
+from typing import List, Dict, Tuple
+
 import numpy as np
 import pandas as pd
 import torch
@@ -24,320 +42,516 @@ import yfinance as yf
 scripts_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(scripts_dir)
 
-from model.kronos import Kronos, KronosTokenizer, KronosPredictor, ResidualCovariateAdapter, calc_time_stamps
+from model.kronos import (
+    Kronos, KronosTokenizer, KronosPredictor, ResidualCovariateAdapter,
+    calc_time_stamps,
+)
 from run_kronos import generate_future_trading_timestamps, get_futures_to_etf_ratio
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# (name, yfinance interval, prediction length) — must match run_kronos.py
+HORIZONS: List[Tuple[str, str, int]] = [
+    ("5m", "5m", 24),
+    ("15m", "15m", 26),
+    ("1h", "1h", 20),
+    ("4h", "4h", 6),
+    ("1d", "1d", 5),
+]
+
+CONTEXT_LEN = 128
+DEFAULT_FUTURES_RATIO = {"SPY": 10.09, "QQQ": 41.57}
+FUTURES_MAP = {"SPY": "ES=F", "QQQ": "NQ=F"}
+
+# Do not save a checkpoint (and do not report "trained") unless we have at
+# least this many REAL samples with realized future targets. This is the core
+# anti-overfitting guard: the legacy trainer silently fit noise when only a
+# day or two of history existed.
+MIN_REAL_SAMPLES = 30
+# Require at least this many samples for a given horizon to score it.
+MIN_SAMPLES_PER_HORIZON = 5
+
+STATS_OUTPUT_PATH = os.path.join(scripts_dir, "../data/adapter_training_stats.json")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_block(x: np.ndarray, clip: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    mean = np.mean(x, axis=0)
+    std = np.std(x, axis=0) + 1e-5
+    x_norm = np.clip((x - mean) / std, -clip, clip)
+    return x_norm, mean, std
+
+
+def _build_stamps(context_df: pd.DataFrame, future_df: pd.DataFrame):
+    x_time_df = calc_time_stamps(pd.Series(context_df.index))
+    y_time_df = calc_time_stamps(pd.Series(future_df.index))
+    return (
+        x_time_df.values.astype(np.float32),
+        y_time_df.values.astype(np.float32),
+    )
+
+
+def _prepare_block(df_block: pd.DataFrame, predictor: KronosPredictor):
+    """Add volume/amount cols and return the 6-col normalized-ready ndarray."""
+    price_cols = predictor.price_cols
+    vol_col = predictor.vol_col
+    amt_vol = predictor.amt_vol
+    blk = df_block.copy()
+    blk[vol_col] = blk[vol_col].astype(float)
+    blk[amt_vol] = blk[vol_col] * blk[price_cols].mean(axis=1)
+    return blk[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
+
+
+def _run_baseline_batch(
+    predictor: KronosPredictor,
+    samples: List[Dict],
+    pred_len: int,
+    device: str,
+) -> List[np.ndarray]:
+    """Run Kronos baseline (adapter disabled) for a batch of aligned samples.
+
+    `samples` share the same pred_len; each has context_df/future_df already
+    validated. Returns a list of normalized-space baseline forecasts.
+    """
+    price_cols = predictor.price_cols
+    vol_col = predictor.vol_col
+    amt_vol = predictor.amt_vol
+
+    x_list, stamp_x_list, stamp_y_list = [], [], []
+    means = []
+    for s in samples:
+        ctx = s["context_df"]
+        fut = s["future_df"]
+        ctx[vol_col] = ctx[vol_col].astype(float)
+        ctx[amt_vol] = ctx[vol_col] * ctx[price_cols].mean(axis=1)
+        x = ctx[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
+        x_norm, m, sd = _normalize_block(x, predictor.clip)
+        x_list.append(x_norm)
+        means.append((m, sd))
+        sx, sy = _build_stamps(ctx, fut)
+        stamp_x_list.append(sx)
+        stamp_y_list.append(sy)
+
+    x_batch = np.stack(x_list, axis=0)
+    sx_batch = np.stack(stamp_x_list, axis=0)
+    sy_batch = np.stack(stamp_y_list, axis=0)
+
+    with torch.no_grad():
+        preds = predictor.generate(
+            x_batch, sx_batch, sy_batch, pred_len,
+            T=0.7, top_k=5, top_p=0.9, sample_count=1, verbose=False,
+        )  # (B, pred_len, 6)
+
+    return [preds[i] for i in range(preds.shape[0])]
+
+
+# ---------------------------------------------------------------------------
+# Sample construction (ground-truth aligned to historical snapshots)
+# ---------------------------------------------------------------------------
+
+def build_training_samples(
+    predictor: KronosPredictor,
+    records: List[Dict],
+    price_df: pd.DataFrame,
+    price_time_list,
+    symbol: str,
+    device: str,
+    progress_label: str,
+) -> List[Dict]:
+    """For each historical options snapshot with a realized future, build a
+    (baseline forecast, covariates, target residual) sample for every horizon
+    whose future window is fully contained in the price history."""
+    samples: List[Dict] = []
+    # Pre-compute valid price-index positions
+    n_prices = len(price_time_list)
+
+    print(f"[{progress_label}] Aligning {len(records)} snapshots against "
+          f"{n_prices} price bars...")
+
+    # Group candidate (record, horizon) alignments first, then run baseline in
+    # batches per horizon to keep Kronos forward passes efficient.
+    for hname, interval, pred_len in HORIZONS:
+        per_h: List[Dict] = []
+        for record in records:
+            ts_utc = pd.to_datetime(record["timestamp"])
+            if ts_utc.tz is not None:
+                ts_utc = ts_utc.tz_convert("UTC").tz_localize(None)
+            ts_np = ts_utc.to_datetime64()
+
+            valid = [i for i, t in enumerate(price_time_list) if t <= ts_np]
+            if not valid:
+                continue
+            p_idx = valid[-1]
+            if p_idx < CONTEXT_LEN or p_idx + pred_len >= n_prices:
+                continue  # not enough history or future not yet realized
+
+            ctx = price_df.iloc[p_idx - CONTEXT_LEN: p_idx].copy()
+            fut = price_df.iloc[p_idx: p_idx + pred_len].copy()
+            if ctx.isnull().values.any() or fut.isnull().values.any():
+                continue
+
+            per_h.append({
+                "context_df": ctx,
+                "future_df": fut,
+                "skew": float(record["volatility_skew_25d"]),
+                "pcr": float(record["put_call_oi_ratio"]),
+                "gex": float(record.get("total_net_gex", 0.0)) / 1e9,
+                "horizon": hname,
+                "interval": interval,
+                "pred_len": pred_len,
+            })
+
+        if not per_h:
+            continue
+
+        # Baseline forecasts (batched)
+        try:
+            baselines = _run_baseline_batch(predictor, per_h, pred_len, device)
+        except Exception as e:
+            print(f"  [{hname}] baseline batch failed: {e}")
+            continue
+
+        for s, base_norm in zip(per_h, baselines):
+            fut = s["future_df"]
+            y_actual = _prepare_block(fut, predictor)
+            # Reuse the same normalization the predictor would apply at inference:
+            # context mean/std. Reconstruct from context for consistency.
+            ctx = s["context_df"]
+            x = _prepare_block(ctx, predictor)
+            _, m, sd = _normalize_block(x, predictor.clip)
+            y_actual_norm = np.clip((y_actual - m) / sd, -predictor.clip, predictor.clip)
+            target_residual = y_actual_norm - base_norm
+            samples.append({
+                "baseline": base_norm.astype(np.float32),
+                "target_residual": target_residual.astype(np.float32),
+                "skew": s["skew"],
+                "pcr": s["pcr"],
+                "gex": s["gex"],
+                "pred_len": s["pred_len"],
+                "horizon": s["horizon"],
+                "symbol": symbol,
+            })
+        print(f"  [{hname}] {len(per_h)} aligned samples (pred_len={pred_len})")
+
+    return samples
+
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+
+def train(
+    samples: List[Dict],
+    epochs: int,
+    lr: float,
+    hidden_dim: int,
+    device: str,
+    verbose: bool = True,
+) -> Tuple[ResidualCovariateAdapter, Dict]:
+    # Train/val split (stratified-ish by shuffling deterministically)
+    rng = np.random.default_rng(42)
+    idx = np.arange(len(samples))
+    rng.shuffle(idx)
+    val_n = max(1, len(samples) // 5)
+    val_idx = set(idx[:val_n].tolist())
+    train_idx = [i for i in idx if i not in val_idx]
+
+    train_s = [samples[i] for i in train_idx]
+    val_s = [samples[i] for i in val_idx]
+
+    # Covariate standardization stats from the TRAIN split only
+    cov = np.array([[s["skew"], s["pcr"], s["gex"]] for s in train_s], dtype=np.float32)
+    cov_mean = cov.mean(axis=0).tolist()
+    cov_std = (cov.std(axis=0) + 1e-5).tolist()
+
+    adapter = ResidualCovariateAdapter(
+        hidden_dim=hidden_dim, cov_mean=cov_mean, cov_std=cov_std,
+    ).to(device)
+    optimizer = torch.optim.AdamW(adapter.parameters(), lr=lr, weight_decay=1e-4)
+    criterion = nn.MSELoss()
+
+    def to_tensors(batch):
+        baselines = torch.from_numpy(np.stack([b["baseline"] for b in batch])).to(device)
+        targets = torch.from_numpy(np.stack([b["target_residual"] for b in batch])).to(device)
+        sk = torch.tensor([[b["skew"]] for b in batch], dtype=torch.float32, device=device)
+        pc = torch.tensor([[b["pcr"]] for b in batch], dtype=torch.float32, device=device)
+        gx = torch.tensor([[b["gex"]] for b in batch], dtype=torch.float32, device=device)
+        pl = torch.tensor([b["pred_len"] for b in batch], dtype=torch.long, device=device)
+        return baselines, targets, sk, pc, gx, pl
+
+    loss_history = []
+
+    def evaluate(batch):
+        with torch.no_grad():
+            baselines, targets, sk, pc, gx, pl = to_tensors(batch)
+            out = adapter(baselines, sk, pc, gx, pl)
+            return criterion(out, targets).item()
+
+    adapter.train()
+    bs = min(64, len(train_s))
+    for epoch in range(epochs):
+        order = np.random.default_rng(epoch).permutation(len(train_s))
+        epoch_losses = []
+        for start in range(0, len(train_s), bs):
+            batch = [train_s[i] for i in order[start:start + bs]]
+            baselines, targets, sk, pc, gx, pl = to_tensors(batch)
+            optimizer.zero_grad()
+            out = adapter(baselines, sk, pc, gx, pl)
+            loss = criterion(out, targets)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(adapter.parameters(), 1.0)
+            optimizer.step()
+            epoch_losses.append(loss.item())
+        train_loss = float(np.mean(epoch_losses)) if epoch_losses else float("nan")
+        val_loss = evaluate(val_s) if val_s else float("nan")
+        loss_history.append({"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss})
+        if verbose and ((epoch + 1) % max(1, epochs // 10) == 0 or epoch == epochs - 1):
+            print(f"  Epoch [{epoch+1}/{epochs}] train={train_loss:.6f} val={val_loss:.6f}")
+
+    # Per-horizon validation MSE
+    horizon_metrics: Dict[str, Dict] = {}
+    for hname, _, pred_len in HORIZONS:
+        hv = [s for s in val_s if s["pred_len"] == pred_len]
+        if len(hv) < MIN_SAMPLES_PER_HORIZON:
+            continue
+        with torch.no_grad():
+            baselines, targets, sk, pc, gx, pl = to_tensors(hv)
+            out = adapter(baselines, sk, pc, gx, pl)
+            mse = criterion(out, targets).item()
+        horizon_metrics[hname] = {
+            "pred_len": pred_len,
+            "val_samples": len(hv),
+            "val_mse": mse,
+        }
+
+    final_train_loss = loss_history[-1]["train_loss"] if loss_history else None
+    final_val_loss = loss_history[-1]["val_loss"] if loss_history else None
+
+    info = {
+        "cov_mean": cov_mean,
+        "cov_std": cov_std,
+        "loss_history": loss_history,
+        "horizon_metrics": horizon_metrics,
+        "final_train_loss": final_train_loss,
+        "final_val_loss": final_val_loss,
+        "train_samples": len(train_s),
+        "val_samples": len(val_s),
+    }
+    return adapter, info
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
-    parser = argparse.ArgumentParser(description="Train Kronos Covariate Adapter")
-    parser.add_argument("--symbol", type=str, default="SPY", help="Symbol to train on (SPY, QQQ)")
-    parser.add_argument("--interval", type=str, default="15m", help="Forecast interval (5m, 15m, 1h, 4h, 1d)")
-    parser.add_argument("--context-len", type=int, default=128, help="Context sequence length")
-    parser.add_argument("--pred-len", type=int, default=26, help="Prediction sequence length")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=0.005, help="Learning rate")
-    parser.add_argument("--hidden-dim", type=int, default=64, help="MLP hidden dimension")
-    parser.add_argument("--output-path", type=str, default=None, help="Path to save adapter.pth")
+    parser = argparse.ArgumentParser(description="Train unified Kronos Covariate Adapter")
+    parser.add_argument("--symbols", type=str, nargs="+", default=["SPY", "QQQ"])
+    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--output-path", type=str, default=None)
+    parser.add_argument("--stats-path", type=str, default=None)
+    parser.add_argument("--force-save", action="store_true",
+                        help="Save checkpoint even with fewer than MIN_REAL_SAMPLES (for testing).")
     args = parser.parse_args()
 
     print("=" * 70)
-    print(f"🚀 Starting Kronos Covariate Adapter Training for {args.symbol} ({args.interval})")
+    print(f"🚀 Unified Kronos Covariate Adapter Training")
+    print(f"   symbols={args.symbols}  horizons={[h[0] for h in HORIZONS]}  epochs={args.epochs}")
     print("=" * 70)
 
     # 1. Load options history
     history_path = os.path.join(scripts_dir, "../data/options_history.json")
     if not os.path.exists(history_path):
-        print(f"❌ Error: Options history file not found at {history_path}")
-        print("Please run scripts/fetch_options_data.py to collect options data first.")
+        print(f"❌ No options history at {history_path}. Run fetch_options_data.py first.")
         sys.exit(1)
-
     with open(history_path, "r") as f:
         history_data = json.load(f)
 
-    records = [r for r in history_data if r.get("symbol") == args.symbol]
-    if not records:
-        print(f"❌ Error: No options history records found for {args.symbol} in {history_path}")
-        sys.exit(1)
-
-    print(f"Loaded {len(records)} options history records for {args.symbol}.")
-    if len(records) < 5:
-        print("⚠️ Warning: Very few historical records available. The adapter might overfit.")
-        print("For optimal performance, let the data updater accumulate at least 50 snapshots.")
-
-    # Determine date range to download price history
-    timestamps = pd.to_datetime([r["timestamp"] for r in records])
-    min_date = timestamps.min() - pd.Timedelta(days=10) # extra buffer for context_len
-    max_date = timestamps.max() + pd.Timedelta(days=5) # extra buffer for future target
-    
-    # Format dates for yfinance
-    start_str = min_date.strftime("%Y-%m-%d")
-    end_str = max_date.strftime("%Y-%m-%d")
-
-    # 2. Download historical price data
-    futures_map = {"SPY": "ES=F", "QQQ": "NQ=F"}
-    ratio_map = {"SPY": 10.1, "QQQ": 41.6}
-    fetch_ticker = futures_map.get(args.symbol, args.symbol)
-    
-    # Calculate ratio dynamically using the same logic as run_kronos.py
-    default_ratio = ratio_map.get(args.symbol, 1.0)
-    ratio = get_futures_to_etf_ratio(fetch_ticker, args.symbol, default_ratio)
-    print(f"Downloading prices for {fetch_ticker} from {start_str} to {end_str}...")
-    
-    if args.interval == "4h":
-        df = yf.download(fetch_ticker, start=start_str, end=end_str, interval="1h")
-    else:
-        df = yf.download(fetch_ticker, start=start_str, end=end_str, interval=args.interval)
-
-    if df.empty:
-        print(f"❌ Error: No price data returned for {fetch_ticker}")
-        sys.exit(1)
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    df = df.rename(columns=lambda x: x.lower())
-    df = df[['open', 'high', 'low', 'close', 'volume']]
-    df = df.dropna()
-
-    if args.interval == "4h":
-        df = df.resample('4h').agg({
-            'open': 'first',
-            'high': 'max',
-            'low': 'min',
-            'close': 'last',
-            'volume': 'sum'
-        }).dropna()
-
-    if ratio != 1.0:
-        for col in ['open', 'high', 'low', 'close']:
-            df[col] = df[col] / ratio
-
-    print(f"Price data size: {df.shape[0]} rows.")
-
-    # 3. Load Kronos model
+    # 2. Load Kronos model
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     print(f"Loading Kronos model on device: {device}...")
     tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-2k")
     model = Kronos.from_pretrained("NeoQuasar/Kronos-mini")
-    
     predictor = KronosPredictor(model, tokenizer, device=device, max_context=2048)
     predictor.model.eval()
     predictor.tokenizer.eval()
+    # Make sure the adapter is OFF during baseline generation
+    predictor.adapter = None
 
-    # 4. Align prices and build training samples
-    # Convert df index to naive UTC for matching
-    df_reset = df.reset_index()
-    index_col = df_reset.columns[0]
-    df_reset['datetime_utc'] = pd.to_datetime(df_reset[index_col])
-    if df_reset['datetime_utc'].dt.tz is not None:
-        df_reset['datetime_utc'] = df_reset['datetime_utc'].dt.tz_convert('UTC').dt.tz_localize(None)
-    else:
-        df_reset['datetime_utc'] = df_reset['datetime_utc'].dt.tz_localize(None)
-    df_reset['datetime_utc'] = df_reset['datetime_utc'].astype('datetime64[ns]')
-
-    # Build quick lookup dictionary for price index positions
-    price_time_list = df_reset['datetime_utc'].tolist()
-
-    training_samples = []
-
-    print("Running baseline Kronos predictions for historical timestamps...")
-    for idx, record in enumerate(records):
-        ts_utc = pd.to_datetime(record["timestamp"]).tz_convert('UTC').tz_localize(None).to_datetime64()
-        
-        # Find closest price index in df
-        # We need the closest timestamp that is less than or equal to ts_utc
-        valid_indices = [i for i, t in enumerate(price_time_list) if t <= ts_utc]
-        if not valid_indices:
-            continue
-            
-        p_idx = valid_indices[-1]
-        
-        # We need at least context_len bars in the past and pred_len bars in the future
-        if p_idx < args.context_len or p_idx + args.pred_len >= len(price_time_list):
+    # 3. Build samples across symbols + horizons
+    all_samples: List[Dict] = []
+    symbols_seen: Dict[str, int] = {}
+    for symbol in args.symbols:
+        records = [r for r in history_data if r.get("symbol") == symbol]
+        symbols_seen[symbol] = len(records)
+        if not records:
+            print(f"[{symbol}] no history records, skipping.")
             continue
 
-        # Extract context and future targets
-        context_df = df.iloc[p_idx - args.context_len : p_idx].copy()
-        future_df = df.iloc[p_idx : p_idx + args.pred_len].copy()
+        timestamps = pd.to_datetime([r["timestamp"] for r in records])
+        min_date = timestamps.min() - pd.Timedelta(days=10)
+        max_date = timestamps.max() + pd.Timedelta(days=5)
+        start_str = min_date.strftime("%Y-%m-%d")
+        end_str = max_date.strftime("%Y-%m-%d")
 
-        # Check for NaNs
-        if context_df.isnull().values.any() or future_df.isnull().values.any():
-            continue
+        fetch_ticker = FUTURES_MAP.get(symbol, symbol)
+        default_ratio = DEFAULT_FUTURES_RATIO.get(symbol, 1.0)
+        ratio = get_futures_to_etf_ratio(fetch_ticker, symbol, default_ratio)
 
-        # Get covariates
-        skew = record["volatility_skew_25d"]
-        pcr = record["put_call_oi_ratio"]
-        gex = record.get("total_net_gex", 0.0) / 1e9
-
-        # Run baseline Kronos forecast (without adapter)
-        # Temporarily disable predictor's adapter if it loads one
-        original_adapter = predictor.adapter
-        predictor.adapter = None
-
-        x_timestamp = pd.Series(context_df.index)
-        y_timestamp = pd.Series(future_df.index)
-
-        # Standard normalization as done in Predictor
-        price_cols = predictor.price_cols
-        vol_col = predictor.vol_col
-        amt_vol = predictor.amt_vol
-
-        # Ensure volume and amount exist
-        context_df[vol_col] = context_df[vol_col].astype(float)
-        context_df[amt_vol] = context_df[vol_col] * context_df[price_cols].mean(axis=1)
-        future_df[vol_col] = future_df[vol_col].astype(float)
-        future_df[amt_vol] = future_df[vol_col] * future_df[price_cols].mean(axis=1)
-
-        x = context_df[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
-        y_actual = future_df[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
-
-        x_mean, x_std = np.mean(x, axis=0), np.std(x, axis=0)
-
-        # Normalize price inputs
-        x_norm = (x - x_mean) / (x_std + 1e-5)
-        x_norm = np.clip(x_norm, -predictor.clip, predictor.clip)
-
-        # Predict baseline
-        x_time_df = calc_time_stamps(x_timestamp)
-        y_time_df = calc_time_stamps(y_timestamp)
-
-        x_tensor = torch.from_numpy(x_norm[np.newaxis, :]).to(device)
-        x_stamp_tensor = torch.from_numpy(x_time_df.values[np.newaxis, :].astype(np.float32)).to(device)
-        y_stamp_tensor = torch.from_numpy(y_time_df.values[np.newaxis, :].astype(np.float32)).to(device)
-
+        # Download the FINEST resolution (5m) over the window; coarser horizons
+        # are resampled from it so we only hit yfinance once per symbol.
+        print(f"[{symbol}] downloading 5m prices {start_str} → {end_str} ({fetch_ticker}, ratio={ratio:.4f})...")
         try:
-            # Generate baseline predictions in normalized space
-            with torch.no_grad():
-                preds_norm = predictor.generate(x_tensor, x_stamp_tensor, y_stamp_tensor, args.pred_len, T=0.7, top_k=5, top_p=0.9, sample_count=1, verbose=False)
-                preds_norm = preds_norm.squeeze(0) # (pred_len, 6)
-
-            # Target actual in normalized space
-            y_actual_norm = (y_actual - x_mean) / (x_std + 1e-5)
-            y_actual_norm = np.clip(y_actual_norm, -predictor.clip, predictor.clip)
-
-            # Target residual (Actual - Baseline)
-            target_residual = y_actual_norm - preds_norm
-
-            training_samples.append({
-                "baseline": preds_norm,            # (pred_len, 6)
-                "skew": skew,
-                "pcr": pcr,
-                "gex": gex,
-                "target_residual": target_residual # (pred_len, 6)
-            })
+            df = yf.download(fetch_ticker, start=start_str, end=end_str, interval="5m")
         except Exception as e:
-            print(f"Error predicting sample {idx}: {e}")
+            print(f"[{symbol}] yfinance download failed: {e}")
             continue
+        if df.empty:
+            print(f"[{symbol}] empty price data, skipping.")
+            continue
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.rename(columns=lambda c: c.lower())
+        df = df[["open", "high", "low", "close", "volume"]].dropna()
+        if ratio != 1.0:
+            for c in ["open", "high", "low", "close"]:
+                df[c] = df[c] / ratio
 
-    print(f"Created {len(training_samples)} valid training samples.")
-    if not training_samples:
-        print("⚠️ No real historical samples have complete future targets (since they are too recent).")
-        print("Generating synthetic training samples based on the latest available market context to verify the pipeline...")
-        
-        # Take the latest available context from the price dataframe
-        p_idx = len(price_time_list) - args.pred_len - 1
-        if p_idx >= args.context_len:
-            context_df = df.iloc[p_idx - args.context_len : p_idx].copy()
-            future_df = df.iloc[p_idx : p_idx + args.pred_len].copy()
-            
-            # Use latest record's covariates
-            skew = records[-1]["volatility_skew_25d"]
-            pcr = records[-1]["put_call_oi_ratio"]
-            gex = records[-1].get("total_net_gex", 0.0) / 1e9
-            
-            x_timestamp = pd.Series(context_df.index)
-            y_timestamp = pd.Series(future_df.index)
-            
-            price_cols = predictor.price_cols
-            vol_col = predictor.vol_col
-            amt_vol = predictor.amt_vol
-            
-            context_df[vol_col] = context_df[vol_col].astype(float)
-            context_df[amt_vol] = context_df[vol_col] * context_df[price_cols].mean(axis=1)
-            future_df[vol_col] = future_df[vol_col].astype(float)
-            future_df[amt_vol] = future_df[vol_col] * future_df[price_cols].mean(axis=1)
-            
-            x = context_df[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
-            y_actual = future_df[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
-            
-            x_mean, x_std = np.mean(x, axis=0), np.std(x, axis=0)
-            x_norm = (x - x_mean) / (x_std + 1e-5)
-            x_norm = np.clip(x_norm, -predictor.clip, predictor.clip)
-            
-            x_time_df = calc_time_stamps(x_timestamp)
-            y_time_df = calc_time_stamps(y_timestamp)
-            
-            x_tensor = torch.from_numpy(x_norm[np.newaxis, :]).to(device)
-            x_stamp_tensor = torch.from_numpy(x_time_df.values[np.newaxis, :].astype(np.float32)).to(device)
-            y_stamp_tensor = torch.from_numpy(y_time_df.values[np.newaxis, :].astype(np.float32)).to(device)
-            
-            try:
-                with torch.no_grad():
-                    preds_norm = predictor.generate(x_tensor, x_stamp_tensor, y_stamp_tensor, args.pred_len, T=0.7, top_k=5, top_p=0.9, sample_count=1, verbose=False)
-                    preds_norm = preds_norm.squeeze(0)
-                    
-                y_actual_norm = (y_actual - x_mean) / (x_std + 1e-5)
-                y_actual_norm = np.clip(y_actual_norm, -predictor.clip, predictor.clip)
-                
-                target_residual = y_actual_norm - preds_norm
-                
-                # Add perturbed copies
-                for _ in range(5):
-                    noise = np.random.normal(0, 0.05, size=target_residual.shape).astype(np.float32)
-                    training_samples.append({
-                        "baseline": preds_norm + np.random.normal(0, 0.02, size=preds_norm.shape).astype(np.float32),
-                        "skew": skew + np.random.normal(0, 0.01),
-                        "pcr": pcr + np.random.normal(0, 0.05),
-                        "gex": gex + np.random.normal(0, 0.2),
-                        "target_residual": target_residual + noise
-                    })
-            except Exception as e:
-                print(f"Error generating synthetic samples: {e}")
-                
-        if not training_samples:
-            print("❌ Error: Could not construct even synthetic training samples.")
-            sys.exit(1)
- 
-    # 5. Training loop
-    adapter = ResidualCovariateAdapter(pred_len=args.pred_len).to(device)
-    optimizer = torch.optim.Adam(adapter.parameters(), lr=args.lr)
-    criterion = nn.MSELoss()
- 
-    # Convert training samples to tensors
-    baselines = torch.stack([torch.from_numpy(s["baseline"]) for s in training_samples]).to(device) # (N, pred_len, 6)
-    skews = torch.tensor([[s["skew"]] for s in training_samples], dtype=torch.float32).to(device) # (N, 1)
-    pcrs = torch.tensor([[s["pcr"]] for s in training_samples], dtype=torch.float32).to(device)   # (N, 1)
-    gexs = torch.tensor([[s["gex"]] for s in training_samples], dtype=torch.float32).to(device)   # (N, 1)
-    targets = torch.stack([torch.from_numpy(s["target_residual"]) for s in training_samples]).to(device) # (N, pred_len, 6)
- 
-    print("Training Residual Covariate Adapter...")
-    adapter.train()
-    for epoch in range(args.epochs):
-        optimizer.zero_grad()
-        outputs = adapter(baselines, skews, pcrs, gexs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
-        
-        if (epoch + 1) % max(1, args.epochs // 10) == 0 or epoch == args.epochs - 1:
-            print(f"  Epoch [{epoch+1}/{args.epochs}] - Loss (MSE): {loss.item():.6f}")
+        # Build a per-horizon resampled frame and generate samples for each.
+        # We construct one canonical UTC-indexed price series per resolution.
+        def utc_indexed(frame: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
+            fr = frame.copy()
+            fr.index.name = "dt"
+            dt = pd.to_datetime(fr.index)
+            if getattr(dt, "tz", None) is not None:
+                dt = dt.tz_convert("UTC").tz_localize(None)
+            else:
+                dt = dt.tz_localize(None)
+            fr["datetime"] = dt.astype("datetime64[ns]")
+            return fr, fr["datetime"].tolist()
 
-    # 6. Save model weights
-    output_path = args.output_path
-    if output_path is None:
-        output_path = os.path.join(scripts_dir, "model/covariate_adapter.pth")
+        for hname, interval, pred_len in HORIZONS:
+            # Resample from 5m to the horizon's resolution
+            if interval == "5m":
+                frame = df.copy()
+            elif interval == "15m":
+                frame = df.resample("15min").agg(
+                    {"open": "first", "high": "max", "low": "min",
+                     "close": "last", "volume": "sum"}).dropna()
+            elif interval == "1h":
+                frame = df.resample("1h").agg(
+                    {"open": "first", "high": "max", "low": "min",
+                     "close": "last", "volume": "sum"}).dropna()
+            elif interval == "4h":
+                frame = df.resample("4h").agg(
+                    {"open": "first", "high": "max", "low": "min",
+                     "close": "last", "volume": "sum"}).dropna()
+            elif interval == "1d":
+                frame = df.resample("1D").agg(
+                    {"open": "first", "high": "max", "low": "min",
+                     "close": "last", "volume": "sum"}).dropna()
+            else:
+                continue
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    checkpoint = {
-        "pred_len": args.pred_len,
-        "state_dict": adapter.state_dict(),
+            frame, time_list = utc_indexed(frame)
+            if len(time_list) < CONTEXT_LEN + pred_len + 1:
+                print(f"  [{symbol}/{hname}] not enough bars yet ({len(time_list)}), skipping.")
+                continue
+
+            h_records = records  # all snapshots; alignment filters by availability
+            per_h_samples = build_training_samples(
+                predictor, h_records, frame, time_list, symbol, device,
+                f"{symbol}/{hname}",
+            )
+            # tag horizon already set inside; just collect
+            all_samples.extend(per_h_samples)
+            print(f"  [{symbol}/{hname}] produced {len(per_h_samples)} real samples")
+
+    real_total = len(all_samples)
+    print(f"\nTotal REAL samples (all symbols × horizons): {real_total}")
+    print(f"  history records seen: {symbols_seen}")
+    per_h_counts = {}
+    for s in all_samples:
+        per_h_counts[s["horizon"]] = per_h_counts.get(s["horizon"], 0) + 1
+    print(f"  per-horizon real samples: {per_h_counts}")
+
+    # 4. GUARD — refuse to overwrite a good adapter with noise.
+    save = real_total >= MIN_REAL_SAMPLES or args.force_save
+    stats = {
+        "version": 2,
         "trained_at": datetime.now(timezone.utc).isoformat(),
-        "samples_count": len(training_samples),
-        "loss": loss.item()
+        "symbols": args.symbols,
+        "history_records": symbols_seen,
+        "real_samples_total": real_total,
+        "per_horizon_real_samples": per_h_counts,
+        "min_real_samples_required": MIN_REAL_SAMPLES,
+        "saved": save,
+        "reason": None,
+        "epochs": args.epochs,
+        "device": device,
     }
-    
+
+    if not save:
+        reason = (f"Only {real_total} real samples (< {MIN_REAL_SAMPLES} required). "
+                  f"Existing adapter (if any) was NOT overwritten. "
+                  f"Ground-truth accumulation continues via options_history.json.")
+        stats["reason"] = reason
+        print("\n⏸️  GUARD: " + reason)
+        _write_stats(stats, args.stats_path)
+        return
+
+    # 5. Train
+    adapter, info = train(all_samples, args.epochs, args.lr, args.hidden_dim, device)
+    stats.update({
+        "cov_stats": {
+            "skew": {"mean": info["cov_mean"][0], "std": info["cov_std"][0]},
+            "pcr": {"mean": info["cov_mean"][1], "std": info["cov_std"][1]},
+            "gex": {"mean": info["cov_mean"][2], "std": info["cov_std"][2]},
+        },
+        "train_samples": info["train_samples"],
+        "val_samples": info["val_samples"],
+        "final_train_loss": info["final_train_loss"],
+        "final_val_loss": info["final_val_loss"],
+        "horizons": info["horizon_metrics"],
+        "loss_history": info["loss_history"],
+    })
+
+    # 6. Save checkpoint (v2 unified format)
+    output_path = args.output_path or os.path.join(scripts_dir, "model/covariate_adapter.pth")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    checkpoint = {
+        "version": 2,
+        "state_dict": adapter.state_dict(),
+        "hidden_dim": args.hidden_dim,
+        "cov_mean": info["cov_mean"],
+        "cov_std": info["cov_std"],
+        "supported_pred_lens": [h[2] for h in HORIZONS],
+        "trained_at": stats["trained_at"],
+        "real_samples_total": real_total,
+        "final_train_loss": info["final_train_loss"],
+        "final_val_loss": info["final_val_loss"],
+    }
     torch.save(checkpoint, output_path)
-    print(f"🎉 Success! Covariate adapter weights saved to {output_path}")
+    print(f"\n🎉 Saved unified adapter → {output_path}")
+    print(f"   train_loss={info['final_train_loss']:.6f}  val_loss={info['final_val_loss']:.6f}")
+
+    _write_stats(stats, args.stats_path)
+
+
+def _write_stats(stats: Dict, stats_path: str | None) -> None:
+    path = stats_path or STATS_OUTPUT_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(stats, f, indent=2)
+    print(f"📊 Wrote training stats → {path}")
+
 
 if __name__ == "__main__":
     main()
