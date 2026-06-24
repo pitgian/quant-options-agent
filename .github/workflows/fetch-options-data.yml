@@ -361,7 +361,9 @@ jobs:
           cd gist_repo
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add kronos_forecast.json covariate_adapter.pth adapter_training_stats.json
+          git add kronos_forecast.json 2>/dev/null || true
+          git add covariate_adapter.pth 2>/dev/null || true
+          git add adapter_training_stats.json 2>/dev/null || true
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes to push to Gist"
             exit 0
@@ -392,7 +394,12 @@ jobs:
           cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add data/kronos_forecast.json data/adapter_training_stats.json scripts/model/covariate_adapter.pth
+          # Each artifact is optional (stats/adapter may not exist when training is
+          # guarded out), so add individually with `|| true` and only fail if
+          # NOTHING changed.
+          git add data/kronos_forecast.json 2>/dev/null || true
+          git add data/adapter_training_stats.json 2>/dev/null || true
+          git add scripts/model/covariate_adapter.pth 2>/dev/null || true
           if [ ! -f vercel.json ]; then
             # Disable Vercel deployments for the data branch — it receives ~565
             # commits/day and would exhaust the 100/day free-tier deploy quota.
