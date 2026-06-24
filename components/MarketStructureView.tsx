@@ -188,69 +188,54 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       return v0 + (v1 - v0) * t;
     };
 
-    // ---- Build the level grid ----
-    // Uniform % step from the structural anchor; ~100 rows regardless of zoom so the
-    // bar density stays readable. Level prices are real (non-rounded) futures
-    // prices so they can be copied straight to an execution chart.
-    const targetRows = 100;
-    const stepPct = Math.max(0.01, (2 * zoomPct) / targetRows);
+    // ---- Build the level grid from REAL Index strikes ----
+    // Previously this was a synthetic uniform grid (~100 rows) onto which
+    // option strikes were mapped by nearest-match. That produced FAKE
+    // duplicate levels: several grid rows resolved to the same strike (so
+    // the same OI repeated) and the futures volume was interpolated across
+    // every synthetic row (so the same volume repeated). The fix is to make
+    // the grid itself the real Index strike ladder — every row is an actual
+    // traded strike with its real OI/volume, sampled (not interpolated) from
+    // the futures profile. ETF aligns to the nearest real ETF strike.
     const rows: any[] = [];
-    let idxPtr = 0, etfPtr = 0; // moving pointers for O(1)-amortized nearest-strike walk
+    const loPrice = gridAnchor * (1 - zoomPct / 100);
+    const hiPrice = gridAnchor * (1 + zoomPct / 100);
+    let etfPtr = 0; // monotonic pointer for nearest-ETF-strike walk
 
-    // Per-instrument de-duplication: the grid step (~0.08%) is finer than the
-    // ETF strike spacing (1pt ≈ 0.14% at SPY), so 2-3 grid levels round to the
-    // same SPY strike and would render identical bars. For each unique strike
-    // we mark the grid level nearest to its true price as 'primary'; the rest
-    // render a faint connector so the level grid stays aligned across columns
-    // (you can still read across a row) without showing duplicate bars.
-    const etfPrimaryLevel = new Map<number, number>(); // etfStrike → best grid levelPrice
-    const idxPrimaryLevel = new Map<number, number>();
-
-    for (let i = 0; i <= targetRows; i++) {
-      const dPct = -zoomPct + i * stepPct;
-      if (Math.abs(dPct) > zoomPct + 1e-9) continue;
-
-      const levelPrice = gridAnchor * (1 + dPct / 100); // ES/futures scale (~ SPX)
-      const etfPrice   = etfSpot   * (1 + dPct / 100);   // SPY scale
-
-      // nearest Index strike to the futures-scale level price (monotonic walk)
-      while (idxPtr + 1 < indexStrikes.length && Math.abs(indexStrikes[idxPtr + 1] - levelPrice) < Math.abs(indexStrikes[idxPtr] - levelPrice)) idxPtr++;
-      // nearest ETF strike to the ETF-scale level price
-      while (etfPtr + 1 < etfStrikes.length && Math.abs(etfStrikes[etfPtr + 1] - etfPrice) < Math.abs(etfStrikes[etfPtr] - etfPrice)) etfPtr++;
-
-      const nearestIdxStrike = indexStrikes[idxPtr];
-      const nearestEtfStrike = etfStrikes[etfPtr];
-      // Track the grid level nearest to each strike's TRUE price
-      const curIdx = idxPrimaryLevel.get(nearestIdxStrike);
-      if (curIdx === undefined || Math.abs(levelPrice - nearestIdxStrike) < Math.abs(curIdx - nearestIdxStrike)) idxPrimaryLevel.set(nearestIdxStrike, levelPrice);
-      const curEtf = etfPrimaryLevel.get(nearestEtfStrike);
-      const trueEtf = nearestEtfStrike;
-      if (curEtf === undefined || Math.abs(etfPrice - trueEtf) < Math.abs(curEtf - trueEtf)) etfPrimaryLevel.set(nearestEtfStrike, etfPrice);
-
-      const indexStrikeData = indexByStrike.get(nearestIdxStrike);
-      const etfStrikeData   = etfByStrike.get(nearestEtfStrike);
-
-      const idxCallOI  = indexStrikeData?.callOI    ?? 0;
-      const idxPutOI   = indexStrikeData?.putOI     ?? 0;
+    for (const idxStrike of indexStrikes) {
+      if (idxStrike < loPrice || idxStrike > hiPrice) continue;
+      const indexStrikeData = indexByStrike.get(idxStrike);
+      // Skip strikes with absolutely no market structure signal (no OI, no vol,
+      // no futures volume) so the ladder stays focused on real levels.
+      const idxCallOI  = indexStrikeData?.callOI     ?? 0;
+      const idxPutOI   = indexStrikeData?.putOI      ?? 0;
       const idxCallVol = indexStrikeData?.callVolume ?? 0;
       const idxPutVol  = indexStrikeData?.putVolume  ?? 0;
-      const etfCallOI  = etfStrikeData?.callOI    ?? 0;
-      const etfPutOI   = etfStrikeData?.putOI     ?? 0;
+
+      // Map this Index strike back to the ETF (cash) scale and find the
+      // nearest real ETF strike via a monotonic walk.
+      const etfPrice = idxStrike / (indexSpot / etfSpot); // index→etf scale
+      while (etfPtr + 1 < etfStrikes.length && Math.abs(etfStrikes[etfPtr + 1] - etfPrice) < Math.abs(etfStrikes[etfPtr] - etfPrice)) etfPtr++;
+      const nearestEtfStrike = etfStrikes[etfPtr];
+      const etfStrikeData = etfByStrike.get(nearestEtfStrike);
+
+      const etfCallOI  = etfStrikeData?.callOI     ?? 0;
+      const etfPutOI   = etfStrikeData?.putOI      ?? 0;
       const etfCallVol = etfStrikeData?.callVolume ?? 0;
       const etfPutVol  = etfStrikeData?.putVolume  ?? 0;
 
       const indexVolume = idxCallOI + idxPutOI + idxCallVol + idxPutVol;
       const etfVolume   = etfCallOI + etfPutOI + etfCallVol + etfPutVol;
-      const futuresVolume = futuresVolAt(levelPrice);
+      const futuresVolume = futuresVolAt(idxStrike);
 
       rows.push({
-        strike: levelPrice,        // unique row id (futures-scale price)
-        futuresStrike: levelPrice, // alias — Kronos boundary / isClosest logic
+        strike: idxStrike,          // unique row id (real Index strike)
+        futuresStrike: idxStrike,   // alias — Kronos boundary / isClosest logic
         etfStrike: nearestEtfStrike,
-        indexStrike: nearestIdxStrike, // nearest Index strike (for de-dup lookup)
-        etfPrice,                  // exact ETF price at this level (for label)
-        levelPrice,                // exact futures price (for label)
-        distancePct: dPct,
+        indexStrike: idxStrike,
+        etfPrice: nearestEtfStrike, // real ETF strike aligned to this Index level
+        levelPrice: idxStrike,      // real futures-scale price (for label)
+        distancePct: ((idxStrike - gridAnchor) / gridAnchor) * 100,
         indexVolume, etfVolume, futuresVolume,
         indexCallOI: idxCallOI, indexPutOI: idxPutOI,
         etfCallOI, etfPutOI,
@@ -258,16 +243,10 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
         indexTotalVol: idxCallVol + idxPutVol,
         etfTotalOI: etfCallOI + etfPutOI,
         etfTotalVol: etfCallVol + etfPutVol,
-        etfIsPrimary: false,   // filled in post-pass below
-        indexIsPrimary: false,
+        // Every row is now a real strike, so both are always primary.
+        etfIsPrimary: true,
+        indexIsPrimary: true,
       });
-    }
-    // Post-pass: stamp each row with whether it is the primary level for its
-    // ETF strike / Index strike (the grid level nearest to that strike's true
-    // price). Done after the loop so the primary maps are complete.
-    for (const r of rows) {
-      r.etfIsPrimary   = etfPrimaryLevel.get(r.etfStrike) === r.etfPrice;
-      r.indexIsPrimary = idxPrimaryLevel.get(r.indexStrike) === r.levelPrice;
     }
     return rows;
   }, [indexData?.gexStrikeData, etfData?.gexStrikeData, indexData?.futuresVolumeProfiles, indexData?.futuresVolumeProfile, resolvedFuturesProfile, expiryFilter, selectedFuturesTf, basisMultiplier, market, zoomPct, indexSpotStable, etfSpotStable]);
@@ -1141,7 +1120,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                                   <div style={{ width: `${etfPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
                                   {/* CALL (green) — resistance side */}
                                   <div className="flex items-center justify-end pr-1" style={{ width: `${etfCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {etfOIWidth > 22 && rowHeight >= 18 && (
+                                    {etfOIWidth > 12 && rowHeight >= 14 && (
                                       <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(etfTotalOI)}</span>
                                     )}
                                   </div>
@@ -1149,7 +1128,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               ) : (
                                 /* OI not yet settled (pre-market 0DTE) — show today's volume in orange */
                                 <div className="h-full w-full flex items-center justify-end pr-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {etfVolWidth > 22 && rowHeight >= 18 && (
+                                  {etfVolWidth > 12 && rowHeight >= 14 && (
                                     <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.etfTotalVol)}</span>
                                   )}
                                 </div>
@@ -1204,14 +1183,14 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                                   <div style={{ width: `${idxPutFrac * 100}%`, backgroundColor: 'rgba(239,68,68,0.62)' }} />
                                   {/* CALL (green) — resistance side */}
                                   <div className="flex items-center justify-start pl-1" style={{ width: `${idxCallFrac * 100}%`, backgroundColor: 'rgba(16,185,129,0.62)' }}>
-                                    {idxOIWidth > 22 && rowHeight >= 18 && (
+                                    {idxOIWidth > 12 && rowHeight >= 14 && (
                                       <span className="text-[8px] font-mono text-emerald-50 whitespace-nowrap">{formatCompact(idxTotalOI)}</span>
                                     )}
                                   </div>
                                 </>
                               ) : (
                                 <div className="h-full w-full flex items-center justify-start pl-1.5" style={{ backgroundColor: 'rgba(249,115,22,0.42)' }}>
-                                  {idxVolWidth > 22 && rowHeight >= 18 && (
+                                  {idxVolWidth > 12 && rowHeight >= 14 && (
                                     <span className="text-[8px] font-mono text-orange-100 whitespace-nowrap">{formatCompact(d.indexTotalVol)}</span>
                                   )}
                                 </div>
@@ -1236,7 +1215,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                               borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                             }}
                           >
-                            {futBarWidth > 18 && rowHeight >= 18 && (
+                            {futBarWidth > 8 && rowHeight >= 14 && (
                               <span className="text-[8px] font-mono text-green-200">
                                 {formatCompact(hasFuturesData ? d.futuresVolume : d.indexVolume)}
                               </span>
