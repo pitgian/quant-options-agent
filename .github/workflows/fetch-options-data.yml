@@ -87,6 +87,12 @@ jobs:
         run: |
           git fetch origin data || true
           git checkout origin/data -- data/options_history.json || true
+          # Also restore options_data.json — needed by load_previous_oi_lookup()
+          # to fall back on the last known non-zero OI when Yahoo returns 0
+          # (pre-market, weekend, or data glitches). Without this, the OI
+          # fallback is silently disabled and the chart shows 0 OI outside
+          # market hours even though we have the last valid OI stored.
+          git checkout origin/data -- data/options_data.json || true
 
       - name: Restore options_history.json from Gist
         continue-on-error: true
@@ -100,6 +106,12 @@ jobs:
             echo "Restoring options_history.json from Gist..."
             mkdir -p data
             cp -f gist_repo_restore/options_history.json data/
+          fi
+          # Same for options_data.json — OI fallback source (see comment above).
+          if [ -f gist_repo_restore/options_data.json ] && [ ! -f data/options_data.json ]; then
+            echo "Restoring options_data.json from Gist for OI fallback..."
+            mkdir -p data
+            cp -f gist_repo_restore/options_data.json data/
           fi
           rm -rf gist_repo_restore
 
