@@ -243,10 +243,26 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
         indexTotalVol: idxCallVol + idxPutVol,
         etfTotalOI: etfCallOI + etfPutOI,
         etfTotalVol: etfCallVol + etfPutVol,
-        // Every row is now a real strike, so both are always primary.
-        etfIsPrimary: true,
+        etfIsPrimary: false,   // filled in post-pass below
         indexIsPrimary: true,
       });
+    }
+    // Post-pass: for each UNIQUE ETF strike, mark only the Index row nearest
+    // to its true price as 'primary'. Multiple dense Index strikes (e.g. NDX
+    // 5-pt grid) can map to the same ETF strike (QQQ 1-pt grid); rendering the
+    // ETF bar at full opacity on all of them reads as duplicate data. The
+    // non-primary rows render a faint connector instead.
+    const etfTrueLevel = new Map<number, { bestDelta: number }>(); // etfStrike → closest row seen
+    for (const r of rows) {
+      const cur = etfTrueLevel.get(r.etfStrike);
+      const delta = Math.abs(r.etfPrice - r.etfStrike);
+      if (cur === undefined || delta < cur.bestDelta) {
+        etfTrueLevel.set(r.etfStrike, { bestDelta: delta });
+      }
+    }
+    for (const r of rows) {
+      const cur = etfTrueLevel.get(r.etfStrike);
+      r.etfIsPrimary = cur !== undefined && Math.abs(r.etfPrice - r.etfStrike) === cur.bestDelta;
     }
     return rows;
   }, [indexData?.gexStrikeData, etfData?.gexStrikeData, indexData?.futuresVolumeProfiles, indexData?.futuresVolumeProfile, resolvedFuturesProfile, expiryFilter, selectedFuturesTf, basisMultiplier, market, zoomPct, indexSpotStable, etfSpotStable]);
@@ -1111,8 +1127,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             the SAME bar at reduced opacity so the data is always visible and the
                             primary level (nearest to the strike's true price) still stands out. */}
                           <div className="relative flex justify-end w-full pr-1 transition-all duration-300"
-                               style={{ height: `${Math.max(4, rowHeight - 4)}px` }}
-                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
+                               style={{ height: `${Math.max(4, rowHeight - 4)}px`, opacity: d.etfIsPrimary ? 1 : 0.18 }}
+                               title={`ETF OI — Calls: ${formatCompact(d.etfCallOI)} | Puts: ${formatCompact(d.etfPutOI)}${etfHasOI ? '' : ' (pre-market)'}${d.etfIsPrimary ? '' : ' (livello ETF già mostrato sulla riga principale)'}\nVol oggi: ${formatCompact(d.etfTotalVol)}`}>
                             <div className="flex h-full items-stretch rounded-l overflow-hidden" style={{ width: `${Math.max(2, etfBarWidth)}%` }}>
                               {etfHasOI ? (
                                 <>
