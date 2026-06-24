@@ -327,21 +327,51 @@ def train(
     criterion = nn.MSELoss()
 
     def to_tensors(batch):
-        baselines = torch.from_numpy(np.stack([b["baseline"] for b in batch])).to(device)
-        targets = torch.from_numpy(np.stack([b["target_residual"] for b in batch])).to(device)
-        sk = torch.tensor([[b["skew"]] for b in batch], dtype=torch.float32, device=device)
-        pc = torch.tensor([[b["pcr"]] for b in batch], dtype=torch.float32, device=device)
-        gx = torch.tensor([[b["gex"]] for b in batch], dtype=torch.float32, device=device)
-        pl = torch.tensor([b["pred_len"] for b in batch], dtype=torch.long, device=device)
-        return baselines, targets, sk, pc, gx, pl
+        # Baselines/targets from different horizons have different time lengths;
+        # pad them to MAX_PRED_LEN so np.stack works (matches the adapter's
+        # internal padding) and build a mask to ignore padded positions in loss.
+        max_pl = ResidualCovariateAdapter.MAX_PRED_LEN
+        B = len(batch)
+        D = ResidualCovariateAdapter.D_IN
+        base = np.zeros((B, max_pl, D), dtype=np.float32)
+        tgt = np.zeros((B, max_pl, D), dtype=np.float32)
+        mask = np.zeros((B, max_pl), dtype=np.float32)
+        sk = np.zeros((B, 1), dtype=np.float32)
+        pc = np.zeros((B, 1), dtype=np.float32)
+        gx = np.zeros((B, 1), dtype=np.float32)
+        pl = np.zeros((B,), dtype=np.int64)
+        for i, b in enumerate(batch):
+            p = b["baseline"].shape[0]
+            base[i, :p] = b["baseline"]
+            tgt[i, :p] = b["target_residual"]
+            mask[i, :p] = 1.0
+            sk[i, 0] = b["skew"]
+            pc[i, 0] = b["pcr"]
+            gx[i, 0] = b["gex"]
+            pl[i] = p
+        return (
+            torch.from_numpy(base).to(device),
+            torch.from_numpy(tgt).to(device),
+            torch.from_numpy(mask).to(device),  # (B, max_pl)
+            torch.from_numpy(sk).to(device),
+            torch.from_numpy(pc).to(device),
+            torch.from_numpy(gx).to(device),
+            torch.from_numpy(pl).to(device),
+        )
+
+    def masked_mse(out, targets, mask):
+        # Mean squared error over features, averaged only across real
+        # (non-padded) timesteps so short horizons aren't penalized on padding.
+        se = ((out - targets) ** 2).mean(dim=-1)  # (B, max_pl)
+        return (se * mask).sum() / (mask.sum() + 1e-8)
 
     loss_history = []
 
     def evaluate(batch):
         with torch.no_grad():
-            baselines, targets, sk, pc, gx, pl = to_tensors(batch)
+            baselines, targets, mask, sk, pc, gx, pl = to_tensors(batch)
             out = adapter(baselines, sk, pc, gx, pl)
-            return criterion(out, targets).item()
+            return masked_mse(out, targets, mask).item()
 
     adapter.train()
     bs = min(64, len(train_s))
@@ -350,10 +380,10 @@ def train(
         epoch_losses = []
         for start in range(0, len(train_s), bs):
             batch = [train_s[i] for i in order[start:start + bs]]
-            baselines, targets, sk, pc, gx, pl = to_tensors(batch)
+            baselines, targets, mask, sk, pc, gx, pl = to_tensors(batch)
             optimizer.zero_grad()
             out = adapter(baselines, sk, pc, gx, pl)
-            loss = criterion(out, targets)
+            loss = masked_mse(out, targets, mask)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(adapter.parameters(), 1.0)
             optimizer.step()
@@ -371,9 +401,9 @@ def train(
         if len(hv) < MIN_SAMPLES_PER_HORIZON:
             continue
         with torch.no_grad():
-            baselines, targets, sk, pc, gx, pl = to_tensors(hv)
+            baselines, targets, mask, sk, pc, gx, pl = to_tensors(hv)
             out = adapter(baselines, sk, pc, gx, pl)
-            mse = criterion(out, targets).item()
+            mse = masked_mse(out, targets, mask).item()
         horizon_metrics[hname] = {
             "pred_len": pred_len,
             "val_samples": len(hv),
