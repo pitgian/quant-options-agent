@@ -18,7 +18,8 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchSpotPrices } from './spotPrices';
+// spotPrices is imported dynamically inside the /spot branch so that a load
+// or fetch failure can NEVER take down the health check (see try/catch).
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -50,9 +51,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // ---- Live spot prices ----
+  // ---- Live spot prices (lazy import isolates failures) ----
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   try {
+    const { fetchSpotPrices } = await import('./spotPrices');
     const spotData = await fetchSpotPrices();
     return res.status(200).json(spotData);
   } catch (error) {
