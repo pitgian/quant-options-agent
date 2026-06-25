@@ -18,8 +18,11 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-// spotPrices is imported dynamically inside the /spot branch so that a load
-// or fetch failure can NEVER take down the health check (see try/catch).
+// NOTE the explicit `.js` extension: with "type": "module", @vercel/node compiles
+// TS -> JS file-per-file (no bundling), and Node ESM requires the full
+// extension in relative imports. TypeScript (moduleResolution bundler)
+// resolves './spotPrices.js' to the local spotPrices.ts at build time.
+import { fetchSpotPrices } from './spotPrices.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -51,10 +54,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // ---- Live spot prices (lazy import isolates failures) ----
+  // ---- Live spot prices ----
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   try {
-    const { fetchSpotPrices } = await import('./spotPrices');
     const spotData = await fetchSpotPrices();
     return res.status(200).json(spotData);
   } catch (error) {
