@@ -180,10 +180,10 @@ export function useOptionsData(): UseOptionsDataReturn {
     NQ?: number | null;
   }>({ SPX: null, NDX: null, SPY: null, QQQ: null, ES: null, NQ: null });
 
-  // Fetch live spot prices every 30 seconds (runs as free serverless action, no git push).
-  // Was 15s — too aggressive: every tick re-rendered all 101 chart rows and
-  // froze the scroll wheel for ~150ms. 30s halves the jank while still giving
-  // timely spot updates for the header price + spot highlighter.
+  // Fetch live spot prices every 15 seconds. Safe at this cadence because
+  // the serverless function caches Yahoo results for 15s server-side, so the
+  // client poll never re-hits Yahoo more often than that (no rate-limiting).
+  // Was 30s — lowered for fresher header/spot highlight during active trading.
   useEffect(() => {
     let active = true;
     const fetchLiveSpot = async () => {
@@ -209,7 +209,7 @@ export function useOptionsData(): UseOptionsDataReturn {
     };
 
     fetchLiveSpot();
-    const intervalId = setInterval(fetchLiveSpot, 30000);
+    const intervalId = setInterval(fetchLiveSpot, 15000);
 
     return () => {
       active = false;
