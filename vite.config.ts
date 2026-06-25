@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { fetchSpotPrices } from './lib/spotPrices';
+import { fetchSpotPrices } from './api/spotPrices';
 
 export default defineConfig(({ mode }) => {
     const plugins = [
