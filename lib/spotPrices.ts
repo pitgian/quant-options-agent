@@ -32,6 +32,25 @@ const YAHOO_CHART_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const YAHOO_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+/** Per-request timeout (ms). Keeps the whole function well under Vercel's
+ *  platform timeout even when Yahoo is slow to respond. */
+const FETCH_TIMEOUT_MS = 3500;
+
+/** Short in-memory cache so repeated requests (the client polls every 30s)
+ *  don't re-hit Yahoo 6x each time, reducing rate-limit / timeout risk on the
+ *  Vercel serverless IP. */
+const CACHE_TTL_MS = 15_000;
+let _cache: { ts: number; data: SpotPrices } | null = null;
+
+function withTimeout(url: string): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  return fetch(url, {
+    headers: { 'User-Agent': YAHOO_UA, Accept: 'application/json' },
+    signal: ctrl.signal,
+  }).finally(() => clearTimeout(timer));
+}
+
 export interface SpotPrices {
   SPX: number | null;
   NDX: number | null;
@@ -53,7 +72,7 @@ async function fetchQuote(symbol: string): Promise<Quote> {
   )}?interval=1m&range=5m&includePrePost=true`;
 
   try {
-    const response = await fetch(url, { headers: { 'User-Agent': YAHOO_UA } });
+    const response = await withTimeout(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const data = (await response.json()) as any;
@@ -90,6 +109,12 @@ function round2(n: number | null): number | null {
  * symbol failures degrade gracefully to `null`.
  */
 export async function fetchSpotPrices(): Promise<SpotPrices> {
+  // Short in-memory cache: avoid hammering Yahoo on every poll and bound the
+  // chance of hitting a slow/timeout response on the serverless IP.
+  if (_cache && Date.now() - _cache.ts < CACHE_TTL_MS) {
+    return _cache.data;
+  }
+
   const quotes: Record<string, Quote> = {};
   await Promise.all(
     YAHOO_SYMBOLS.map(async (symbol) => {
@@ -113,7 +138,7 @@ export async function fetchSpotPrices(): Promise<SpotPrices> {
   const esRatio = esLive !== null && esPrev !== null ? esLive / esPrev : 1.0;
   const nqRatio = nqLive !== null && nqPrev !== null ? nqLive / nqPrev : 1.0;
 
-  return {
+  const data: SpotPrices = {
     SPX: spxPrev !== null ? round2(spxPrev * esRatio) : null,
     NDX: ndxPrev !== null ? round2(ndxPrev * nqRatio) : null,
     SPY: spyPrev !== null ? round2(spyPrev * esRatio) : null,
@@ -122,4 +147,11 @@ export async function fetchSpotPrices(): Promise<SpotPrices> {
     NQ: nqLive,
     timestamp: new Date().toISOString(),
   };
+
+  // Only cache a payload that actually carries live data, so a transient
+  // Yahoo outage doesn't pin nulls for 15s.
+  if (data.ES !== null || data.NQ !== null) {
+    _cache = { ts: Date.now(), data };
+  }
+  return data;
 }
