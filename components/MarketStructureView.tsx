@@ -301,29 +301,15 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   }, [activeKronosForecast, indexData, etfData, liveSpot, market]);
 
   // ---- Calculate visual boundaries for Kronos expected range ----
+  // Boundaries are kept in PRICE space (dollar low/high) so the rendered band
+  // stays identical regardless of how dense the strike grid is — i.e. the
+  // visual range does NOT depend on the selected expiry filter. Each row is
+  // shaded/labelled by checking whether its price falls inside [low, high].
   const kronosBoundaries = useMemo(() => {
     if (!kronosRange || zoomedProfile.length === 0) return null;
-    const strikesInRange = zoomedProfile.filter(d => d.futuresStrike >= kronosRange.low && d.futuresStrike <= kronosRange.high);
-    
-    if (strikesInRange.length > 0) {
-      const strikes = strikesInRange.map(d => d.strike);
-      return {
-        min: Math.min(...strikes),
-        max: Math.max(...strikes)
-      };
-    }
-
-    // If range is extremely narrow (no strikes inside), snap to closest strikes
-    const closestToLow = zoomedProfile.reduce((prev, curr) => 
-      Math.abs(curr.futuresStrike - kronosRange.low) < Math.abs(prev.futuresStrike - kronosRange.low) ? curr : prev
-    );
-    const closestToHigh = zoomedProfile.reduce((prev, curr) => 
-      Math.abs(curr.futuresStrike - kronosRange.high) < Math.abs(prev.futuresStrike - kronosRange.high) ? curr : prev
-    );
-
     return {
-      min: Math.min(closestToLow.strike, closestToHigh.strike),
-      max: Math.max(closestToLow.strike, closestToHigh.strike)
+      min: kronosRange.low,
+      max: kronosRange.high,
     };
   }, [kronosRange, zoomedProfile]);
 
@@ -1008,11 +994,23 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                     const isLVN = !!lvnZone;
                     const isTrough = nodes.lvnStrikes.has(d.strike);
-                    const isInKronosRange = !!(kronosBoundaries && d.strike >= kronosBoundaries.min && d.strike <= kronosBoundaries.max);
+                    // Kronos range is in PRICE space (dollar low/high), independent of
+                    // the strike grid density, so the rendered band does NOT change
+                    // when the expiry filter changes the strike spacing.
+                    const isInKronosRange = !!(kronosBoundaries && d.levelPrice >= kronosBoundaries.min && d.levelPrice <= kronosBoundaries.max);
                     const flipPoint = indexData?.gexRegime?.flipPoint;
                     const isFlipRow = flipPoint
                       ? Math.abs(d.strike - flipPoint * basisMultiplier) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint * basisMultiplier)))
                       : false;
+
+                    // Kronos boundary rows: the grid rows whose PRICE is closest to
+                    // the (continuous) low/high of the Kronos range. Used to draw the
+                    // dashed border + the High/Low labels. Computed in price space so
+                    // they don't depend on strike spacing.
+                    const isKronosHighRow = !!(kronosBoundaries && zoomedProfile.length > 0 &&
+                      Math.abs(d.levelPrice - kronosBoundaries.max) === Math.min(...zoomedProfile.map(x => Math.abs(x.levelPrice - kronosBoundaries.max))));
+                    const isKronosLowRow = !!(kronosBoundaries && zoomedProfile.length > 0 &&
+                      Math.abs(d.levelPrice - kronosBoundaries.min) === Math.min(...zoomedProfile.map(x => Math.abs(x.levelPrice - kronosBoundaries.min))));
 
                     const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
 
@@ -1078,10 +1076,10 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                       borderTopStyle = '1px dashed rgba(249,115,22,0.5)';
                       borderBottomStyle = '1px dashed rgba(249,115,22,0.5)';
                     } else {
-                      if (kronosBoundaries && d.strike === kronosBoundaries.max) {
+                      if (isKronosHighRow) {
                         borderTopStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
                       }
-                      if (kronosBoundaries && d.strike === kronosBoundaries.min) {
+                      if (isKronosLowRow) {
                         borderBottomStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
                       }
                     }
@@ -1107,12 +1105,12 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
                           </span>
                         )}
-                        {kronosBoundaries && d.strike === kronosBoundaries.max && rowHeight >= 18 && (
+                        {isKronosHighRow && rowHeight >= 18 && (
                           <span className="absolute left-2 -top-2.5 text-[8px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
                             🎯 Kronos High: ${kronosRange.high.toFixed(0)}
                           </span>
                         )}
-                        {kronosBoundaries && d.strike === kronosBoundaries.min && rowHeight >= 18 && (
+                        {isKronosLowRow && rowHeight >= 18 && (
                           <span className="absolute left-2 -bottom-2.5 text-[8px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
                             🎯 Kronos Low: ${kronosRange.low.toFixed(0)}
                           </span>
