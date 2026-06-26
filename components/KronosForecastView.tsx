@@ -293,15 +293,7 @@ function KronosForecastChart({ chartData, kronosTimeframe, hoveredIndex, setHove
   const isBearish = chartData.trendBias === 'BEARISH';
 
   const intervalLabel =
-    kronosTimeframe === '15m' || kronosTimeframe === '30m'
-      ? '5m Interval'
-      : kronosTimeframe === '1h' || kronosTimeframe === '2h'
-        ? '15m Interval'
-        : kronosTimeframe === '4h' || kronosTimeframe === 'EOD'
-          ? '1h Interval'
-          : kronosTimeframe === '2D' || kronosTimeframe === '3D'
-            ? '4h Interval'
-            : 'Daily Interval';
+    kronosTimeframe === '4h' ? '4h Interval' : 'Daily Interval';
 
   return (
     <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 lg:p-6 flex flex-col gap-3 relative">
@@ -690,7 +682,7 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
   } = sharedState;
 
   // Local UI State
-  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1h');
+  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1d');
   const [displayMode, setDisplayMode] = useState<DisplayMode>('futures');
   // Shared hover state between chart and table (hover one, the other highlights)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);

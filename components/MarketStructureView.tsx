@@ -50,7 +50,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   const [selectedFuturesTf, setSelectedFuturesTf] = useState<FuturesTimeframe>('auto');
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [showKronosDetails, setShowKronosDetails] = useState(false);
-  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1h');
+  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1d');
 
   useEffect(() => {
     if (showUpdatedFlash) {
@@ -799,17 +799,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                         </svg>
                         <div className="flex justify-between w-full text-[8px] text-gray-500 px-1 mt-1 font-mono">
                           <span>Spot</span>
-                          {kronosTimeframe !== '15m' && (
-                            <span>
-                              {kronosTimeframe === '30m' ? '+15m' :
-                               kronosTimeframe === '1h' ? '+30m' :
-                               kronosTimeframe === '2h' ? '+1h' :
-                               kronosTimeframe === '4h' ? '+2h' :
-                               kronosTimeframe === 'EOD' ? '+3h' :
-                               kronosTimeframe === '2D' ? '+8h' :
-                               kronosTimeframe === '3D' ? '+12h' : '+3 G'}
-                            </span>
-                          )}
+                          <span>
+                            {kronosTimeframe === '4h' ? '+24h' : '+1 sett.'}
+                          </span>
                           <span>+{kronosTimeframe}</span>
                         </div>
                       </div>

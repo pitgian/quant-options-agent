@@ -53,16 +53,22 @@ from run_kronos import generate_future_trading_timestamps, get_futures_to_etf_ra
 # Configuration
 # ---------------------------------------------------------------------------
 
-# (name, yfinance interval, prediction length) — must match run_kronos.py
+# (name, yfinance interval, prediction length) — only the horizons that
+# run_kronos.py actually generates. We dropped 5m/15m/1h: their adapter val
+# MSE was the worst (1.0-1.14) while the |residual| correction was the
+# largest, i.e. the adapter was actively adding noise on the short horizons.
+# Concentrating on 4h + 1d focuses all adapter capacity on the timeframes
+# the UI actually uses and where the adapter is reliable (val MSE 0.45-0.50).
 HORIZONS: List[Tuple[str, str, int]] = [
-    ("5m", "5m", 24),
-    ("15m", "15m", 26),
-    ("1h", "1h", 20),
     ("4h", "4h", 6),
     ("1d", "1d", 5),
 ]
 
-CONTEXT_LEN = 128
+# Kronos context length — MUST match run_kronos.py (now 256). Training the
+# adapter on baselines generated with the same context the model uses at
+# inference avoids a train/serve skew that would silently degrade the
+# correction quality.
+CONTEXT_LEN = 256
 DEFAULT_FUTURES_RATIO = {"SPY": 10.09, "QQQ": 41.57}
 FUTURES_MAP = {"SPY": "ES=F", "QQQ": "NQ=F"}
 

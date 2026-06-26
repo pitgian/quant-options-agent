@@ -21,18 +21,11 @@ import {
 // ---------------------------------------------------------------------------
 
 export type KronosTimeframe =
-  | '15m' | '30m' | '1h' | '2h' | '4h' | 'EOD' | '2D' | '3D' | '1W';
+  | '4h' | '1d';
 
 export const KRONOS_TIMEFRAMES: { key: KronosTimeframe; label: string }[] = [
-  { key: '15m', label: '15m' },
-  { key: '30m', label: '30m' },
-  { key: '1h', label: '1h' },
-  { key: '2h', label: '2h' },
-  { key: '4h', label: '4h' },
-  { key: 'EOD', label: 'EOD (1 G)' },
-  { key: '2D', label: '2 Giorni' },
-  { key: '3D', label: '3 Giorni' },
-  { key: '1W', label: '1 Settimana' },
+  { key: '4h', label: '4h (24 ore)' },
+  { key: '1d', label: '1 Giorno (sett.)' },
 ];
 
 /**
@@ -74,32 +67,22 @@ export interface ActiveKronosForecast {
 /**
  * Maps a UI timeframe to the raw model resolution + number of candles to show.
  *
- *   '15m' → forecast_5m,  3 candles  (3 × 5m)
- *   '30m' → forecast_5m,  6 candles  (6 × 5m)
- *   '1h'  → forecast_15m, 4 candles  (4 × 15m)
- *   '2h'  → forecast_15m, 8 candles  (8 × 15m)
- *   '4h'  → forecast_1h,  4 candles  (4 × 1h)
- *   'EOD' → forecast_1h,  7 candles  (7 × 1h ≈ 7h to session close)
- *   '2D'  → forecast_4h,  4 candles  (4 × 4h = 16h)
- *   '3D'  → forecast_4h,  6 candles  (6 × 4h = 24h)
- *   '1W'  → forecast_1d,  5 candles  (5 × 1d)
+ * The UI timeframe now maps 1:1 to a Kronos resolution (no more multi-button
+ * aliasing onto the same resolution). Only the two horizons the pipeline
+ * generates are selectable:
+ *
+ *   '4h' → forecast_4h, 6 candles  (6 × 4h = 24h, session + next day)
+ *   '1d' → forecast_1d, 5 candles  (5 × 1d = 1 week, primary daily bias)
  */
 export function kronosTimeframeResolution(tf: KronosTimeframe): {
-  resolution: keyof Pick<KronosForecastItem, 'forecast_5m' | 'forecast_15m' | 'forecast_1h' | 'forecast_4h' | 'forecast_1d'>;
+  resolution: keyof Pick<KronosForecastItem, 'forecast_4h' | 'forecast_1d'>;
   candleCount: number;
-  /** True for multiday forecasts (4h/1d candles): scaleRatio locked to 1.0 to avoid sub-second jitter. */
+  /** Always true: both remaining horizons are multiday-style (stable scaleRatio). */
   isStable: boolean;
 } {
   switch (tf) {
-    case '15m': return { resolution: 'forecast_5m',  candleCount: 3, isStable: false };
-    case '30m': return { resolution: 'forecast_5m',  candleCount: 6, isStable: false };
-    case '1h':  return { resolution: 'forecast_15m', candleCount: 4, isStable: false };
-    case '2h':  return { resolution: 'forecast_15m', candleCount: 8, isStable: false };
-    case '4h':  return { resolution: 'forecast_1h',  candleCount: 4, isStable: true };
-    case 'EOD': return { resolution: 'forecast_1h',  candleCount: 7, isStable: true };
-    case '2D':  return { resolution: 'forecast_4h',  candleCount: 4, isStable: true };
-    case '3D':  return { resolution: 'forecast_4h',  candleCount: 6, isStable: true };
-    case '1W':  return { resolution: 'forecast_1d',  candleCount: 5, isStable: true };
+    case '4h': return { resolution: 'forecast_4h', candleCount: 6, isStable: true };
+    case '1d': return { resolution: 'forecast_1d', candleCount: 5, isStable: true };
   }
 }
 
@@ -113,21 +96,12 @@ function formatCandleTime(
   tf: KronosTimeframe,
   isStable: boolean,
 ): string {
-  const is5m = tf === '15m' || tf === '30m';
-  const is15m = tf === '1h' || tf === '2h';
-  const is1h = tf === '4h' || tf === 'EOD';
-  const is4h = tf === '2D' || tf === '3D';
-  const isDaily = tf === '1W';
+  const is4h = tf === '4h';
+  const isDaily = tf === '1d';
 
-  const fallbackLabel = is5m
-    ? `+${(idx + 1) * 5}m`
-    : is15m
-      ? `+${(idx + 1) * 15}m`
-      : is1h
-        ? `+${idx + 1}h`
-        : is4h
-          ? `+${(idx + 1) * 4}h`
-          : `+${idx + 1}d`;
+  const fallbackLabel = is4h
+    ? `+${(idx + 1) * 4}h`
+    : `+${idx + 1}d`;
 
   try {
     const d = new Date(candle.timestamp);

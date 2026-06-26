@@ -254,82 +254,46 @@ def get_market_bias(ticker, model, tokenizer, device):
     else:
         ratio = 1.0
         
-    # Generate 5m Forecast (up to 24 candles = 2 hours)
-    print(f"\n--- Generating 5m forecast for {ticker} ---")
-    forecast_5m = run_forecast_for_resolution(
-        fetch_ticker=fetch_ticker,
-        ratio=ratio,
-        interval="5m",
-        period="5d",
-        context_len=128,
-        pred_len=24,
-        model=model,
-        tokenizer=tokenizer,
-        device=device
-    )
-
-    # Generate 15m Forecast (up to 26 candles)
-    print(f"\n--- Generating 15m forecast for {ticker} ---")
-    forecast_15m = run_forecast_for_resolution(
-        fetch_ticker=fetch_ticker,
-        ratio=ratio,
-        interval="15m",
-        period="5d",
-        context_len=128,
-        pred_len=26,
-        model=model,
-        tokenizer=tokenizer,
-        device=device
-    )
-    
-    # Generate 1h Forecast (up to 20 candles = 3 days)
-    print(f"\n--- Generating 1h forecast for {ticker} ---")
-    forecast_1h = run_forecast_for_resolution(
-        fetch_ticker=fetch_ticker,
-        ratio=ratio,
-        interval="1h",
-        period="30d",
-        context_len=128,
-        pred_len=20,
-        model=model,
-        tokenizer=tokenizer,
-        device=device
-    )
-
-    # Generate 4h Forecast (up to 6 candles = 3 days)
+    # Generate 4h Forecast (up to 6 candles = 24h) — session + next-day bias.
+    # context_len=256 (~42 trading days of 4h bars) gives Kronos more pattern
+    # to condition on than the legacy 128, improving forecast coherence.
     print(f"\n--- Generating 4h forecast for {ticker} ---")
     forecast_4h = run_forecast_for_resolution(
         fetch_ticker=fetch_ticker,
         ratio=ratio,
         interval="4h",
         period="90d",
-        context_len=128,
+        context_len=256,
         pred_len=6,
         model=model,
         tokenizer=tokenizer,
         device=device
     )
 
-    # Generate 1d Forecast (up to 5 candles = 1 week)
+    # Generate 1d Forecast (up to 5 candles = 1 week) — the primary daily bias.
+    # context_len=256 (~1 year of daily bars) maximizes the seasonal/trend
+    # context Kronos can use; pred_len kept at 5 for maximum near-term precision.
     print(f"\n--- Generating 1d forecast for {ticker} ---")
     forecast_1d = run_forecast_for_resolution(
         fetch_ticker=fetch_ticker,
         ratio=ratio,
         interval="1d",
-        period="1y",
-        context_len=128,
+        period="2y",
+        context_len=256,
         pred_len=5,
         model=model,
         tokenizer=tokenizer,
         device=device
     )
     
-    # Get 1h trend bias from first 4 candles of 15m forecast for backwards compatibility
-    last_price = forecast_15m["last_price"]
-    candles_15m = forecast_15m["candles"]
-    candles_1h_out = candles_15m[:4]
-    predicted_price_1h = candles_1h_out[-1]["close"] if candles_1h_out else last_price
-    delta_pct = ((predicted_price_1h - last_price) / last_price) * 100
+    # Trend bias is derived from the daily forecast (the primary bias horizon).
+    # Falls back to the 4h forecast if the daily has no candles.
+    last_price = forecast_1d["last_price"]
+    candles_daily = forecast_1d["candles"]
+    predicted_price = candles_daily[-1]["close"] if candles_daily else (
+        forecast_4h["candles"][-1]["close"] if forecast_4h["candles"] else last_price
+    )
+    delta_pct = ((predicted_price - last_price) / last_price) * 100
     
     if delta_pct > 0.05:
         trend_bias = "BULLISH"
@@ -338,20 +302,14 @@ def get_market_bias(ticker, model, tokenizer, device):
     else:
         trend_bias = "NEUTRAL"
         
-    print(f"Result for {ticker} (1h bias): Last={last_price:.2f}, Predicted={predicted_price_1h:.2f}, Bias={trend_bias} ({delta_pct:+.2f}%)")
+    print(f"Result for {ticker} (daily bias): Last={last_price:.2f}, Predicted={predicted_price:.2f}, Bias={trend_bias} ({delta_pct:+.2f}%)")
     
     return {
         "ticker": ticker,
-        "last_price_5m": forecast_5m["last_price"],
-        "last_price_15m": last_price,
-        "last_price_1h": forecast_1h["last_price"],
         "last_price_4h": forecast_4h["last_price"],
         "last_price_1d": forecast_1d["last_price"],
         "trend_bias": trend_bias,
         "strength_pct": round(delta_pct, 2),
-        "forecast_5m": forecast_5m,
-        "forecast_15m": forecast_15m,
-        "forecast_1h": forecast_1h,
         "forecast_4h": forecast_4h,
         "forecast_1d": forecast_1d
     }
@@ -397,34 +355,10 @@ def main():
             "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "SP500_bias": {
                 "ticker": "SPY",
-                "last_price_5m": 750.0,
-                "last_price_15m": 750.0,
-                "last_price_1h": 750.0,
                 "last_price_4h": 750.0,
                 "last_price_1d": 750.0,
                 "trend_bias": "NEUTRAL",
                 "strength_pct": 0.0,
-                "forecast_5m": {
-                    "last_price": 750.0,
-                    "expected_high": 750.0,
-                    "expected_low": 750.0,
-                    "predicted_volatility_pct": 0.0,
-                    "candles": []
-                },
-                "forecast_15m": {
-                    "last_price": 750.0,
-                    "expected_high": 750.0,
-                    "expected_low": 750.0,
-                    "predicted_volatility_pct": 0.0,
-                    "candles": []
-                },
-                "forecast_1h": {
-                    "last_price": 750.0,
-                    "expected_high": 750.0,
-                    "expected_low": 750.0,
-                    "predicted_volatility_pct": 0.0,
-                    "candles": []
-                },
                 "forecast_4h": {
                     "last_price": 750.0,
                     "expected_high": 750.0,
@@ -443,34 +377,10 @@ def main():
             },
             "NASDAQ_bias": {
                 "ticker": "QQQ",
-                "last_price_5m": 740.0,
-                "last_price_15m": 740.0,
-                "last_price_1h": 740.0,
                 "last_price_4h": 740.0,
                 "last_price_1d": 740.0,
                 "trend_bias": "NEUTRAL",
                 "strength_pct": 0.0,
-                "forecast_5m": {
-                    "last_price": 740.0,
-                    "expected_high": 740.0,
-                    "expected_low": 740.0,
-                    "predicted_volatility_pct": 0.0,
-                    "candles": []
-                },
-                "forecast_15m": {
-                    "last_price": 740.0,
-                    "expected_high": 740.0,
-                    "expected_low": 740.0,
-                    "predicted_volatility_pct": 0.0,
-                    "candles": []
-                },
-                "forecast_1h": {
-                    "last_price": 740.0,
-                    "expected_high": 740.0,
-                    "expected_low": 740.0,
-                    "predicted_volatility_pct": 0.0,
-                    "candles": []
-                },
                 "forecast_4h": {
                     "last_price": 740.0,
                     "expected_high": 740.0,

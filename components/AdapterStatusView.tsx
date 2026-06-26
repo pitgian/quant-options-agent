@@ -12,11 +12,8 @@ interface AdapterStatusViewProps {
   sharedState: UseOptionsDataReturn;
 }
 
-const HORIZON_ORDER = ['5m', '15m', '1h', '4h', '1d'] as const;
-const RES_KEYS: { key: 'forecast_5m' | 'forecast_15m' | 'forecast_1h' | 'forecast_4h' | 'forecast_1d'; h: string }[] = [
-  { key: 'forecast_5m', h: '5m' },
-  { key: 'forecast_15m', h: '15m' },
-  { key: 'forecast_1h', h: '1h' },
+const HORIZON_ORDER = ['4h', '1d'] as const;
+const RES_KEYS: { key: 'forecast_4h' | 'forecast_1d'; h: string }[] = [
   { key: 'forecast_4h', h: '4h' },
   { key: 'forecast_1d', h: '1d' },
 ];

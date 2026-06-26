@@ -23,14 +23,11 @@ const candle = (ts: string, close: number, open = close): KronosPredictedCandle 
 function makeBiasItem(candles: KronosPredictedCandle[]): KronosForecastItem {
   return {
     ticker: 'SPY',
-    last_price_5m: 500, last_price_15m: 500, last_price_1h: 500, last_price_4h: 500, last_price_1d: 500,
+    last_price_4h: 500, last_price_1d: 500,
     trend_bias: 'NEUTRAL',
     strength_pct: 0,
-    forecast_5m:  { last_price: 500, expected_high: 505, expected_low: 495, predicted_volatility_pct: 2, candles },
-    forecast_15m: { last_price: 500, expected_high: 505, expected_low: 495, predicted_volatility_pct: 2, candles },
-    forecast_1h:  { last_price: 500, expected_high: 505, expected_low: 495, predicted_volatility_pct: 2, candles },
-    forecast_4h:  { last_price: 500, expected_high: 505, expected_low: 495, predicted_volatility_pct: 2, candles },
-    forecast_1d:  { last_price: 500, expected_high: 505, expected_low: 495, predicted_volatility_pct: 2, candles },
+    forecast_4h: { last_price: 500, expected_high: 505, expected_low: 495, predicted_volatility_pct: 2, candles },
+    forecast_1d: { last_price: 500, expected_high: 505, expected_low: 495, predicted_volatility_pct: 2, candles },
   };
 }
 
@@ -43,16 +40,9 @@ const tenCandles = Array.from({ length: 10 }, (_, i) =>
 // ---------------------------------------------------------------------------
 
 describe('kronosTimeframeResolution', () => {
-  const cases: Array<[KronosTimeframe, string, number, boolean]> = [
-    ['15m', 'forecast_5m', 3, false],
-    ['30m', 'forecast_5m', 6, false],
-    ['1h', 'forecast_15m', 4, false],
-    ['2h', 'forecast_15m', 8, false],
-    ['4h', 'forecast_1h', 4, true],
-    ['EOD', 'forecast_1h', 7, true],
-    ['2D', 'forecast_4h', 4, true],
-    ['3D', 'forecast_4h', 6, true],
-    ['1W', 'forecast_1d', 5, true],
+  const cases: Array<[KronosTimeframe, 'forecast_4h' | 'forecast_1d', number, boolean]> = [
+    ['4h', 'forecast_4h', 6, true],
+    ['1d', 'forecast_1d', 5, true],
   ];
 
   for (const [tf, resolution, count, isStable] of cases) {
@@ -74,84 +64,75 @@ describe('kronosTimeframeResolution', () => {
 
 describe('getActiveKronosForecast — guards', () => {
   it('returns null for null biasItem', () => {
-    expect(getActiveKronosForecast(null, 500, '1h')).toBeNull();
+    expect(getActiveKronosForecast(null, 500, '1d')).toBeNull();
   });
 
   it('returns null for undefined biasItem', () => {
-    expect(getActiveKronosForecast(undefined, 500, '1h')).toBeNull();
+    expect(getActiveKronosForecast(undefined, 500, '1d')).toBeNull();
   });
 
   it('returns null for zero etfSpot', () => {
-    expect(getActiveKronosForecast(makeBiasItem(tenCandles), 0, '1h')).toBeNull();
+    expect(getActiveKronosForecast(makeBiasItem(tenCandles), 0, '1d')).toBeNull();
   });
 
   it('returns null for negative etfSpot', () => {
-    expect(getActiveKronosForecast(makeBiasItem(tenCandles), -1, '1h')).toBeNull();
+    expect(getActiveKronosForecast(makeBiasItem(tenCandles), -1, '1d')).toBeNull();
   });
 
   it('returns null when resolution has no candles', () => {
     const item = makeBiasItem([]);
-    expect(getActiveKronosForecast(item, 500, '1h')).toBeNull();
+    expect(getActiveKronosForecast(item, 500, '1d')).toBeNull();
   });
 
   it('falls back to legacy top-level candles when resolution is missing', () => {
-    // For timeframe '1h' the resolution is forecast_15m (4 × 15m).
+    // For timeframe '1d' the resolution is forecast_1d.
     const item: KronosForecastItem = {
       ...makeBiasItem([]),
-      forecast_15m: undefined as unknown as KronosForecastItem['forecast_15m'],
+      forecast_1d: undefined as unknown as KronosForecastItem['forecast_1d'],
       last_price: 500,
       candles: tenCandles,
     };
-    const result = getActiveKronosForecast(item, 500, '1h');
+    const result = getActiveKronosForecast(item, 500, '1d');
     expect(result).not.toBeNull();
-    expect(result!.candles).toHaveLength(4);
+    expect(result!.candles).toHaveLength(5);
   });
 });
 
 // ---------------------------------------------------------------------------
-// getActiveKronosForecast — intraday scaling
+// getActiveKronosForecast — multiday stability (both remaining timeframes)
 // ---------------------------------------------------------------------------
 
-describe('getActiveKronosForecast — intraday (1h)', () => {
-  it('scales candles to live spot (scaleRatio = etfSpot / forecastLastPrice)', () => {
-    // forecast last_price = 500, live spot = 510 → scaleRatio = 1.02
-    const item = makeBiasItem(tenCandles);
-    const result = getActiveKronosForecast(item, 510, '1h');
-    expect(result).not.toBeNull();
-    // first candle close was 500 → 500 * 1.02 = 510
-    expect(result!.candles[0].close).toBeCloseTo(510, 4);
-    // lastPrice equals live spot for intraday
-    expect(result!.lastPrice).toBe(510);
-  });
-
-  it('slices to the timeframe candleCount (1h → 4)', () => {
-    expect(getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1h')!.candles).toHaveLength(4);
-  });
-
-  it('computes volatilityPct from expectedHigh/Low span', () => {
-    // candles close 500..503 (sliced to 4), high=close+1, low=close-1, scaleRatio=1
-    // expectedHigh = max(500, 501, 502, 503, 504) = 504
-    // expectedLow  = min(500, 499, 500, 501, 502) = 499  (first candle low = 500-1)
-    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1h')!;
-    expect(result.expectedHigh).toBeCloseTo(504, 4);
-    expect(result.expectedLow).toBeCloseTo(499, 4);
-    // volatilityPct = (504-499)/500 * 100 = 1.0
-    expect(result.volatilityPct).toBeCloseTo(1.0, 4);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getActiveKronosForecast — multiday stability
-// ---------------------------------------------------------------------------
-
-describe('getActiveKronosForecast — multiday (1W, stable)', () => {
-  it('locks scaleRatio to 1.0 (no jitter) and uses model last_price', () => {
+describe('getActiveKronosForecast — multiday (4h, 1d)', () => {
+  it('locks scaleRatio to 1.0 (no jitter) and uses model last_price (4h)', () => {
     // forecast last_price = 500, live spot = 510, but isStable → scaleRatio = 1
-    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 510, '1W')!;
+    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 510, '4h')!;
     // first candle close was 500 → unscaled
-    expect(result!.candles[0].close).toBeCloseTo(500, 4);
+    expect(result.candles[0].close).toBeCloseTo(500, 4);
     // lastPrice uses model price, not live spot
-    expect(result!.lastPrice).toBe(500);
+    expect(result.lastPrice).toBe(500);
+  });
+
+  it('locks scaleRatio to 1.0 (no jitter) and uses model last_price (1d)', () => {
+    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 510, '1d')!;
+    expect(result.candles[0].close).toBeCloseTo(500, 4);
+    expect(result.lastPrice).toBe(500);
+  });
+
+  it('slices to the timeframe candleCount (4h → 6)', () => {
+    expect(getActiveKronosForecast(makeBiasItem(tenCandles), 500, '4h')!.candles).toHaveLength(6);
+  });
+
+  it('slices to the timeframe candleCount (1d → 5)', () => {
+    expect(getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1d')!.candles).toHaveLength(5);
+  });
+
+  it('computes volatilityPct from expectedHigh/Low span (4h)', () => {
+    // candles close 500..509 (sliced to 6), high=close+1, low=close-1, scaleRatio=1
+    // expectedHigh = max(500, 502, 503, 504, 505, 506) = 506  (sliced closes 500..505, +1)
+    // expectedLow  = min(500, 499, 500, 501, 502, 503) = 499
+    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '4h')!;
+    expect(result.expectedHigh).toBeCloseTo(506, 4);
+    expect(result.expectedLow).toBeCloseTo(499, 4);
   });
 });
 
@@ -165,23 +146,23 @@ describe('getActiveKronosForecast — trendBias thresholds', () => {
       candle('2026-06-22T15:30:00Z', 500),
       candle('2026-06-22T15:45:00Z', 500),
       candle('2026-06-22T16:00:00Z', 500),
-      candle('2026-06-22T16:15:00Z', targetClose),
+      candle('2026-06-22T16:15:00Z', 500),
+      candle('2026-06-22T16:30:00Z', targetClose),
     ];
     return makeBiasItem(candles);
   };
 
   it('BULLISH when target > lastPrice + 0.05%', () => {
     // lastPrice=500, target=502 → strengthPct = +0.4% → BULLISH
-    expect(getActiveKronosForecast(biasWithTarget(502), 500, '1h')!.trendBias).toBe('BULLISH');
+    expect(getActiveKronosForecast(biasWithTarget(502), 500, '1d')!.trendBias).toBe('BULLISH');
   });
 
   it('BEARISH when target < lastPrice - 0.05%', () => {
-    expect(getActiveKronosForecast(biasWithTarget(498), 500, '1h')!.trendBias).toBe('BEARISH');
+    expect(getActiveKronosForecast(biasWithTarget(498), 500, '1d')!.trendBias).toBe('BEARISH');
   });
 
   it('NEUTRAL when target is within ±0.05%', () => {
-    // lastPrice=500, target=500 → strengthPct = 0 → NEUTRAL
-    expect(getActiveKronosForecast(biasWithTarget(500), 500, '1h')!.trendBias).toBe('NEUTRAL');
+    expect(getActiveKronosForecast(biasWithTarget(500), 500, '1d')!.trendBias).toBe('NEUTRAL');
   });
 });
 
@@ -192,8 +173,8 @@ describe('getActiveKronosForecast — trendBias thresholds', () => {
 describe('getActiveKronosForecast — futures multiplier', () => {
   it('multiplier=10 scales absolute prices but leaves percentages invariant', () => {
     const item = makeBiasItem(tenCandles);
-    const etf = getActiveKronosForecast(item, 500, '1h')!;
-    const fut = getActiveKronosForecast(item, 500, '1h', { multiplier: 10 })!;
+    const etf = getActiveKronosForecast(item, 500, '1d')!;
+    const fut = getActiveKronosForecast(item, 500, '1d', { multiplier: 10 })!;
 
     // Absolute prices scale by 10
     expect(fut.lastPrice).toBeCloseTo(etf.lastPrice * 10, 4);
@@ -209,8 +190,8 @@ describe('getActiveKronosForecast — futures multiplier', () => {
   });
 
   it('default multiplier is 1 (ETF space)', () => {
-    const r1 = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1h')!;
-    const r2 = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1h', { multiplier: 1 })!;
+    const r1 = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1d')!;
+    const r2 = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1d', { multiplier: 1 })!;
     expect(r1.lastPrice).toBe(r2.lastPrice);
   });
 });
@@ -221,7 +202,7 @@ describe('getActiveKronosForecast — futures multiplier', () => {
 
 describe('getActiveKronosForecast — chart fields', () => {
   it('every candle has formattedTime, label, changePct, rawVolume', () => {
-    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1h')!;
+    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1d')!;
     for (const c of result.candles) {
       expect(typeof c.formattedTime).toBe('string');
       expect(c.formattedTime.length).toBeGreaterThan(0);

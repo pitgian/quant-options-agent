@@ -732,7 +732,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
     liveSpot,
   } = state;
 
-  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1h');
+  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1d');
   const [showCrossSymbol, setShowCrossSymbol] = useState(true);
   const [flashVisible, setFlashVisible] = useState(false);
 
