@@ -494,6 +494,16 @@ def main():
         sys.exit(1)
     with open(history_path, "r") as f:
         history_data = json.load(f)
+    # Keep only records produced by the current GEX formula. Records from
+    # earlier versions (e.g. pre-Black-Scholes-IV-fix) carry an artefactual
+    # GEX and would corrupt training; they are purged on write by
+    # append_to_history, but we filter defensively on read too.
+    HISTORY_GEX_VERSION = 2
+    before = len(history_data)
+    history_data = [r for r in history_data if r.get("gex_v") == HISTORY_GEX_VERSION]
+    purged = before - len(history_data)
+    if purged:
+        _log(f"🧹 Dropped {purged} stale history record(s) with incompatible gex_v (≠{HISTORY_GEX_VERSION}).")
 
     # 2. Load Kronos model
     device = "cuda:0" if torch.cuda.is_available() else "cpu"

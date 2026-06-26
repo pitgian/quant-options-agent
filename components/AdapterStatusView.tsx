@@ -494,9 +494,10 @@ export const AdapterStatusView: React.FC<AdapterStatusViewProps> = ({ sharedStat
               <h3 className="text-sm font-bold text-slate-300 mb-2">ℹ️ Come funziona</h3>
               <ul className="text-xs text-gray-400 space-y-1 list-disc pl-4 max-w-3xl">
                 <li>L'adapter è un MLP residuale <b>affiancato</b> a Kronos (mai fine-tuned): corregge la baseline usando skew, put/call OI e Net GEX.</li>
-                <li>Un <b>unico modello</b> copre tutti gli orizzonti (5m/15m/1h/4h/1d) tramite un embedding del <code>pred_len</code>.</li>
-                <li><b>Guard anti-overfit:</b> il checkpoint viene scritto solo con ≥ sample reali con target realizzato; altrimenti il vecchio adapter non viene toccato.</li>
+                <li>Un <b>unico modello</b> copre entrambi gli orizzonti attivi (4h e 1d) tramite un embedding del <code>pred_len</code>.</li>
+                <li><b>Guard anti-overfit:</b> il checkpoint viene scritto solo con ≥ 30 sample reali con target realizzato; altrimenti il vecchio adapter non viene toccato.</li>
                 <li>I target reali vengono allineati agli snapshot storici di <code>options_history.json</code> via prezzi yfinance; l'accumulo continua automaticamente ogni ciclo.</li>
+                <li><b>GEX pulito:</b> dal 2026-06-26 la volatilità implicita è calcolata via inversione di Black-Scholes dal prezzo bid/ask + fit della smile per scadenza; i record storici precedenti (GEX artefatto) sono stati scartati automaticamente.</li>
               </ul>
             </div>
           </>

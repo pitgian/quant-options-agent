@@ -117,6 +117,10 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
         try:
             with open(history_path, "r") as f:
                 history = json.load(f)
+            # Drop records with an incompatible (pre-BS-IV-fix) GEX formula —
+            # their total_net_gex is artefactual and would mislead the adapter.
+            HISTORY_GEX_VERSION = 2
+            history = [r for r in history if r.get("gex_v") == HISTORY_GEX_VERSION]
             symbol_history = [r for r in history if r.get("symbol") == symbol]
             if symbol_history:
                 hist_df = pd.DataFrame(symbol_history)

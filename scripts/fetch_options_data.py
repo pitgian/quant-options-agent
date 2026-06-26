@@ -49,6 +49,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_SYMBOL = "SPY"
 DEFAULT_OUTPUT = "data/options_data.json"
 DATA_VERSION = "3.0"
+# History schema version for the GEX covariate. Bumped when the GEX formula
+# changes; append_to_history discards records produced by older versions so
+# the adapter never trains on stale/incompatible GEX values.
+#   v2 = Black-Scholes IV inversion + per-expiry smile fit (replaces the
+#        Yahoo-IV-floor artefact that had corrupted ~99% of the old GEX).
+HISTORY_GEX_VERSION = 2
 MAX_EXPIRATIONS_TO_PROCESS = 25  # Max expirations to process, selected by highest contract count
 CHAIN_FETCH_DELAY = 0.3  # seconds between individual chain fetches to avoid rate limiting
 TOP_N_WALLS = 999  # Show all walls, no artificial limit
@@ -1592,6 +1598,14 @@ def clean_expiry_iv(options: List[Dict[str, Any]], spot: float, dte: int, symbol
 def append_to_history(symbol: str, skew: float, pcr: float, net_gex: float, file_path: str = "data/options_history.json") -> None:
     """
     Append skew, PCR and Net GEX metrics to history log, keeping the last 500 records per symbol.
+
+    Schema versioning (gex_v): records are tagged with the GEX computation
+    version they were produced by. When loading, any record whose version does
+    not match HISTORY_GEX_VERSION is DROPPED — this self-heals the log when the
+    GEX formula changes. In particular, all records produced before the
+    Black-Scholes IV fix (gex_v missing / =1) carried an artefactual GEX (the
+    Yahoo-IV-floor bug inflated GEX by ~99%), so they are discarded here on
+    the next append and accumulation restarts clean.
     """
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     history = []
@@ -1602,9 +1616,17 @@ def append_to_history(symbol: str, skew: float, pcr: float, net_gex: float, file
         except Exception as e:
             logger.warning(f"Could not load history file: {e}")
 
+    # Drop records produced by an incompatible (e.g. pre-BS-fix) GEX formula.
+    before = len(history)
+    history = [r for r in history if r.get("gex_v") == HISTORY_GEX_VERSION]
+    purged = before - len(history)
+    if purged:
+        logger.info(f"🧹 Purged {purged} stale history record(s) with incompatible gex_v (≠{HISTORY_GEX_VERSION})")
+
     new_record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "symbol": symbol,
+        "gex_v": HISTORY_GEX_VERSION,
         "volatility_skew_25d": round(skew, 5),
         "put_call_oi_ratio": round(pcr, 5),
         "total_net_gex": round(net_gex, 5)
