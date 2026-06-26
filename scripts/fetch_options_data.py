@@ -600,6 +600,8 @@ def parse_chain_side(
         vol = int(row["volume"]) if pd.notna(row["volume"]) else 0
         strike = round(float(row["strike"]), 2)
         iv = float(row["impliedVolatility"]) if pd.notna(row.get("impliedVolatility")) else 0.0
+        bid = float(row["bid"]) if pd.notna(row.get("bid")) else 0.0
+        ask = float(row["ask"]) if pd.notna(row.get("ask")) else 0.0
         
         gamma = float(row["gamma"]) if pd.notna(row.get("gamma")) else 0.0
         if gamma == 0.0 and spot > 0:
@@ -622,6 +624,8 @@ def parse_chain_side(
                 "vol": vol,
                 "gamma": gamma,
                 "iv": iv,
+                "bid": bid,
+                "ask": ask,
             }
         )
     return rows, zero_oi_count, fallback_count
@@ -1328,6 +1332,263 @@ def estimate_gamma(spot: float, strike: float, dte: int, symbol: str, implied_vo
         return 0.0
 
 
+# ===========================================================================
+# Professional IV estimation: Black-Scholes inversion + smile fit.
+#
+# Yahoo Finance returns impliedVolatility = ~1e-5 (effectively 0) for a large
+# share of the chain (observed ~40% on SPY, dominant on the high-OI
+# near-the-money options). The previous pipeline floored this to a flat 0.05,
+# which produced absurdly inflated gammas on exactly the strikes that drive
+# GEX — i.e. the GEX signal fed to the adapter was ~99% artefact.
+#
+# This module replicates what professional option platforms do:
+#   1. For every option with a usable bid/ask, INVERT Black-Scholes from the
+#      mid price (Newton-Raphson) to recover the true implied vol.
+#   2. For each expiry, FIT a volatility smile (weighted quadratic in
+#      log-moneyness, weights = OI) from the reliably-inverted IVs and
+#      interpolate/extrapolate to the options Yahoo couldn't price.
+#   3. Recompute gamma from the cleaned IV via the standard BS formula.
+#
+# The result is a GEX that reflects actual dealer positioning rather than a
+# floor artefact, which makes the covariate informative for the adapter.
+# ============================================================================
+
+_RISK_FREE_RATE = 0.05
+# Threshold below which a Yahoo IV is treated as broken and replaced.
+_YAHOO_IV_BROKEN = 0.03
+# Max acceptable bid/ask spread as a fraction of mid, to reject stale/wide quotes.
+_MAX_SPREAD_FRAC = 0.25
+
+
+def _bs_d1_d2(spot: float, strike: float, T: float, sigma: float, r: float = _RISK_FREE_RATE):
+    import math
+    sqrt_T = math.sqrt(T)
+    d1 = (math.log(spot / strike) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
+    d2 = d1 - sigma * sqrt_T
+    return d1, d2
+
+
+def bs_price(spot: float, strike: float, T: float, sigma: float, is_call: bool, r: float = _RISK_FREE_RATE) -> float:
+    """Black-Scholes option price (no dividends; index/ETF assumption)."""
+    import math
+    if T <= 0 or sigma <= 0:
+        intrinsic = max(spot - strike, 0.0) if is_call else max(strike - spot, 0.0)
+        return intrinsic
+    try:
+        d1, d2 = _bs_d1_d2(spot, strike, T, sigma, r)
+        if is_call:
+            return spot * _norm_cdf(d1) - strike * math.exp(-r * T) * _norm_cdf(d2)
+        else:
+            return strike * math.exp(-r * T) * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
+    except Exception:
+        return 0.0
+
+
+def _norm_cdf(x: float) -> float:
+    import math
+    return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
+
+
+def bs_vega(spot: float, strike: float, T: float, sigma: float, r: float = _RISK_FREE_RATE) -> float:
+    import math
+    if T <= 0 or sigma <= 0:
+        return 0.0
+    try:
+        d1, _ = _bs_d1_d2(spot, strike, T, sigma, r)
+        pdf = math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)
+        return spot * math.sqrt(T) * pdf
+    except Exception:
+        return 0.0
+
+
+def implied_vol_newton(
+    price: float, spot: float, strike: float, T: float, is_call: bool,
+    r: float = _RISK_FREE_RATE, max_iter: int = 50, tol: float = 1e-5,
+) -> float:
+    """
+    Solve for implied volatility via Newton-Raphson on the BS price.
+    Returns 0.0 if no convergence (caller will fall back to the smile fit).
+    Bounded to [0.01, 5.0].
+    """
+    if price <= 0 or T <= 0:
+        return 0.0
+    intrinsic = max(spot - strike, 0.0) if is_call else max(strike - spot, 0.0)
+    if price < intrinsic * 0.95:  # below intrinsic → unreliable quote
+        return 0.0
+    sigma = 0.20  # initial guess
+    for _ in range(max_iter):
+        try:
+            p = bs_price(spot, strike, T, sigma, is_call, r)
+        except Exception:
+            return 0.0
+        diff = p - price
+        if abs(diff) < tol:
+            return sigma
+        v = bs_vega(spot, strike, T, sigma, r)
+        if v < 1e-8:
+            break
+        sigma -= diff / v
+        if sigma <= 0.005:
+            sigma = 0.005
+        if sigma > 5.0:
+            return 0.0
+    return 0.0
+
+
+def fit_iv_smile(points: List[Dict[str, Any]], spot: float, T: float):
+    """
+    Fit a quadratic smile IV(m) = a + b*m + c*m² where m = log(K/F)/sqrt(T)
+    (standard parametric volatility-smile form). Returns a callable
+    iv(strike) or None if too few valid points.
+
+    `points` is a list of {"strike":, "iv":, "weight":} with iv > 0.
+    Fit is weighted (by OI) and robust: requires >=4 points; otherwise returns
+    None and the caller falls back to a flat mean IV.
+    """
+    import math
+    valid = [(p["strike"], p["iv"], p.get("weight", 1.0)) for p in points if p.get("iv", 0) > 0]
+    if len(valid) < 4:
+        return None
+    sqrt_T = math.sqrt(T) if T > 0 else 1.0
+    # Build weighted linear system for [a, b, c] with m = log(K/spot)/sqrt_T.
+    # (Using spot as F proxy; r-discount correction is second-order for the smile shape.)
+    Sxx = [0.0] * 6  # sum w * x^k for k=0..4
+    Sxy = [0.0] * 3  # sum w * x^k * y for k=0..2
+    for strike, iv, w in valid:
+        try:
+            m = math.log(strike / spot) / sqrt_T
+        except Exception:
+            continue
+        y = iv
+        # Clamp absurd IVs out of the fit (robustness against residual bad quotes)
+        if y > 3.0 or y < 0.01:
+            continue
+        xk = 1.0
+        for k in range(5):
+            Sxx[k] += w * xk
+            if k < 3:
+                Sxy[k] += w * xk * y
+            xk *= m
+    # Solve 3x3 normal equations: [S0 S1 S2; S1 S2 S3; S2 S3 S4] x = [Sy0 Sy1 Sy2]
+    M = [[Sxx[0], Sxx[1], Sxx[2]], [Sxx[1], Sxx[2], Sxx[3]], [Sxx[2], Sxx[3], Sxx[4]]]
+    rhs = [Sxy[0], Sxy[1], Sxy[2]]
+    coeff = _solve3(M, rhs)
+    if coeff is None:
+        return None
+    a, b, c = coeff
+
+    def iv_at(strike: float) -> float:
+        try:
+            m = math.log(strike / spot) / sqrt_T
+        except Exception:
+            return 0.0
+        val = a + b * m + c * m * m
+        # Clamp to a sane range to avoid runaway extrapolation on the wings
+        return max(0.03, min(5.0, val))
+
+    return iv_at
+
+
+def _solve3(M, rhs):
+    """Solve a 3x3 linear system via Cramer's rule. Returns None if singular."""
+    def det3(a):
+        return (a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+                - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+                + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]))
+    D = det3(M)
+    if abs(D) < 1e-12:
+        return None
+    res = []
+    for col in range(3):
+        Mc = [row[:] for row in M]
+        for r in range(3):
+            Mc[r][col] = rhs[r]
+        res.append(det3(Mc) / D)
+    return res
+
+
+def clean_expiry_iv(options: List[Dict[str, Any]], spot: float, dte: int, symbol: str) -> int:
+    """
+    Recompute implied volatility and gamma for every option in ONE expiry using
+    Black-Scholes inversion from bid/ask + per-expiry smile fit. Mutates the
+    option dicts in place (sets 'iv' and 'gamma').
+
+    Pipeline:
+      * Step A — invert: options with usable bid/ask get IV via Newton-Raphson
+        on the mid price. These anchor the smile.
+      * Step B — fit smile: weighted quadratic in log-moneyness from anchored IVs.
+      * Step C — fill: options without a usable mid (or whose Yahoo IV was
+        broken) take IV from the smile; if no smile, fall back to the expiry's
+        median anchored IV; if nothing, keep the symbol default.
+      * Step D — recompute gamma from the cleaned IV via BS.
+
+    Returns the count of IVs that were replaced (diagnostics).
+    """
+    import math
+    if not options or spot <= 0:
+        return 0
+    T = max(dte / 365.0, 1.0 / 365.0)
+    replaced = 0
+
+    # Step A: invert IV from mid for options with usable bid/ask.
+    anchor_points = []  # [{strike, iv, weight}]
+    inverted_iv = {}  # id(opt) -> iv
+    for opt in options:
+        yahoo_iv = opt.get("iv", 0.0)
+        bid = opt.get("bid", 0.0)
+        ask = opt.get("ask", 0.0)
+        is_call = opt["side"] == "CALL"
+        mid = 0.0
+        if bid > 0 and ask > 0:
+            mid = 0.5 * (bid + ask)
+            if mid > 0 and (ask - bid) / mid <= _MAX_SPREAD_FRAC:
+                iv = implied_vol_newton(mid, spot, opt["strike"], T, is_call)
+                if iv > 0:
+                    inverted_iv[id(opt)] = iv
+                    anchor_points.append({
+                        "strike": opt["strike"],
+                        "iv": iv,
+                        "weight": max(opt.get("oi", 0), 1),
+                    })
+                    continue
+        # If inversion failed but Yahoo IV is credible, still use it as anchor.
+        if yahoo_iv >= 0.05 <= 3.0:
+            anchor_points.append({
+                "strike": opt["strike"],
+                "iv": yahoo_iv,
+                "weight": max(opt.get("oi", 0), 1),
+            })
+
+    # Step B: fit the smile from anchors.
+    smile = fit_iv_smile(anchor_points, spot, T)
+    # Fallback flat IV = median of anchors (or symbol default).
+    valid_anchor_ivs = [p["iv"] for p in anchor_points]
+    median_anchor = sorted(valid_anchor_ivs)[len(valid_anchor_ivs) // 2] if valid_anchor_ivs else None
+
+    # Step C/D: assign final IV to every option and recompute gamma.
+    for opt in options:
+        is_call = opt["side"] == "CALL"
+        yahoo_iv = opt.get("iv", 0.0)
+        final_iv = inverted_iv.get(id(opt))
+        if final_iv is None or final_iv <= 0:
+            if yahoo_iv >= 0.05:
+                final_iv = yahoo_iv  # Yahoo value was credible
+            elif smile is not None:
+                final_iv = smile(opt["strike"])  # interpolate
+            elif median_anchor is not None:
+                final_iv = median_anchor
+            else:
+                # Last-resort symbol default.
+                DEFAULT_IV = {'SPY': 0.15, 'QQQ': 0.20, 'SPX': 0.15, 'NDX': 0.20}
+                final_iv = DEFAULT_IV.get((symbol or "").upper(), 0.20)
+        if abs(final_iv - yahoo_iv) > 1e-6 and yahoo_iv < _YAHOO_IV_BROKEN:
+            replaced += 1
+        opt["iv"] = float(final_iv)
+        # Recompute gamma from the cleaned IV (BS formula; matches estimate_gamma).
+        opt["gamma"] = estimate_gamma(spot, opt["strike"], dte, symbol, final_iv)
+    return replaced
+
+
 def append_to_history(symbol: str, skew: float, pcr: float, net_gex: float, file_path: str = "data/options_history.json") -> None:
     """
     Append skew, PCR and Net GEX metrics to history log, keeping the last 500 records per symbol.
@@ -1478,6 +1739,20 @@ def fetch_symbol_data(
         total_zero_oi += call_zeros + put_zeros
         total_fallbacks += call_fbs + put_fbs
         all_options = calls + puts
+
+        # Recompute IV (Black-Scholes inversion from bid/ask + per-expiry smile
+        # fit) and recompute gamma from the cleaned IV. This replaces the
+        # broken Yahoo IV (~1e-5 on ~40% of the chain) that previously inflated
+        # GEX by ~99%. Done per-expiry because the smile is per-expiry.
+        dte = days_to_expiry(exp_date)
+        replaced_iv = clean_expiry_iv(all_options, spot, dte, symbol)
+        if replaced_iv:
+            logger.info(f"     ↻ {exp_date}: replaced {replaced_iv} broken Yahoo IV(s) via BS inversion + smile fit")
+        # Drop bid/ask from the output dicts — only needed for the IV inversion,
+        # keeping them would bloat the JSON (~2x) and the frontend doesn't use them.
+        for _o in all_options:
+            _o.pop("bid", None)
+            _o.pop("ask", None)
 
         # Raw expiry for the JSON (consumed by vercelDataService.ts)
         raw_expiries.append(
