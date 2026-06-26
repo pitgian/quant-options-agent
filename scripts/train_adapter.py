@@ -365,6 +365,12 @@ def train(
         se = ((out - targets) ** 2).mean(dim=-1)  # (B, max_pl)
         return (se * mask).sum() / (mask.sum() + 1e-8)
 
+    def baseline_mse_of(targets, mask):
+        # MSE of the target residual against ZERO = variance of (actual -
+        # baseline) in normalized space = how wrong the Kronos baseline alone
+        # is. Used as the reference to measure how much the adapter helps.
+        return masked_mse(torch.zeros_like(targets), targets, mask).item()
+
     loss_history = []
 
     def evaluate(batch):
@@ -394,7 +400,21 @@ def train(
         if verbose and ((epoch + 1) % max(1, epochs // 10) == 0 or epoch == epochs - 1):
             _log(f"  Epoch [{epoch+1}/{epochs}] train={train_loss:.6f} val={val_loss:.6f}")
 
-    # Per-horizon validation MSE
+    # Overall baseline-vs-adapter comparison on the FULL validation set.
+    # baseline_mse = variance of the target residual = how wrong Kronos alone
+    # is (normalized space). adapter_mse = residual error after correction.
+    # improvement_pct = share of baseline error the adapter explains
+    # (R²-like: 100% = perfect correction, 0% = no help, <0% = harmful).
+    with torch.no_grad():
+        baselines, targets, mask, sk, pc, gx, pl = to_tensors(val_s)
+        out = adapter(baselines, sk, pc, gx, pl)
+        overall_adapter_mse = masked_mse(out, targets, mask).item()
+        overall_baseline_mse = baseline_mse_of(targets, mask)
+    overall_improvement_pct = (
+        (overall_baseline_mse - overall_adapter_mse) / (overall_baseline_mse + 1e-8)
+    ) * 100.0
+
+    # Per-horizon validation MSE (baseline vs adapter)
     horizon_metrics: Dict[str, Dict] = {}
     for hname, _, pred_len in HORIZONS:
         hv = [s for s in val_s if s["pred_len"] == pred_len]
@@ -403,11 +423,17 @@ def train(
         with torch.no_grad():
             baselines, targets, mask, sk, pc, gx, pl = to_tensors(hv)
             out = adapter(baselines, sk, pc, gx, pl)
-            mse = masked_mse(out, targets, mask).item()
+            adapter_mse = masked_mse(out, targets, mask).item()
+            baseline_mse = baseline_mse_of(targets, mask)
+        improvement_pct = (
+            (baseline_mse - adapter_mse) / (baseline_mse + 1e-8)
+        ) * 100.0
         horizon_metrics[hname] = {
             "pred_len": pred_len,
             "val_samples": len(hv),
-            "val_mse": mse,
+            "val_mse": adapter_mse,
+            "baseline_val_mse": baseline_mse,
+            "improvement_pct": improvement_pct,
         }
 
     final_train_loss = loss_history[-1]["train_loss"] if loss_history else None
@@ -420,6 +446,8 @@ def train(
         "horizon_metrics": horizon_metrics,
         "final_train_loss": final_train_loss,
         "final_val_loss": final_val_loss,
+        "final_baseline_val_loss": overall_baseline_mse,
+        "final_improvement_pct": overall_improvement_pct,
         "train_samples": len(train_s),
         "val_samples": len(val_s),
     }
@@ -610,6 +638,8 @@ def main():
         "val_samples": info["val_samples"],
         "final_train_loss": info["final_train_loss"],
         "final_val_loss": info["final_val_loss"],
+        "final_baseline_val_loss": info["final_baseline_val_loss"],
+        "final_improvement_pct": info["final_improvement_pct"],
         "horizons": info["horizon_metrics"],
         "loss_history": info["loss_history"],
     })

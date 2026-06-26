@@ -67,6 +67,7 @@ function computeVerdict(stats: AdapterTrainingStats | null): Verdict {
   const train = stats.final_train_loss;
   const val = stats.final_val_loss;
   const overfit = train != null && val != null && val > train * 2.5;
+  const imp = stats.final_improvement_pct;
   if (overfit) {
     return {
       label: 'Addestrato ma in overfit',
@@ -74,10 +75,11 @@ function computeVerdict(stats: AdapterTrainingStats | null): Verdict {
       detail: `Loss train ${fmt(train)} ma val ${fmt(val)} molto più alta — probabilmente troppo pochi sample reali per orizzonte.`,
     };
   }
+  const impStr = imp != null ? ` · riduce l'errore del ${imp >= 0 ? '+' : ''}${imp.toFixed(1)}% vs Kronos puro` : '';
   return {
     label: 'Addestrato su dati reali',
-    tone: 'good',
-    detail: `${stats.real_samples_total} sample reali · train ${fmt(train)} · val ${fmt(val)}.`,
+    tone: imp != null && imp < 0 ? 'warn' : 'good',
+    detail: `${stats.real_samples_total} sample reali · train ${fmt(train)} · val ${fmt(val)}${impStr}.`,
   };
 }
 
@@ -162,6 +164,78 @@ function StatCards({ stats }: { stats: AdapterTrainingStats }) {
   );
 }
 
+function improvementTone(pct: number | null | undefined): { color: string; label: string } {
+  if (pct == null || Number.isNaN(pct)) return { color: 'text-slate-400', label: '—' };
+  if (pct >= 25) return { color: 'text-emerald-400', label: 'Ottimo' };
+  if (pct >= 10) return { color: 'text-green-400', label: 'Buono' };
+  if (pct >= 3) return { color: 'text-amber-400', label: 'Modesto' };
+  if (pct >= 0) return { color: 'text-orange-400', label: 'Marginale' };
+  return { color: 'text-red-400', label: 'Peggiorativo' };
+}
+
+function ImprovementCard({ stats }: { stats: AdapterTrainingStats }) {
+  const pct = stats.final_improvement_pct;
+  const baseline = stats.final_baseline_val_loss;
+  const adapter = stats.final_val_loss;
+  const tone = improvementTone(pct);
+  const hasData = pct != null && baseline != null && adapter != null;
+
+  return (
+    <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-sm font-bold text-slate-300">🎯 Miglioramento vs Kronos puro (validation set)</h3>
+        {hasData && (
+          <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border bg-slate-800/40 border-slate-700 ${tone.color}`}>
+            {tone.label}
+          </span>
+        )}
+      </div>
+      {hasData ? (
+        <>
+          <div className="flex items-end gap-6 flex-wrap">
+            <div className="flex flex-col">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Errore ridotto</span>
+              <span className={`text-4xl font-black ${tone.color}`}>{pct! >= 0 ? '+' : ''}{pct!.toFixed(1)}%</span>
+              <span className="text-[10px] text-gray-500">quota dell'errore baseline spiegata dall'adapter (R²-like)</span>
+            </div>
+            <div className="flex flex-col gap-1 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-500" />
+                <span className="text-gray-400">Baseline Kronos (MSE):</span>
+                <span className="font-mono font-semibold text-slate-200">{baseline!.toFixed(4)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" />
+                <span className="text-gray-400">Con adapter (MSE):</span>
+                <span className="font-mono font-semibold text-emerald-300">{adapter!.toFixed(4)}</span>
+              </div>
+            </div>
+          </div>
+          {/* Visual bar: how much of baseline error remains after adapter */}
+          <div className="mt-1">
+            <div className="flex items-center justify-between text-[9px] text-gray-500 mb-1">
+              <span>Errore residuo</span>
+              <span>{(100 - Math.max(0, pct!)).toFixed(1)}% del baseline</span>
+            </div>
+            <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400"
+                style={{ width: `${Math.max(0, Math.min(100, 100 - Math.max(0, pct!))).toFixed(1)}%` }}
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-500 leading-relaxed">
+            Confronto sul validation set (dati non visti in training): MSE del Kronos da solo vs Kronos + adapter.
+            Valori più alti = l'adapter corregge una quota maggiore dell'errore del modello base. Negativo = l'adapter peggiora.
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-gray-500">Metrica non ancora disponibile — compare dopo il prossimo addestramento con dati sufficienti.</p>
+      )}
+    </div>
+  );
+}
+
 function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
   const perH = stats.per_horizon_real_samples ?? {};
   const metrics = stats.horizons ?? {};
@@ -173,6 +247,8 @@ function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
       real,
       valSamples: m?.val_samples,
       valMse: m?.val_mse,
+      baselineMse: m?.baseline_val_mse,
+      improvementPct: m?.improvement_pct,
       predLen: m?.pred_len,
     };
   });
@@ -188,7 +264,9 @@ function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
               <th className="px-4 py-2.5">Pred Len</th>
               <th className="px-4 py-2.5">Sample Reali</th>
               <th className="px-4 py-2.5">Val Samples</th>
-              <th className="px-4 py-2.5">Val MSE</th>
+              <th className="px-4 py-2.5">Baseline MSE</th>
+              <th className="px-4 py-2.5">Adapter MSE</th>
+              <th className="px-4 py-2.5">Miglioramento</th>
               <th className="px-4 py-2.5">Stato</th>
             </tr>
           </thead>
@@ -196,13 +274,22 @@ function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
             {rows.map((r) => {
               const ok = r.real >= (stats.min_real_samples_required ?? 30);
               const hasMetric = r.valMse !== undefined;
+              const tone = improvementTone(r.improvementPct);
               return (
                 <tr key={r.h} className="hover:bg-slate-900/40">
                   <td className="px-4 py-2.5 font-semibold text-slate-200">{r.h}</td>
                   <td className="px-4 py-2.5 font-mono text-gray-400">{r.predLen ?? '—'}</td>
                   <td className="px-4 py-2.5 font-mono">{r.real}</td>
                   <td className="px-4 py-2.5 font-mono text-gray-400">{r.valSamples ?? '—'}</td>
-                  <td className="px-4 py-2.5 font-mono">{hasMetric ? fmt(r.valMse, 5) : '—'}</td>
+                  <td className="px-4 py-2.5 font-mono text-gray-400">{hasMetric ? fmt(r.baselineMse, 4) : '—'}</td>
+                  <td className="px-4 py-2.5 font-mono text-emerald-300/90">{hasMetric ? fmt(r.valMse, 4) : '—'}</td>
+                  <td className="px-4 py-2.5 font-mono font-bold">
+                    {hasMetric && r.improvementPct != null ? (
+                      <span className={tone.color}>
+                        {r.improvementPct >= 0 ? '+' : ''}{r.improvementPct.toFixed(1)}%
+                      </span>
+                    ) : '—'}
+                  </td>
                   <td className="px-4 py-2.5">
                     {hasMetric ? (
                       <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-green-500/10 text-green-400 border border-green-500/20">VALUTATO</span>
@@ -400,6 +487,7 @@ export const AdapterStatusView: React.FC<AdapterStatusViewProps> = ({ sharedStat
           <>
             <VerdictCard stats={stats} verdict={verdict} />
             {stats && <StatCards stats={stats} />}
+            {stats && <ImprovementCard stats={stats} />}
             {stats && <HorizonTable stats={stats} />}
             {stats && <LossChart stats={stats} />}
             <LiveStatusTable item={kronosForecast?.SP500_bias} label="S&P 500 (SPY)" />

@@ -310,7 +310,12 @@ export interface AdapterLossPoint {
 export interface AdapterHorizonMetric {
   pred_len: number;
   val_samples: number;
+  /** Residual error AFTER adapter correction (normalized space). Lower = better. */
   val_mse: number;
+  /** MSE of Kronos baseline ALONE = variance of the target residual. Reference for improvement_pct. */
+  baseline_val_mse?: number;
+  /** Share of baseline error the adapter explains: (baseline - adapter) / baseline * 100. 100% = perfect, 0% = no help, <0% = harmful. */
+  improvement_pct?: number;
 }
 
 export interface AdapterTrainingStats {
@@ -329,6 +334,10 @@ export interface AdapterTrainingStats {
   val_samples?: number;
   final_train_loss?: number;
   final_val_loss?: number;
+  /** MSE of Kronos baseline alone on the full validation set (normalized). */
+  final_baseline_val_loss?: number;
+  /** Overall share of baseline error the adapter explains on val set (R²-like, %). */
+  final_improvement_pct?: number;
   cov_stats?: {
     skew: { mean: number; std: number };
     pcr: { mean: number; std: number };
