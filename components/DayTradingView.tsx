@@ -816,7 +816,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
 
       {/* FOOTER */}
       <footer className="border-t border-gray-800/40 px-6 py-2.5 text-[10px] text-gray-600 flex justify-between">
-        <span>Gamma & Volatility Analytics Portal — Dual Intraday View</span>
+        <span>QuantFlow AI — Dual Intraday View</span>
         {lastRefreshed && (
           <span>Fetched: {lastRefreshed.toLocaleTimeString()}</span>
         )}

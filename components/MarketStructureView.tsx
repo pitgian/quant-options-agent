@@ -1336,7 +1336,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       {/* ================================================================== */}
       <footer className="border-t border-gray-800/50 px-4 py-2 mt-auto">
         <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between text-[10px] text-gray-600">
-          <span>Gamma & Volatility Analytics Portal</span>
+          <span>QuantFlow AI</span>
           {lastRefreshed && (
             <span>Aggiornato il: {lastRefreshed.toLocaleTimeString()}</span>
           )}

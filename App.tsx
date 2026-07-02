@@ -34,7 +34,7 @@ export default function App() {
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto">
             <div className="flex items-center gap-2">
               <span className="text-sm sm:text-base md:text-xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent whitespace-nowrap">
-                GEX & Volatility Portal
+                QuantFlow AI
               </span>
               <span className="text-[9px] uppercase font-bold tracking-widest bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/20">
                 PRO
