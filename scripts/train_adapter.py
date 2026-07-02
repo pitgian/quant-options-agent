@@ -539,27 +539,20 @@ def main():
         default_ratio = DEFAULT_FUTURES_RATIO.get(symbol, 1.0)
         ratio = get_futures_to_etf_ratio(fetch_ticker, symbol, default_ratio)
 
-        # Download the FINEST resolution (5m) over the window; coarser horizons
-        # are resampled from it so we only hit yfinance once per symbol.
-        _log(f"[{symbol}] downloading 5m prices {start_str} → {end_str} ({fetch_ticker}, ratio={ratio:.4f})...")
-        try:
-            df = yf.download(fetch_ticker, start=start_str, end=end_str, interval="5m")
-        except Exception as e:
-            _log(f"[{symbol}] yfinance download failed: {e}")
-            continue
-        if df.empty:
-            _log(f"[{symbol}] empty price data, skipping.")
-            continue
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df.rename(columns=lambda c: c.lower())
-        df = df[["open", "high", "low", "close", "volume"]].dropna()
-        if ratio != 1.0:
-            for c in ["open", "high", "low", "close"]:
-                df[c] = df[c] / ratio
+        # Per-horizon price download. We used to download only 5m and resample
+        # every horizon from it, but yfinance exposes only ~60 days of intraday
+        # 5m history — not enough for CONTEXT_LEN=256 on 4h (needs ~42 trading
+        # days of 4h bars) and useless for 1d (needs ~1 year). So each horizon
+        # now downloads its NATIVE resolution with a period large enough to
+        # cover the context window (mirrors run_kronos.py).
+        HORIZON_PERIOD = {
+            "5m": "5d",   # (legacy, kept for completeness)
+            "15m": "5d",
+            "1h": "30d",
+            "4h": "90d",  # downloaded as 1h then resampled to 4h (yfinance)
+            "1d": "2y",
+        }
 
-        # Build a per-horizon resampled frame and generate samples for each.
-        # We construct one canonical UTC-indexed price series per resolution.
         def utc_indexed(frame: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             fr = frame.copy()
             fr.index.name = "dt"
@@ -571,30 +564,37 @@ def main():
             fr["datetime"] = dt.astype("datetime64[ns]")
             return fr, fr["datetime"].tolist()
 
-        for hname, interval, pred_len in HORIZONS:
-            # Resample from 5m to the horizon's resolution
-            if interval == "5m":
-                frame = df.copy()
-            elif interval == "15m":
-                frame = df.resample("15min").agg(
+        def fetch_native(interval: str) -> Optional[pd.DataFrame]:
+            """Download native-resolution OHLCV for an interval, converted to ETF scale."""
+            period = HORIZON_PERIOD.get(interval, "1y")
+            # 4h is fetched as 1h and resampled (yfinance has no native 4h endpoint).
+            yf_interval = "1h" if interval == "4h" else interval
+            try:
+                raw = yf.download(fetch_ticker, period=period, interval=yf_interval, progress=False)
+            except Exception as e:
+                _log(f"  [{symbol}/{interval}] yfinance download failed: {e}")
+                return None
+            if raw.empty:
+                return None
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+            raw = raw.rename(columns=lambda c: c.lower())
+            raw = raw[["open", "high", "low", "close", "volume"]].dropna()
+            if interval == "4h":
+                raw = raw.resample("4h").agg(
                     {"open": "first", "high": "max", "low": "min",
                      "close": "last", "volume": "sum"}).dropna()
-            elif interval == "1h":
-                frame = df.resample("1h").agg(
-                    {"open": "first", "high": "max", "low": "min",
-                     "close": "last", "volume": "sum"}).dropna()
-            elif interval == "4h":
-                frame = df.resample("4h").agg(
-                    {"open": "first", "high": "max", "low": "min",
-                     "close": "last", "volume": "sum"}).dropna()
-            elif interval == "1d":
-                frame = df.resample("1D").agg(
-                    {"open": "first", "high": "max", "low": "min",
-                     "close": "last", "volume": "sum"}).dropna()
-            else:
-                continue
+            if ratio != 1.0:
+                for c in ["open", "high", "low", "close"]:
+                    raw[c] = raw[c] / ratio
+            return raw
 
-            frame, time_list = utc_indexed(frame)
+        for hname, interval, pred_len in HORIZONS:
+            df = fetch_native(interval)
+            if df is None or df.empty:
+                _log(f"  [{symbol}/{hname}] no price data for {interval}, skipping.")
+                continue
+            frame, time_list = utc_indexed(df)
             if len(time_list) < CONTEXT_LEN + pred_len + 1:
                 _log(f"  [{symbol}/{hname}] not enough bars yet ({len(time_list)}), skipping.")
                 continue
