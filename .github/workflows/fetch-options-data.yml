@@ -294,7 +294,7 @@ jobs:
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check if adapter training is needed (only if > 24h old)
+      - name: Check if adapter training is needed (new data available)
         if: steps.freshness.outputs.skip != 'true'
         id: train_check
         run: |
@@ -303,26 +303,28 @@ jobs:
             echo "should_train=true" >> $GITHUB_OUTPUT
             exit 0
           fi
-          # Check the commit timestamp of the last change to the adapter on the data branch
+          # Train ONLY when new options data is available since the last adapter
+          # commit. The trainer is deterministic (fixed RNG seeds in train()):
+          # with unchanged options_history.json + unchanged price history it
+          # would produce a byte-identical checkpoint, so re-training on
+          # weekends (no new market data) was pure CI waste.
           git fetch origin data || true
-          LAST_TRAIN_TS=$(git log -1 --format="%ct" origin/data -- scripts/model/covariate_adapter.pth 2>/dev/null || echo 0)
-          if [ "$LAST_TRAIN_TS" = "0" ]; then
-            echo "No commit history for adapter, will train."
+          ADAPTER_TS=$(git log -1 --format="%ct" origin/data -- scripts/model/covariate_adapter.pth 2>/dev/null || echo 0)
+          HISTORY_TS=$(git log -1 --format="%ct" origin/data -- data/options_history.json 2>/dev/null || echo 0)
+          echo "adapter last committed: $ADAPTER_TS"
+          echo "options_history last committed: $HISTORY_TS"
+          if [ "$ADAPTER_TS" = "0" ]; then
+            echo "No adapter commit history, will train."
             echo "should_train=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          NOW_TS=$(date +%s)
-          AGE_HOURS=$(( (NOW_TS - LAST_TRAIN_TS) / 3600 ))
-          echo "Adapter is $AGE_HOURS hours old."
-          if [ $AGE_HOURS -ge 24 ]; then
-            echo "Adapter is older than 24h, will train."
+          elif [ "$HISTORY_TS" -gt "$ADAPTER_TS" ]; then
+            echo "New options data since last adapter, will train."
             echo "should_train=true" >> $GITHUB_OUTPUT
           else
-            echo "Adapter is fresh (<24h), skipping training."
+            echo "No new options data since last adapter, skipping training."
             echo "should_train=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Train unified covariate adapter (daily, guarded)
+      - name: Train unified covariate adapter (new-data guarded)
         if: steps.freshness.outputs.skip != 'true' && steps.train_check.outputs.should_train == 'true'
         timeout-minutes: 12
         # The script self-guards: it only writes a checkpoint when enough REAL
