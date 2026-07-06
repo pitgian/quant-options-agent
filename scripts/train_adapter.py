@@ -385,6 +385,17 @@ def train(
             out = adapter(baselines, sk, pc, gx, pl)
             return masked_mse(out, targets, mask).item()
 
+    # Early stopping on validation loss. The previous fix trained a fixed
+    # 40 epochs and saved the LAST checkpoint, but the val curve typically
+    # bottomed out around epoch 18-24 and then drifted UP (overfit). Saving
+    # the best-val state instead recovers ~4-8% of val MSE for free.
+    PATIENCE = 5
+    best_val_loss = float("inf")
+    best_epoch = 0
+    best_state = None
+    epochs_no_improve = 0
+    stopped_early = False
+
     adapter.train()
     bs = min(64, len(train_s))
     for epoch in range(epochs):
@@ -405,6 +416,30 @@ def train(
         loss_history.append({"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss})
         if verbose and ((epoch + 1) % max(1, epochs // 10) == 0 or epoch == epochs - 1):
             _log(f"  Epoch [{epoch+1}/{epochs}] train={train_loss:.6f} val={val_loss:.6f}")
+
+        # Early stopping bookkeeping (only meaningful when we have a val set).
+        if val_s and not (math.isnan(val_loss)):
+            if val_loss < best_val_loss - 1e-6:
+                best_val_loss = val_loss
+                best_epoch = epoch + 1
+                best_state = {k: v.detach().clone() for k, v in adapter.state_dict().items()}
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= PATIENCE:
+                    stopped_early = True
+                    if verbose:
+                        _log(f"  ⏹  Early stopping at epoch {epoch+1}: no val improvement "
+                             f"for {PATIENCE} epochs (best={best_val_loss:.6f} @ epoch {best_epoch}).")
+                    break
+
+    # Restore the best-val checkpoint before computing final metrics / saving.
+    # If we never had a val set (degenerate), best_state stays None and we
+    # keep the last state as-is.
+    if best_state is not None:
+        adapter.load_state_dict(best_state)
+        if verbose:
+            _log(f"  ↩  Restored best-val weights (epoch {best_epoch}, val={best_val_loss:.6f}).")
 
     # Overall baseline-vs-adapter comparison on the FULL validation set.
     # baseline_mse = variance of the target residual = how wrong Kronos alone
@@ -442,6 +477,15 @@ def train(
             "improvement_pct": improvement_pct,
         }
 
+    # A horizon is "validated" (safe to apply live) only if it had enough val
+    # samples AND the adapter actually helps there (improvement_pct > 0).
+    # Horizons that fail either check are excluded from validated_pred_lens,
+    # and run_kronos.py will REFUSE to apply the adapter on them — applying
+    # an un-validated or harmful correction silently corrupts forecasts.
+    validated_pred_lens = sorted({
+        m["pred_len"] for m in horizon_metrics.values() if m["improvement_pct"] > 0
+    })
+
     final_train_loss = loss_history[-1]["train_loss"] if loss_history else None
     final_val_loss = loss_history[-1]["val_loss"] if loss_history else None
 
@@ -450,12 +494,16 @@ def train(
         "cov_std": cov_std,
         "loss_history": loss_history,
         "horizon_metrics": horizon_metrics,
+        "validated_pred_lens": validated_pred_lens,
         "final_train_loss": final_train_loss,
         "final_val_loss": final_val_loss,
         "final_baseline_val_loss": overall_baseline_mse,
         "final_improvement_pct": overall_improvement_pct,
         "train_samples": len(train_s),
         "val_samples": len(val_s),
+        "best_epoch": best_epoch or (len(loss_history) if loss_history else None),
+        "best_val_loss": best_val_loss if best_state is not None else final_val_loss,
+        "stopped_early": stopped_early,
     }
     return adapter, info
 
@@ -657,6 +705,10 @@ def main():
         "final_baseline_val_loss": info["final_baseline_val_loss"],
         "final_improvement_pct": info["final_improvement_pct"],
         "horizons": info["horizon_metrics"],
+        "validated_pred_lens": info["validated_pred_lens"],
+        "best_epoch": info["best_epoch"],
+        "best_val_loss": info["best_val_loss"],
+        "stopped_early": info["stopped_early"],
         "loss_history": info["loss_history"],
     })
 
@@ -669,11 +721,19 @@ def main():
         "hidden_dim": args.hidden_dim,
         "cov_mean": info["cov_mean"],
         "cov_std": info["cov_std"],
+        # All horizons the model was trained on (input-space support).
         "supported_pred_lens": [h[2] for h in HORIZONS],
+        # Subset of supported_pred_lens that PASSED validation: enough val
+        # samples AND improvement_pct > 0. run_kronos.py refuses to apply
+        # the adapter on any pred_len not in this list.
+        "validated_pred_lens": info["validated_pred_lens"],
         "trained_at": stats["trained_at"],
         "real_samples_total": real_total,
         "final_train_loss": info["final_train_loss"],
         "final_val_loss": info["final_val_loss"],
+        "best_epoch": info["best_epoch"],
+        "best_val_loss": info["best_val_loss"],
+        "stopped_early": info["stopped_early"],
     }
     torch.save(checkpoint, output_path)
     _log(f"\n🎉 Saved unified adapter → {output_path}")

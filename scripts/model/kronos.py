@@ -641,6 +641,16 @@ class KronosPredictor:
                         "final_train_loss": checkpoint.get("final_train_loss"),
                         "final_val_loss": checkpoint.get("final_val_loss"),
                         "supported_pred_lens": checkpoint.get("supported_pred_lens", []),
+                        # Horizons that passed validation (enough val samples +
+                        # positive improvement). The adapter is REFUSED on any
+                        # pred_len not in this list, so we never ship an
+                        # un-validated or harmful correction to live forecasts.
+                        # Legacy checkpoints without this field fall back to
+                        # supported_pred_lens (previous behaviour).
+                        "validated_pred_lens": checkpoint.get(
+                            "validated_pred_lens",
+                            checkpoint.get("supported_pred_lens", []),
+                        ),
                     }
                     print(f"Loaded unified Residual Covariate Adapter from {adapter_path} "
                           f"(trained {self.adapter_meta['trained_at']}, "
@@ -685,6 +695,15 @@ class KronosPredictor:
                 "reason": None}
         if self.adapter is None:
             diag["reason"] = "no_adapter_loaded"
+            return preds, diag
+        # Refuse to apply the adapter on horizons that were not validated
+        # during training (too few val samples, or improvement_pct <= 0).
+        # Applying such a correction would silently corrupt the forecast.
+        validated = (self.adapter_meta or {}).get("validated_pred_lens", [])
+        if validated and int(pred_len) not in validated:
+            diag["supported"] = False
+            diag["reason"] = (f"horizon_not_validated (pred_len={pred_len}; "
+                              f"validated={validated})")
             return preds, diag
         try:
             if batch:
