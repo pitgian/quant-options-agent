@@ -491,14 +491,40 @@ export const AdapterStatusView: React.FC<AdapterStatusViewProps> = ({ sharedStat
             <LiveStatusTable item={kronosForecast?.NASDAQ_bias} label="Nasdaq 100 (QQQ)" />
 
             <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4">
-              <h3 className="text-sm font-bold text-slate-300 mb-2">ℹ️ Come funziona</h3>
-              <ul className="text-xs text-gray-400 space-y-1 list-disc pl-4 max-w-3xl">
-                <li>L'adapter è un MLP residuale <b>affiancato</b> a Kronos (mai fine-tuned): corregge la baseline usando skew, put/call OI e Net GEX.</li>
-                <li>Un <b>unico modello</b> copre entrambi gli orizzonti attivi (4h e 1d) tramite un embedding del <code>pred_len</code>.</li>
-                <li><b>Guard anti-overfit:</b> il checkpoint viene scritto solo con ≥ 30 sample reali con target realizzato; altrimenti il vecchio adapter non viene toccato.</li>
-                <li>I target reali vengono allineati agli snapshot storici di <code>options_history.json</code> via prezzi yfinance; l'accumulo continua automaticamente ogni ciclo.</li>
-                <li><b>GEX pulito:</b> dal 2026-06-26 la volatilità implicita è calcolata via inversione di Black-Scholes dal prezzo bid/ask + fit della smile per scadenza; i record storici precedenti (GEX artefatto) sono stati scartati automaticamente.</li>
-              </ul>
+              <h3 className="text-sm font-bold text-slate-300 mb-3">ℹ️ Come funziona</h3>
+              <div className="text-xs text-gray-400 space-y-3 max-w-3xl">
+                <div>
+                  <div className="text-slate-300 font-semibold mb-1">Cosa corregge</div>
+                  <p>
+                    Kronos produce una previsione di prezzo; l'adapter è un piccolo rete neurale (<b>MLP</b>) che aggiunge una <b>correzione residua</b> sopra quella previsione, usando tre segnali dal mercato delle opzioni:
+                    lo <i>skew di volatilità</i> (paura di crash), il rapporto <i>Put/Call OI</i> (bilancio rialzo/ribasso) e il <i>Net GEX</i> (pressione dei dealer sui prezzi).
+                    Kronos non viene mai ritrattato: l'adapter lo corregge senza toccarlo, quindi se la correzione è peggiorativa basta non applicarla.
+                  </p>
+                </div>
+
+                <div>
+                  <div className="text-slate-300 font-semibold mb-1">Come impara</div>
+                  <p>
+                    Un <b>unico modello</b> copre entrambi gli orizzonti attivi (4h e 1d). Per ogni snapshot storico in <code>options_history.json</code> recuperiamo da yfinance le <b>barre di prezzo realizzate</b> nei giorni successivi, e insegniamo all'adapter a prevedere l'errore che Kronos ha effettivamente commesso. L'accumulo di esempi reali continua da solo a ogni ciclo.
+                  </p>
+                </div>
+
+                <div>
+                  <div className="text-slate-300 font-semibold mb-1">Quali garanzie</div>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li><b>Guard anti-overfit:</b> il modello viene salvato solo con ≥ 30 esempi reali; altrimenti il vecchio adapter resta intatto.</li>
+                    <li><b>Early stopping:</b> il training si ferma se la validazione non migliora per 5 epoche, e viene conservato il punto migliore (non l'ultimo).</li>
+                    <li><b>Validazione per orizzonte:</b> la correzione viene applicata live solo sugli orizzonti validati (≥ 5 campioni di validation <i>e</i> miglioramento positivo). Gli altri orizzonti ricevono la previsione Kronos pulita.</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <div className="text-slate-300 font-semibold mb-1">GEX pulito</div>
+                  <p>
+                    Dal 2026-06-26 la volatilità implicita è calcolata via inversione di Black-Scholes dal prezzo bid/ask e con un fit della smile per scadenza. I record storici precedenti, calcolati con una formula artefatta, sono stati scartati automaticamente.
+                  </p>
+                </div>
+              </div>
             </div>
           </>
         )}
