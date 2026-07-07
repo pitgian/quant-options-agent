@@ -642,7 +642,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                   </span>
                   {indexData.gexRegime.flipPoint && (
                     <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
-                      Flip: ${indexData.gexRegime.flipPoint.toFixed(0)}
+                      Flip ({futuresSymbol}): ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
                     </div>
                   )}
                   {indexData.volatilitySkew25d !== undefined && (
@@ -669,7 +669,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                   </span>
                   {etfData.gexRegime.flipPoint && (
                     <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
-                      Flip: ${etfData.gexRegime.flipPoint.toFixed(1)}
+                      Flip ({futuresSymbol}): ${(etfData.gexRegime.flipPoint * ratio * basisMultiplier).toFixed(0)}
                     </div>
                   )}
                   {etfData.volatilitySkew25d !== undefined && (

@@ -99,6 +99,7 @@ interface LevelRowProps {
   maxVol: number;
   futuresEquivalent?: number;
   futuresSymbol?: string;
+  activeSymbol?: string;
   isKrHigh?: boolean;
   isKrLow?: boolean;
 }
@@ -111,6 +112,7 @@ const LevelRow: React.FC<LevelRowProps> = ({
   maxVol,
   futuresEquivalent,
   futuresSymbol,
+  activeSymbol,
   isKrHigh,
   isKrLow,
 }) => {
@@ -132,15 +134,22 @@ const LevelRow: React.FC<LevelRowProps> = ({
         borderLeft: isCross ? '2px solid rgba(245,158,11,0.4)' : 'none',
       }}
     >
-      <div className="grid grid-cols-[65px_1fr_45px] sm:grid-cols-[80px_160px_54px_1fr] gap-2 sm:gap-2.5 items-center">
-        {/* Strike price — futures-equivalent shown as co-primary (the trader operates on ES/NQ) */}
+      <div className="grid grid-cols-[85px_1fr_45px] sm:grid-cols-[105px_160px_54px_1fr] gap-2 sm:gap-2.5 items-center">
+        {/* Price block — futures is the HEADLINE (what the trader operates on),
+            ETF/Index strike is the secondary context line below it. */}
         <div className="flex flex-col">
-          <span className="font-mono text-xs sm:text-sm font-bold" style={{ color }}>
-            ${level.strike.toFixed(0)}
-          </span>
-          {futuresEquivalent != null && futuresSymbol && (
-            <span className="text-[9px] sm:text-[10px] font-mono text-blue-300 font-bold whitespace-nowrap">
-              {futuresSymbol} {futuresEquivalent.toFixed(0)}
+          {futuresEquivalent != null && futuresSymbol ? (
+            <span className="font-mono text-xs sm:text-sm font-extrabold text-blue-300 whitespace-nowrap">
+              {futuresSymbol} ${futuresEquivalent.toFixed(0)}
+            </span>
+          ) : (
+            <span className="font-mono text-xs sm:text-sm font-bold" style={{ color }}>
+              ${level.strike.toFixed(0)}
+            </span>
+          )}
+          {futuresEquivalent != null && futuresSymbol && activeSymbol && (
+            <span className="text-[9px] sm:text-[10px] font-mono text-gray-500 whitespace-nowrap">
+              {activeSymbol} {level.strike.toFixed(level.strike >= 1000 ? 0 : 1)}
             </span>
           )}
         </div>
@@ -313,7 +322,7 @@ const TradingGuide: React.FC = () => {
 
 interface MarketLevelsColumnProps {
   market: 'SP500' | 'NASDAQ100';
-  defaultSymbol: 'SPY' | 'QQQ';
+  defaultSymbol: 'SPY' | 'SPX' | 'QQQ' | 'NDX';
   etfSymbol: 'SPY' | 'QQQ';
   indexSymbol: 'SPX' | 'NDX';
   futuresSymbol: 'ES' | 'NQ';
@@ -637,6 +646,7 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
                     maxVol={maxVol}
                     futuresEquivalent={calculateFuturesEquivalent(level.strike)}
                     futuresSymbol={futuresSymbol}
+                    activeSymbol={activeSymbol}
                     isKrHigh={closestToKrHigh?.strike === level.strike}
                     isKrLow={closestToKrLow?.strike === level.strike}
                   />
@@ -679,6 +689,7 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
                     maxVol={maxVol}
                     futuresEquivalent={calculateFuturesEquivalent(level.strike)}
                     futuresSymbol={futuresSymbol}
+                    activeSymbol={activeSymbol}
                     isKrHigh={closestToKrHigh?.strike === level.strike}
                     isKrLow={closestToKrLow?.strike === level.strike}
                   />
@@ -784,7 +795,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
             {/* LEFT COLUMN: S&P 500 */}
             <MarketLevelsColumn
               market="SP500"
-              defaultSymbol="SPY"
+              defaultSymbol="SPX"
               etfSymbol="SPY"
               indexSymbol="SPX"
               futuresSymbol="ES"
@@ -799,7 +810,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
             {/* RIGHT COLUMN: Nasdaq 100 */}
             <MarketLevelsColumn
               market="NASDAQ100"
-              defaultSymbol="QQQ"
+              defaultSymbol="NDX"
               etfSymbol="QQQ"
               indexSymbol="NDX"
               futuresSymbol="NQ"
