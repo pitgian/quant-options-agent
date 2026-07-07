@@ -474,29 +474,9 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
           </span>
         </div>
 
-        {/* Local Toggle */}
-        <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-850">
-          <button
-            onClick={() => setActiveSymbol(etfSymbol)}
-            className="px-2.5 py-1 rounded-md text-[10px] font-extrabold transition-all duration-150"
-            style={{
-              backgroundColor: activeSymbol === etfSymbol ? '#1e293b' : 'transparent',
-              color: activeSymbol === etfSymbol ? '#e2e8f0' : '#64748b',
-            }}
-          >
-            {etfSymbol}
-          </button>
-          <button
-            onClick={() => setActiveSymbol(indexSymbol)}
-            className="px-2.5 py-1 rounded-md text-[10px] font-extrabold transition-all duration-150"
-            style={{
-              backgroundColor: activeSymbol === indexSymbol ? '#1e293b' : 'transparent',
-              color: activeSymbol === indexSymbol ? '#e2e8f0' : '#64748b',
-            }}
-          >
-            {indexSymbol}
-          </button>
-        </div>
+        {/* Local Toggle — removed: index (SPX/NDX) view is not used.
+            activeSymbol stays locked on the ETF (SPY/QQQ) default; the
+            futures headline + ETF secondary is the only view shipped. */}
       </div>
 
       {/* ⚡ FUTURES HERO BAR — the price the trader actually operates on (ES/NQ) */}
@@ -795,7 +775,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
             {/* LEFT COLUMN: S&P 500 */}
             <MarketLevelsColumn
               market="SP500"
-              defaultSymbol="SPX"
+              defaultSymbol="SPY"
               etfSymbol="SPY"
               indexSymbol="SPX"
               futuresSymbol="ES"
@@ -810,7 +790,7 @@ export function DayTradingView({ sharedState }: DayTradingViewProps) {
             {/* RIGHT COLUMN: Nasdaq 100 */}
             <MarketLevelsColumn
               market="NASDAQ100"
-              defaultSymbol="NDX"
+              defaultSymbol="QQQ"
               etfSymbol="QQQ"
               indexSymbol="NDX"
               futuresSymbol="NQ"
