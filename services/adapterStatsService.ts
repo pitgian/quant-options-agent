@@ -10,15 +10,11 @@
 
 import type { AdapterTrainingStats } from '../types';
 
-const GIST_USER = import.meta.env.VITE_GIST_USER;
-const GIST_ID = import.meta.env.VITE_GIST_ID;
+import { gistRawUrl } from '../lib/gist';
 
+const GIST_URL = gistRawUrl('adapter_training_stats.json');
 const REPO_URL =
   'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/adapter_training_stats.json';
-const GIST_URL =
-  GIST_USER && GIST_ID
-    ? `https://gist.githubusercontent.com/${GIST_USER}/${GIST_ID}/raw/adapter_training_stats.json`
-    : null;
 const LOCAL_URL = '/data/adapter_training_stats.json';
 
 const CACHE_TTL_MS = 60 * 1000; // 1 minute

@@ -10,15 +10,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DayTradingData, ExpiryFilter, KronosForecast } from '../types';
 import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/dataService';
-
-const GIST_USER = import.meta.env.VITE_GIST_USER;
-const GIST_ID = import.meta.env.VITE_GIST_ID;
+import { gistRawUrl } from '../lib/gist';
 
 const KRONOS_REPO_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
-const KRONOS_GIST_URL = GIST_USER && GIST_ID
-  ? `https://gist.githubusercontent.com/${GIST_USER}/${GIST_ID}/raw/kronos_forecast.json`
-  : null;
-
+const KRONOS_GIST_URL = gistRawUrl('kronos_forecast.json');
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
 const fetchKronosForecast = async (): Promise<Response | null> => {
