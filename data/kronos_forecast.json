@@ -1,130 +1,130 @@
 {
-  "updated_at": "2026-07-08T12:05:57.525304+00:00",
+  "updated_at": "2026-07-08T12:23:44.644431+00:00",
   "SP500_bias": {
     "ticker": "SPY",
-    "last_price_4h": 742.91,
-    "last_price_1d": 742.91,
-    "trend_bias": "BULLISH",
-    "strength_pct": 1.26,
+    "last_price_4h": 743.65,
+    "last_price_1d": 743.63,
+    "trend_bias": "BEARISH",
+    "strength_pct": -1.34,
     "forecast_4h": {
-      "last_price": 742.91,
-      "expected_high": 745.01,
-      "expected_low": 736.47,
-      "predicted_volatility_pct": 1.151,
+      "last_price": 743.65,
+      "expected_high": 744.96,
+      "expected_low": 738.75,
+      "predicted_volatility_pct": 0.835,
       "candles": [
         {
-          "timestamp": "2026-07-08T08:00:00-04:00",
-          "open": 743.28,
-          "high": 744.79,
-          "low": 742.76,
-          "close": 744.33,
-          "volume": 115163.9
-        },
-        {
           "timestamp": "2026-07-08T12:00:00-04:00",
-          "open": 743.81,
-          "high": 745.01,
-          "low": 741.24,
-          "close": 742.97,
-          "volume": 318361.1
+          "open": 743.75,
+          "high": 744.83,
+          "low": 742.28,
+          "close": 743.96,
+          "volume": 102081.0
         },
         {
           "timestamp": "2026-07-08T16:00:00-04:00",
-          "open": 741.96,
-          "high": 742.93,
-          "low": 739.35,
-          "close": 741.3,
-          "volume": 325112.9
+          "open": 744.27,
+          "high": 744.65,
+          "low": 743.25,
+          "close": 743.87,
+          "volume": 101784.0
         },
         {
           "timestamp": "2026-07-08T20:00:00-04:00",
-          "open": 740.12,
-          "high": 740.87,
-          "low": 737.73,
-          "close": 738.63,
-          "volume": 236441.8
+          "open": 743.46,
+          "high": 743.71,
+          "low": 740.87,
+          "close": 741.17,
+          "volume": 125279.5
         },
         {
           "timestamp": "2026-07-09T00:00:00-04:00",
-          "open": 739.03,
-          "high": 741.52,
-          "low": 736.47,
-          "close": 739.05,
-          "volume": 342038.0
+          "open": 741.59,
+          "high": 743.7,
+          "low": 740.41,
+          "close": 742.67,
+          "volume": 185913.6
         },
         {
           "timestamp": "2026-07-09T04:00:00-04:00",
-          "open": 739.74,
-          "high": 741.22,
-          "low": 737.74,
-          "close": 739.24,
-          "volume": 429675.8
+          "open": 740.07,
+          "high": 744.96,
+          "low": 738.75,
+          "close": 744.78,
+          "volume": 116263.2
+        },
+        {
+          "timestamp": "2026-07-09T08:00:00-04:00",
+          "open": 742.62,
+          "high": 743.7,
+          "low": 740.42,
+          "close": 741.89,
+          "volume": 248589.0
         }
       ],
       "adapter_status": {
         "applied": true,
         "pred_len": 6,
-        "residual_norm": 4.558235,
+        "residual_norm": 1.762496,
         "supported": true,
         "reason": null,
         "covariates": {
-          "skew": 0.01841,
-          "pcr": 0.09358,
-          "gex_b": 0.11541327628793
+          "skew": 0.0027,
+          "pcr": 3.12381,
+          "gex_b": -677.0673809065763
         }
       }
     },
     "forecast_1d": {
-      "last_price": 742.91,
-      "expected_high": 755.04,
-      "expected_low": 739.28,
-      "predicted_volatility_pct": 2.122,
+      "last_price": 743.63,
+      "expected_high": 745.55,
+      "expected_low": 729.25,
+      "predicted_volatility_pct": 2.192,
       "candles": [
         {
           "timestamp": "2026-07-09T00:00:00",
-          "open": 743.67,
-          "high": 748.56,
-          "low": 739.28,
-          "close": 746.59,
-          "volume": 1114233.1
+          "open": 742.51,
+          "high": 745.55,
+          "low": 736.01,
+          "close": 742.48,
+          "volume": 1242168.8
         },
         {
           "timestamp": "2026-07-10T00:00:00",
-          "open": 745.88,
-          "high": 749.17,
-          "low": 739.99,
-          "close": 745.29,
-          "volume": 1100088.0
+          "open": 737.75,
+          "high": 743.08,
+          "low": 732.55,
+          "close": 738.76,
+          "volume": 1448505.9
         },
         {
           "timestamp": "2026-07-13T00:00:00",
-          "open": 744.02,
-          "high": 748.12,
-          "low": 739.93,
-          "close": 746.26,
-          "volume": 1301241.0
+          "open": 735.94,
+          "high": 742.89,
+          "low": 735.39,
+          "close": 744.72,
+          "volume": 1304602.9
         },
         {
           "timestamp": "2026-07-14T00:00:00",
-          "open": 746.7,
-          "high": 750.46,
-          "low": 741.77,
-          "close": 747.55,
-          "volume": 1203762.6
+          "open": 740.98,
+          "high": 742.15,
+          "low": 731.12,
+          "close": 735.25,
+          "volume": 1375218.5
         },
         {
           "timestamp": "2026-07-15T00:00:00",
-          "open": 750.19,
-          "high": 755.04,
-          "low": 745.64,
-          "close": 752.27,
-          "volume": 1278672.0
+          "open": 735.8,
+          "high": 738.67,
+          "low": 729.25,
+          "close": 733.7,
+          "volume": 1422263.0
         }
       ],
       "adapter_status": {
         "applied": true,
         "pred_len": 5,
-        "residual_norm": 1.07838,
+        "residual_norm": 2.683629,
         "supported": true,
         "reason": null,
         "covariates": {
@@ -137,129 +137,129 @@
   },
   "NASDAQ_bias": {
     "ticker": "QQQ",
-    "last_price_4h": 702.52,
-    "last_price_1d": 702.53,
+    "last_price_4h": 704.03,
+    "last_price_1d": 703.96,
     "trend_bias": "BEARISH",
-    "strength_pct": -0.24,
+    "strength_pct": -2.22,
     "forecast_4h": {
-      "last_price": 702.52,
-      "expected_high": 715.71,
-      "expected_low": 703.01,
-      "predicted_volatility_pct": 1.808,
+      "last_price": 704.03,
+      "expected_high": 707.49,
+      "expected_low": 698.18,
+      "predicted_volatility_pct": 1.323,
       "candles": [
         {
-          "timestamp": "2026-07-08T08:00:00-04:00",
-          "open": 704.66,
-          "high": 709.62,
-          "low": 703.01,
-          "close": 709.39,
-          "volume": 35218.9
-        },
-        {
           "timestamp": "2026-07-08T12:00:00-04:00",
-          "open": 712.63,
-          "high": 715.71,
-          "low": 710.39,
-          "close": 714.07,
-          "volume": 54374.3
+          "open": 705.72,
+          "high": 707.49,
+          "low": 701.57,
+          "close": 705.07,
+          "volume": 28006.7
         },
         {
           "timestamp": "2026-07-08T16:00:00-04:00",
-          "open": 713.62,
-          "high": 714.07,
-          "low": 706.78,
-          "close": 707.38,
-          "volume": 66708.1
+          "open": 707.06,
+          "high": 707.12,
+          "low": 703.1,
+          "close": 704.89,
+          "volume": 26902.0
         },
         {
           "timestamp": "2026-07-08T20:00:00-04:00",
-          "open": 708.08,
-          "high": 711.67,
-          "low": 707.55,
-          "close": 710.84,
-          "volume": 35691.4
+          "open": 704.29,
+          "high": 706.46,
+          "low": 699.24,
+          "close": 701.66,
+          "volume": 49928.4
         },
         {
           "timestamp": "2026-07-09T00:00:00-04:00",
-          "open": 711.8,
-          "high": 711.22,
-          "low": 707.37,
-          "close": 707.73,
-          "volume": 59224.4
+          "open": 703.35,
+          "high": 706.23,
+          "low": 699.08,
+          "close": 703.57,
+          "volume": 70648.3
         },
         {
           "timestamp": "2026-07-09T04:00:00-04:00",
-          "open": 710.26,
-          "high": 715.22,
-          "low": 708.89,
-          "close": 715.44,
-          "volume": 185078.1
+          "open": 703.57,
+          "high": 703.69,
+          "low": 699.96,
+          "close": 700.93,
+          "volume": 23953.1
+        },
+        {
+          "timestamp": "2026-07-09T08:00:00-04:00",
+          "open": 700.52,
+          "high": 704.71,
+          "low": 698.18,
+          "close": 702.92,
+          "volume": 122789.9
         }
       ],
       "adapter_status": {
         "applied": true,
         "pred_len": 6,
-        "residual_norm": 2.777256,
+        "residual_norm": 1.675208,
         "supported": true,
         "reason": null,
         "covariates": {
-          "skew": 0.04743,
-          "pcr": 0.83507,
-          "gex_b": 0.00473300217985
+          "skew": 0.00368,
+          "pcr": 1.38648,
+          "gex_b": -464.27651450262795
         }
       }
     },
     "forecast_1d": {
-      "last_price": 702.53,
-      "expected_high": 712.2,
-      "expected_low": 690.5,
-      "predicted_volatility_pct": 3.089,
+      "last_price": 703.96,
+      "expected_high": 702.42,
+      "expected_low": 667.46,
+      "predicted_volatility_pct": 4.965,
       "candles": [
         {
           "timestamp": "2026-07-09T00:00:00",
-          "open": 706.89,
-          "high": 710.85,
-          "low": 700.32,
-          "close": 707.95,
-          "volume": 405455.6
+          "open": 696.51,
+          "high": 702.42,
+          "low": 689.41,
+          "close": 697.48,
+          "volume": 358986.3
         },
         {
           "timestamp": "2026-07-10T00:00:00",
-          "open": 705.88,
-          "high": 710.23,
-          "low": 696.32,
-          "close": 704.16,
-          "volume": 433667.5
+          "open": 689.96,
+          "high": 691.12,
+          "low": 679.58,
+          "close": 682.36,
+          "volume": 507034.7
         },
         {
           "timestamp": "2026-07-13T00:00:00",
-          "open": 702.72,
-          "high": 712.2,
-          "low": 697.53,
-          "close": 710.03,
-          "volume": 505516.5
+          "open": 679.24,
+          "high": 685.15,
+          "low": 676.06,
+          "close": 681.8,
+          "volume": 522431.9
         },
         {
           "timestamp": "2026-07-14T00:00:00",
-          "open": 707.32,
-          "high": 709.77,
-          "low": 695.86,
-          "close": 701.11,
-          "volume": 544713.1
+          "open": 680.48,
+          "high": 688.59,
+          "low": 672.29,
+          "close": 681.62,
+          "volume": 507501.8
         },
         {
           "timestamp": "2026-07-15T00:00:00",
-          "open": 699.4,
-          "high": 707.76,
-          "low": 690.5,
-          "close": 700.84,
-          "volume": 501018.2
+          "open": 672.55,
+          "high": 689.92,
+          "low": 667.46,
+          "close": 688.34,
+          "volume": 533021.8
         }
       ],
       "adapter_status": {
         "applied": true,
         "pred_len": 5,
-        "residual_norm": 1.778761,
+        "residual_norm": 2.891295,
         "supported": true,
         "reason": null,
         "covariates": {
