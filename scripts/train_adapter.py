@@ -92,10 +92,30 @@ BASELINE_BATCH_SIZE = 16
 
 STATS_OUTPUT_PATH = os.path.join(scripts_dir, "../data/adapter_training_stats.json")
 
+# How many past-run summaries to retain inside adapter_training_stats.json
+# (the longitudinal loss / sample history surfaced in the UI). The CI
+# restores this file from the data branch BEFORE every training run, so
+# appending one record per run accumulates a stable history across runs
+# without needing a separate state file.
+MAX_RUN_HISTORY = 300
+
 
 def _log(msg: str) -> None:
     """Print + flush so CI shows progress immediately (no block buffering)."""
     print(msg, flush=True)
+
+
+def _load_previous_runs(stats_path: str) -> List[Dict]:
+    """Recover the longitudinal run history from the previously-published
+    stats file. Returns [] when the file is missing or malformed (e.g. first
+    ever run, or legacy file without loss_history_runs)."""
+    try:
+        with open(stats_path, "r") as f:
+            prev = json.load(f)
+        runs = prev.get("loss_history_runs") or []
+        return runs if isinstance(runs, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -687,6 +707,18 @@ def main():
                   f"Ground-truth accumulation continues via options_history.json.")
         stats["reason"] = reason
         _log("\n⏸️  GUARD: " + reason)
+        # Even when the guard blocks training, record this run in the
+        # longitudinal history so the UI can show real-sample accumulation
+        # over time (the curve users compare across days).
+        prev_runs = _load_previous_runs(args.stats_path or STATS_OUTPUT_PATH)
+        prev_runs.append({
+            "ts": stats["trained_at"],
+            "trained": False,
+            "real_samples": real_total,
+            "per_horizon_real_samples": per_h_counts,
+            "epochs_run": 0,
+        })
+        stats["loss_history_runs"] = prev_runs[-MAX_RUN_HISTORY:]
         _write_stats(stats, args.stats_path)
         return
 
@@ -711,6 +743,29 @@ def main():
         "stopped_early": info["stopped_early"],
         "loss_history": info["loss_history"],
     })
+
+    # Append this run to the longitudinal history (stable across runs, unlike
+    # the per-epoch loss_history which is regenerated — with stochastic Kronos
+    # baselines — on every execution). Capped to MAX_RUN_HISTORY entries.
+    prev_runs = _load_previous_runs(args.stats_path or STATS_OUTPUT_PATH)
+    prev_runs.append({
+        "ts": stats["trained_at"],
+        "trained": True,
+        "real_samples": real_total,
+        "per_horizon_real_samples": per_h_counts,
+        "train_samples": info["train_samples"],
+        "val_samples": info["val_samples"],
+        "final_train_loss": info["final_train_loss"],
+        "final_val_loss": info["final_val_loss"],
+        "best_val_loss": info["best_val_loss"],
+        "best_epoch": info["best_epoch"],
+        "final_improvement_pct": info["final_improvement_pct"],
+        "final_baseline_val_loss": info["final_baseline_val_loss"],
+        "epochs_run": len(info["loss_history"]),
+        "stopped_early": info["stopped_early"],
+        "validated_pred_lens": info["validated_pred_lens"],
+    })
+    stats["loss_history_runs"] = prev_runs[-MAX_RUN_HISTORY:]
 
     # 6. Save checkpoint (v2 unified format)
     output_path = args.output_path or os.path.join(scripts_dir, "model/covariate_adapter.pth")

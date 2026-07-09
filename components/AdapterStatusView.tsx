@@ -306,6 +306,167 @@ function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
   );
 }
 
+function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
+  // Longitudinal view: one point per RUN (stable, comparable across days),
+  // as opposed to LossChart which only shows the per-epoch curve of the
+  // latest run (regenerated with stochastic Kronos baselines each time).
+  const allRuns = stats.loss_history_runs ?? [];
+  const runs = allRuns.slice(-60); // cap to last 60 for readability
+
+  const W = 760, H = 250;
+  const padL = 52, padR = 52, padT = 14, padB = 34;
+  const innerW = W - padL - padR;
+  const gap = 12;
+  const lossTop = padT;
+  const lossH = 132;
+  const sampleTop = lossTop + lossH + gap;
+  const sampleH = 48;
+
+  if (runs.length < 2) {
+    return (
+      <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4">
+        <h3 className="text-sm font-bold text-slate-300 mb-2">📉 Storico Loss — confronto tra le run</h3>
+        <p className="text-xs text-gray-500 leading-relaxed">
+          Questo grafico accumula un punto per ogni esecuzione di addestramento, così puoi confrontare l'andamento nel tempo (a differenza della curva per-epoca sotto, che mostra solo l'ultima run e viene ricalcolata ogni volta). Sarà popolato dopo i prossimi cicli: servono ≥ 2 run registrate.
+        </p>
+      </div>
+    );
+  }
+
+  const lossVals = runs
+    .flatMap((r) => [r.final_train_loss, r.final_val_loss])
+    .filter((v): v is number => v != null && Number.isFinite(v));
+  const maxLoss = lossVals.length ? Math.max(...lossVals) : 1;
+  const minLoss = lossVals.length ? Math.min(...lossVals) : 0;
+  const lspan = maxLoss - minLoss || 1;
+  const yMin = Math.max(0, minLoss - lspan * 0.15);
+  const yMax = maxLoss + lspan * 0.15;
+  const ySpan = yMax - yMin || 1;
+
+  const samples = runs.map((r) => r.real_samples ?? 0);
+  const maxSamples = Math.max(1, ...samples);
+
+  const n = runs.length;
+  const x = (i: number) => padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+  const yLoss = (v: number) => lossTop + lossH - ((v - yMin) / ySpan) * lossH;
+  const ySamp = (v: number) => sampleTop + sampleH - (v / maxSamples) * sampleH;
+
+  const linePath = (sel: 'final_train_loss' | 'final_val_loss') => {
+    let d = '';
+    let started = false;
+    runs.forEach((r, i) => {
+      const v = r[sel];
+      if (v == null || !Number.isFinite(v)) {
+        started = false; // break the line at guard runs (no loss)
+        return;
+      }
+      d += `${started ? 'L' : 'M'} ${x(i).toFixed(1)} ${yLoss(v).toFixed(1)} `;
+      started = true;
+    });
+    return d.trim();
+  };
+
+  const lossGrid = Array.from({ length: 4 }, (_, i) => yMin + (i / 3) * ySpan);
+  const tickCount = Math.min(6, n);
+  const tickIdx = Array.from({ length: tickCount }, (_, k) =>
+    Math.round((k / Math.max(1, tickCount - 1)) * (n - 1)),
+  );
+
+  const lastTrained = [...runs].reverse().find((r) => r.trained && r.final_val_loss != null);
+  const bestVal = runs.reduce<{ v: number | null; ts: string | null }>(
+    (acc, r) =>
+      r.final_val_loss != null && Number.isFinite(r.final_val_loss) && (acc.v == null || r.final_val_loss < acc.v)
+        ? { v: r.final_val_loss, ts: r.ts }
+        : acc,
+    { v: null, ts: null },
+  );
+
+  return (
+    <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-sm font-bold text-slate-300">📉 Storico Loss — confronto tra le run</h3>
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="flex items-center gap-1 text-blue-300"><span className="inline-block w-3 h-0.5 bg-blue-400" />train</span>
+          <span className="flex items-center gap-1 text-amber-300"><span className="inline-block w-3 h-0.5 bg-amber-400" />val</span>
+          <span className="flex items-center gap-1 text-slate-400"><span className="inline-block w-3 h-2 bg-slate-600/60" />sample reali</span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
+        {/* loss panel gridlines + labels */}
+        {lossGrid.map((gv, i) => {
+          const yy = lossTop + lossH - (i / 3) * lossH;
+          return (
+            <g key={`g${i}`}>
+              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="#1e293b" strokeDasharray="3 4" />
+              <text x={padL - 6} y={yy + 3} fill="#64748b" fontSize="9" textAnchor="end">{gv.toFixed(3)}</text>
+            </g>
+          );
+        })}
+        <text x={padL - 6} y={lossTop - 3} fill="#475569" fontSize="8" textAnchor="end">loss</text>
+
+        {/* sample-count band */}
+        <line x1={padL} y1={sampleTop} x2={W - padR} y2={sampleTop} stroke="#1e293b" />
+        <line x1={padL} y1={sampleTop + sampleH} x2={W - padR} y2={sampleTop + sampleH} stroke="#334155" />
+        {runs.map((r, i) => {
+          const v = r.real_samples ?? 0;
+          const bw = Math.max(2, (innerW / n) * 0.6);
+          const top = ySamp(v);
+          return (
+            <rect
+              key={`s${i}`}
+              x={x(i) - bw / 2}
+              y={top}
+              width={bw}
+              height={Math.max(1, sampleTop + sampleH - top)}
+              fill={r.trained ? 'rgba(100,116,139,0.55)' : 'rgba(100,116,139,0.22)'}
+            />
+          );
+        })}
+        <text x={padL - 6} y={sampleTop + 8} fill="#64748b" fontSize="9" textAnchor="end">{maxSamples}</text>
+        <text x={padL - 6} y={sampleTop + sampleH + 3} fill="#475569" fontSize="8" textAnchor="end">0</text>
+        <text x={padL - 6} y={sampleTop + sampleH / 2} fill="#475569" fontSize="8" textAnchor="end">n samp</text>
+
+        {/* loss lines (broken at guard runs with no loss) */}
+        <path d={linePath('final_train_loss')} fill="none" stroke="#60a5fa" strokeWidth="2" />
+        <path d={linePath('final_val_loss')} fill="none" stroke="#fbbf24" strokeWidth="2" strokeDasharray="4 3" />
+
+        {/* hollow markers for guard runs (no training) at the sample baseline */}
+        {runs.map((r, i) =>
+          r.trained ? null : (
+            <circle key={`u${i}`} cx={x(i)} cy={sampleTop + sampleH} r="2.5" fill="#0d1117" stroke="#475569" strokeWidth="1" />
+          ),
+        )}
+
+        {/* x-axis date labels */}
+        {tickIdx.map((idx) => {
+          const r = runs[idx];
+          if (!r) return null;
+          const label = r.ts
+            ? new Date(r.ts).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })
+            : `#${idx + 1}`;
+          return (
+            <text key={`t${idx}`} x={x(idx)} y={H - 8} fill="#64748b" fontSize="9" textAnchor="middle">{label}</text>
+          );
+        })}
+      </svg>
+      <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-[10px] text-gray-500">
+        {lastTrained && lastTrained.final_val_loss != null && (
+          <span>ultima run addestrata: val <span className="font-mono text-amber-300">{lastTrained.final_val_loss.toFixed(4)}</span></span>
+        )}
+        {bestVal.v != null && (
+          <span>miglior val: <span className="font-mono text-emerald-300">{bestVal.v.toFixed(4)}</span></span>
+        )}
+        <span>run mostrate: {n}{allRuns.length > n ? ` di ${allRuns.length}` : ''}</span>
+        <span className="text-gray-600">·</span>
+        <span>pallini vuoti = run in guard (troppi pochi sample reali, adapter non sovrascritto)</span>
+      </div>
+      <p className="text-[11px] text-gray-500 leading-relaxed">
+        A differenza della curva per-epoca (sotto), questa è <b>stabile</b>: un punto per ogni esecuzione, accumulato nel tempo. Le barre grigie sono i sample reali — se oscillano è normale: il subsampling a 40 snapshot/simbolo e il budget temporale del CI fanno sì che il numero vari da run a run (vedi tendenza qui, non il numero puntuale).
+      </p>
+    </div>
+  );
+}
+
 function LossChart({ stats }: { stats: AdapterTrainingStats }) {
   const hist = stats.loss_history ?? [];
   const W = 760, H = 220, padL = 50, padR = 16, padT = 16, padB = 28;
@@ -338,7 +499,7 @@ function LossChart({ stats }: { stats: AdapterTrainingStats }) {
   return (
     <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-300">📈 Curva di Loss (train vs val)</h3>
+        <h3 className="text-sm font-bold text-slate-300">📈 Curva di Loss — ultima esecuzione (per epoca)</h3>
         <div className="flex items-center gap-3 text-[10px]">
           <span className="flex items-center gap-1 text-blue-300"><span className="inline-block w-3 h-0.5 bg-blue-400" />train</span>
           <span className="flex items-center gap-1 text-amber-300"><span className="inline-block w-3 h-0.5 bg-amber-400" />val</span>
@@ -486,6 +647,7 @@ export const AdapterStatusView: React.FC<AdapterStatusViewProps> = ({ sharedStat
             {stats && <StatCards stats={stats} />}
             {stats && <ImprovementCard stats={stats} />}
             {stats && <HorizonTable stats={stats} />}
+            {stats && <RunsHistoryChart stats={stats} />}
             {stats && <LossChart stats={stats} />}
             <LiveStatusTable item={kronosForecast?.SP500_bias} label="S&P 500 (SPY)" />
             <LiveStatusTable item={kronosForecast?.NASDAQ_bias} label="Nasdaq 100 (QQQ)" />

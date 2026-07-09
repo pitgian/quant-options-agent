@@ -317,6 +317,34 @@ export interface AdapterHorizonMetric {
   improvement_pct?: number;
 }
 
+/**
+ * Longitudinal summary of a SINGLE training run, appended every execution of
+ * train_adapter.py into `loss_history_runs`. Unlike `AdapterLossPoint` (which
+ * holds per-epoch values regenerated — with stochastic Kronos baselines — on
+ * every run), this is a stable, comparable history across runs/days.
+ */
+export interface AdapterLossRun {
+  /** ISO timestamp of the run. */
+  ts: string;
+  /** Whether a checkpoint was actually saved (false = guard blocked it, too few real samples). */
+  trained: boolean;
+  /** Real samples accumulated at this run (may fluctuate: see subsampling + deadline notes). */
+  real_samples: number;
+  per_horizon_real_samples?: Record<string, number>;
+  train_samples?: number;
+  val_samples?: number;
+  final_train_loss?: number;
+  final_val_loss?: number;
+  best_val_loss?: number;
+  best_epoch?: number;
+  final_improvement_pct?: number;
+  final_baseline_val_loss?: number;
+  /** Number of epochs actually executed (0 when the guard blocked training). */
+  epochs_run?: number;
+  stopped_early?: boolean;
+  validated_pred_lens?: number[];
+}
+
 export interface AdapterTrainingStats {
   version: number;
   trained_at: string;
@@ -344,6 +372,8 @@ export interface AdapterTrainingStats {
   };
   horizons?: Record<string, AdapterHorizonMetric>;
   loss_history?: AdapterLossPoint[];
+  /** One entry per training run, oldest→newest. Stable longitudinal history for cross-run comparison. */
+  loss_history_runs?: AdapterLossRun[];
 }
 
 
