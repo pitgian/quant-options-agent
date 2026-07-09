@@ -257,6 +257,9 @@ jobs:
           # Pull the existing adapter (may be reused if recent enough)
           git checkout origin/data -- scripts/model/covariate_adapter.pth || true
           git checkout origin/data -- data/adapter_training_stats.json || true
+          # Pull the baseline cache so computed Kronos baselines survive across
+          # runs (turns full-history adapter training into a one-time-per-snapshot cost).
+          git checkout origin/data -- data/adapter_baselines_cache.json || true
 
       - name: Restore state from Gist (fallback if data branch missing)
         continue-on-error: true
@@ -267,6 +270,7 @@ jobs:
           git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo_restore
           [ -f gist_repo_restore/options_history.json ] && [ ! -f data/options_history.json ] && cp -f gist_repo_restore/options_history.json data/ && mkdir -p data
           [ -f gist_repo_restore/covariate_adapter.pth ] && [ ! -f scripts/model/covariate_adapter.pth ] && mkdir -p scripts/model && cp -f gist_repo_restore/covariate_adapter.pth scripts/model/
+          [ -f gist_repo_restore/adapter_baselines_cache.json ] && [ ! -f data/adapter_baselines_cache.json ] && cp -f gist_repo_restore/adapter_baselines_cache.json data/
           rm -rf gist_repo_restore
 
       - name: Freshness guard — skip if Kronos forecast is recent
@@ -326,7 +330,12 @@ jobs:
 
       - name: Train unified covariate adapter (new-data guarded)
         if: steps.freshness.outputs.skip != 'true' && steps.train_check.outputs.should_train == 'true'
-        timeout-minutes: 12
+        timeout-minutes: 25
+        # Raised from 12 → 25 min: with baseline caching the FIRST run after
+        # new data computes baselines for all alignable snapshots (subsequent
+        # runs are near-instant via cache hits). The script's internal
+        # --baseline-budget-min deadline still bounds each run, and cached
+        # progress persists so a truncated run resumes next time.
         # The script self-guards: it only writes a checkpoint when enough REAL
         # samples with realized future targets exist (MIN_REAL_SAMPLES).
         # Otherwise it leaves the existing adapter untouched. PYTHONUNBUFFERED
@@ -359,6 +368,7 @@ jobs:
           git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo
           cp data/kronos_forecast.json gist_repo/
           cp data/adapter_training_stats.json gist_repo/ || true
+          cp data/adapter_baselines_cache.json gist_repo/ || true
           cp scripts/model/covariate_adapter.pth gist_repo/ || true
           cd gist_repo
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
@@ -366,6 +376,7 @@ jobs:
           git add kronos_forecast.json 2>/dev/null || true
           git add covariate_adapter.pth 2>/dev/null || true
           git add adapter_training_stats.json 2>/dev/null || true
+          git add adapter_baselines_cache.json 2>/dev/null || true
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes to push to Gist"
             exit 0
@@ -386,13 +397,15 @@ jobs:
           mkdir -p /tmp/generated_data
           cp data/kronos_forecast.json /tmp/generated_data/
           cp data/adapter_training_stats.json /tmp/generated_data/ || true
+          cp data/adapter_baselines_cache.json /tmp/generated_data/ || true
           cp scripts/model/covariate_adapter.pth /tmp/generated_data/ || true
-          rm -f data/kronos_forecast.json data/adapter_training_stats.json scripts/model/covariate_adapter.pth
+          rm -f data/kronos_forecast.json data/adapter_training_stats.json data/adapter_baselines_cache.json scripts/model/covariate_adapter.pth
           git fetch origin data
           git checkout -B data origin/data --
           mkdir -p data scripts/model
           cp /tmp/generated_data/kronos_forecast.json data/
           cp /tmp/generated_data/adapter_training_stats.json data/ || true
+          cp /tmp/generated_data/adapter_baselines_cache.json data/ || true
           cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -401,6 +414,7 @@ jobs:
           # NOTHING changed.
           git add data/kronos_forecast.json 2>/dev/null || true
           git add data/adapter_training_stats.json 2>/dev/null || true
+          git add data/adapter_baselines_cache.json 2>/dev/null || true
           git add scripts/model/covariate_adapter.pth 2>/dev/null || true
           if [ ! -f vercel.json ]; then
             # Disable Vercel deployments for the data branch — it receives ~565

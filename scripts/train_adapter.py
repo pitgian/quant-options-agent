@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import time
 import json
 import math
@@ -89,6 +90,11 @@ MAX_RECORDS_PER_SYMBOL = 40
 # Kronos autoregressive baseline forwards are the cost driver; batch them in
 # chunks this size to bound memory + keep CI responsive.
 BASELINE_BATCH_SIZE = 16
+# Upper bound on the number of parallel sequences Kronos decodes concurrently
+# (batch_size x sample_count). auto_regressive_inference already averages
+# over sample_count internally, so a higher denoise count shrinks the batch
+# to keep memory bounded on CPU.
+BASELINE_PARALLEL_BUDGET = 32
 
 STATS_OUTPUT_PATH = os.path.join(scripts_dir, "../data/adapter_training_stats.json")
 
@@ -116,6 +122,57 @@ def _load_previous_runs(stats_path: str) -> List[Dict]:
         return runs if isinstance(runs, list) else []
     except (FileNotFoundError, json.JSONDecodeError):
         return []
+
+
+# ---------------------------------------------------------------------------
+# Persistent baseline cache
+# ---------------------------------------------------------------------------
+# Kronos baseline forwards are the cost driver of training. They are also
+# stochastic (T=0.7 sampling), which is WHY the per-epoch loss curve changed
+# every run. Caching the (denoised) baseline for each (snapshot, horizon)
+# turns the cost into a one-time-per-snapshot expense AND makes training
+# reproducible: same inputs -> same target residual -> stable, comparable
+# loss curves. The CI restores this file from the data branch, so the cache
+# accumulates across runs.
+
+BASELINE_CACHE_PATH = os.path.join(scripts_dir, "../data/adapter_baselines_cache.json")
+# Bump when the Kronos model weights, tokenizer, sampling policy (T/top_k/top_p)
+# or CONTEXT_LEN change: a mismatch invalidates every cached baseline.
+BASELINE_CACHE_VERSION = 1
+
+
+def _baseline_cache_key(symbol: str, horizon: str, pred_len: int,
+                        x_norm: np.ndarray, sx: np.ndarray, sy: np.ndarray) -> str:
+    """Deterministic key over the EXACT Kronos inputs (context + time stamps).
+    Hashing the real input bytes — not just the snapshot timestamp — makes the
+    key robust to price-frame resolution changes: the same snapshot aligned
+    against 4h vs daily bars yields different keys, so no stale hits."""
+    h = hashlib.blake2b(digest_size=16)
+    h.update(f"v{BASELINE_CACHE_VERSION}|{symbol}|{horizon}|pl{pred_len}|cl{CONTEXT_LEN}".encode())
+    h.update(np.ascontiguousarray(x_norm, dtype=np.float32).tobytes())
+    h.update(np.ascontiguousarray(sx, dtype=np.float32).tobytes())
+    h.update(np.ascontiguousarray(sy, dtype=np.float32).tobytes())
+    return h.hexdigest()
+
+
+def _load_baseline_cache(path: str) -> Dict[str, list]:
+    try:
+        with open(path, "r") as f:
+            obj = json.load(f)
+        if isinstance(obj, dict) and obj.get("version") == BASELINE_CACHE_VERSION:
+            entries = obj.get("entries") or {}
+            return entries if isinstance(entries, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _flush_baseline_cache(cache: Dict[str, list], path: str) -> None:
+    """Atomic write so a mid-run timeout never leaves a half-written cache."""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"version": BASELINE_CACHE_VERSION, "entries": cache}, f)
+    os.replace(tmp, path)
 
 
 # ---------------------------------------------------------------------------
@@ -149,24 +206,29 @@ def _prepare_block(df_block: pd.DataFrame, predictor: KronosPredictor):
     return blk[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
 
 
-def _run_baseline_batch(
+def _resolve_baselines(
     predictor: KronosPredictor,
     samples: List[Dict],
     pred_len: int,
     device: str,
+    *,
+    symbol: str,
     deadline_s: Optional[float] = None,
-) -> Tuple[List[np.ndarray], int]:
-    """Run Kronos baseline (adapter disabled) for a batch of aligned samples,
-    processed in chunks of BASELINE_BATCH_SIZE to bound memory and surface
-    progress. `samples` share the same pred_len; each has context_df/future_df
-    already validated.
+    cache: Optional[Dict[str, list]] = None,
+    n_denoise: int = 1,
+    touched: Optional[set] = None,
+) -> List[Tuple[Dict, np.ndarray]]:
+    """Resolve a denoised Kronos baseline for each aligned sample, using the
+    persistent cache to skip already-computed ones.
 
-    If `deadline_s` (epoch seconds) is set, processing STOPS once it is reached
-    and returns only the samples completed so far — this is the hard guarantee
-    that training never freezes the CI runner regardless of CPU speed.
+    Denoising is native: auto_regressive_inference averages over `sample_count`
+    internally, so passing sample_count=n_denoise returns the mean of n
+    independent draws in ONE forward pass — a less noisy estimate of Kronos's
+    systematic error, which is what the adapter should learn to correct.
 
-    Returns (forecasts, consumed_count) so the caller can drop samples that
-    didn't get a baseline.
+    Returns (sample, baseline) pairs in original order. Samples whose baseline
+    could not be resolved (deadline hit before their turn) are dropped; their
+    progress is NOT lost because everything computed so far was already cached.
     """
     price_cols = predictor.price_cols
     vol_col = predictor.vol_col
@@ -178,37 +240,66 @@ def _run_baseline_batch(
         ctx[vol_col] = ctx[vol_col].astype(float)
         ctx[amt_vol] = ctx[vol_col] * ctx[price_cols].mean(axis=1)
         x = ctx[price_cols + [vol_col, amt_vol]].values.astype(np.float32)
-        x_norm, m, sd = _normalize_block(x, predictor.clip)
+        x_norm, _, _ = _normalize_block(x, predictor.clip)
         sx, sy = _build_stamps(ctx, fut)
-        return x_norm, sx, sy, (m, sd)
+        return x_norm, sx, sy
 
-    prepared = [_prep_one(s) for s in samples]
+    n = len(samples)
+    out: List[Optional[np.ndarray]] = [None] * n
+    keys: List[Optional[str]] = [None] * n
 
-    results: List[Optional[np.ndarray]] = []
-    consumed = 0
-    total = len(prepared)
+    # Keep the number of parallel decoded sequences (batch x sample_count)
+    # bounded so high denoise counts don't blow CPU memory.
+    batch_size = max(1, min(BASELINE_BATCH_SIZE, BASELINE_PARALLEL_BUDGET // max(1, n_denoise)))
+
+    # 1) Cache lookup — instant hits.
+    cache_hits = 0
+    for i, s in enumerate(samples):
+        x_norm, sx, sy = _prep_one(s)
+        if cache is not None:
+            key = _baseline_cache_key(symbol, s["horizon"], pred_len, x_norm, sx, sy)
+            keys[i] = key
+            if touched is not None:
+                touched.add(key)
+            if key in cache:
+                out[i] = np.asarray(cache[key], dtype=np.float32)
+                cache_hits += 1
+
+    miss_idx = [i for i in range(n) if out[i] is None]
+    _log(f"      baseline cache: {cache_hits}/{n} hits, {len(miss_idx)} to compute "
+         f"(denoise x{n_denoise}, batch {batch_size})")
+
+    # 2) Batched computation for misses, with a hard wall-clock deadline.
+    computed = 0
     hit_deadline = False
-    for start in range(0, total, BASELINE_BATCH_SIZE):
+    for start in range(0, len(miss_idx), batch_size):
         if deadline_s is not None and time.time() > deadline_s:
             hit_deadline = True
             break
-        chunk = prepared[start:start + BASELINE_BATCH_SIZE]
-        x_batch = np.stack([p[0] for p in chunk], axis=0)
-        sx_batch = np.stack([p[1] for p in chunk], axis=0)
-        sy_batch = np.stack([p[2] for p in chunk], axis=0)
+        positions = miss_idx[start:start + batch_size]
+        preps = [_prep_one(samples[i]) for i in positions]
+        x_batch = np.stack([p[0] for p in preps], axis=0)
+        sx_batch = np.stack([p[1] for p in preps], axis=0)
+        sy_batch = np.stack([p[2] for p in preps], axis=0)
         with torch.no_grad():
             preds = predictor.generate(
                 x_batch, sx_batch, sy_batch, pred_len,
-                T=0.7, top_k=5, top_p=0.9, sample_count=1, verbose=False,
-            )  # (B, pred_len, 6)
-        for j in range(preds.shape[0]):
-            results.append(preds[j])
-        consumed += preds.shape[0]
-        if total > BASELINE_BATCH_SIZE:
-            _log(f"      baseline {consumed}/{total}")
+                T=0.7, top_k=5, top_p=0.9, sample_count=n_denoise, verbose=False,
+            )  # (B, pred_len, 6) — already averaged over sample_count internally
+        for j, pos in enumerate(positions):
+            base = preds[j].astype(np.float32)
+            out[pos] = base
+            if cache is not None and keys[pos] is not None:
+                cache[keys[pos]] = base.tolist()
+        computed += len(positions)
+        if len(miss_idx) > batch_size:
+            _log(f"      baseline computed {start + len(positions)}/{len(miss_idx)}")
     if hit_deadline:
-        _log(f"      ⏱  baseline deadline reached at {consumed}/{total} samples")
-    return [r for r in results if r is not None], consumed
+        _log(f"      ⏱  baseline deadline reached at {computed}/{len(miss_idx)} misses "
+             f"— remainder deferred to next run (cached progress persists).")
+
+    # 3) Ordered result, dropping the unresolved (deadline-truncated) tail.
+    return [(samples[i], out[i]) for i in range(n) if out[i] is not None]
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +314,12 @@ def build_training_samples(
     symbol: str,
     device: str,
     progress_label: str,
-    max_records: int = MAX_RECORDS_PER_SYMBOL,
+    max_records: Optional[int] = MAX_RECORDS_PER_SYMBOL,
     deadline_s: Optional[float] = None,
+    cache: Optional[Dict[str, list]] = None,
+    cache_path: Optional[str] = None,
+    n_denoise: int = 1,
+    touched: Optional[set] = None,
 ) -> List[Dict]:
     """For each historical options snapshot with a realized future, build a
     (baseline forecast, covariates, target residual) sample for every horizon
@@ -233,15 +328,20 @@ def build_training_samples(
     # Pre-compute valid price-index positions
     n_prices = len(price_time_list)
 
-    # Subsample snapshots (evenly spaced in time) so the number of slow
-    # autoregressive Kronos forwards stays bounded — otherwise 500 records x
-    # 5 horizons blows the CI time budget.
+    # Subsample snapshots (evenly spaced in time) ONLY when an explicit cap is
+    # set. With baseline caching enabled the default is to use ALL snapshots:
+    # the expensive Kronos forwards are computed once and reused across runs,
+    # so the CI time budget is no longer the binding constraint — and a larger,
+    # more diverse training set directly improves the adapter's generalization.
     if max_records is not None and len(records) > max_records:
         idx = np.linspace(0, len(records) - 1, max_records).round().astype(int)
         idx = sorted(set(idx.tolist()))
         records = [records[i] for i in idx]
         _log(f"[{progress_label}] Subsampled to {len(records)} snapshots "
              f"(cap {max_records}).")
+    else:
+        _log(f"[{progress_label}] Using all {len(records)} snapshots "
+             f"(baseline cache active, no subsampling).")
 
     _log(f"[{progress_label}] Aligning {len(records)} snapshots against "
          f"{n_prices} price bars...")
@@ -282,18 +382,23 @@ def build_training_samples(
         if not per_h:
             continue
 
-        # Baseline forecasts (batched, with optional wall-clock deadline)
+        # Baseline forecasts (cache-aware: hits are free, misses are computed
+        # with N-sample averaging to denoise the target, then cached forever).
         try:
-            baselines, consumed = _run_baseline_batch(
-                predictor, per_h, pred_len, device, deadline_s=deadline_s,
+            resolved = _resolve_baselines(
+                predictor, per_h, pred_len, device,
+                symbol=symbol, deadline_s=deadline_s,
+                cache=cache, n_denoise=n_denoise, touched=touched,
             )
         except Exception as e:
-            _log(f"  [{hname}] baseline batch failed: {e}")
+            _log(f"  [{hname}] baseline resolution failed: {e}")
             continue
-        # If the deadline cut us short, only zip the samples we actually ran.
-        per_h_used = per_h[:consumed]
+        # Persist cache after each horizon so partial progress survives a
+        # mid-run deadline/timeout — the next run resumes via cache hits.
+        if cache is not None and cache_path is not None:
+            _flush_baseline_cache(cache, cache_path)
 
-        for s, base_norm in zip(per_h_used, baselines):
+        for s, base_norm in resolved:
             fut = s["future_df"]
             y_actual = _prepare_block(fut, predictor)
             # Reuse the same normalization the predictor would apply at inference:
@@ -538,12 +643,21 @@ def main():
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden-dim", type=int, default=128)
-    parser.add_argument("--max-records", type=int, default=MAX_RECORDS_PER_SYMBOL,
-                        help="Cap snapshots per symbol (subsampling) to bound runtime.")
-    parser.add_argument("--baseline-budget-min", type=float, default=6.0,
-                        help="Hard wall-clock budget (minutes) for ALL baseline "
-                             "Kronos forwards. Processing stops early once reached, "
-                             "guaranteeing the run never freezes the CI runner.")
+    parser.add_argument("--max-records", type=int, default=None,
+                        help="Cap snapshots per symbol (subsampling). Default: no "
+                             "cap — use ALL history, since baseline caching makes "
+                             "full-history training affordable across runs.")
+    parser.add_argument("--baseline-budget-min", type=float, default=15.0,
+                        help="Hard wall-clock budget (minutes) for baseline Kronos "
+                             "forwards in THIS run. Cache persists partial progress, "
+                             "so a truncated run resumes next time via cache hits.")
+    parser.add_argument("--baseline-samples", type=int, default=8,
+                        help="Number of stochastic Kronos samples to average per "
+                             "baseline (denoises the training target). auto_regressive_"
+                             "inference averages internally, so cost is one forward.")
+    parser.add_argument("--cache-path", type=str, default=None,
+                        help="Path to the baseline cache JSON (default: "
+                             "data/adapter_baselines_cache.json).")
     parser.add_argument("--output-path", type=str, default=None)
     parser.add_argument("--stats-path", type=str, default=None)
     parser.add_argument("--force-save", action="store_true",
@@ -588,6 +702,15 @@ def main():
     # deadline for ALL baseline forwards so the run can never freeze the runner
     # regardless of how slow autoregressive Kronos is on CPU.
     baseline_deadline = time.time() + args.baseline_budget_min * 60
+    # Load the persistent baseline cache. The CI restores this file from the
+    # data branch, so computed baselines survive across runs — turning the
+    # expensive Kronos forwards into a one-time-per-snapshot cost and making
+    # full-history training both affordable and reproducible.
+    baseline_cache_path = args.cache_path or BASELINE_CACHE_PATH
+    baseline_cache = _load_baseline_cache(baseline_cache_path)
+    touched_keys: set = set()
+    _log(f"Loaded baseline cache: {len(baseline_cache)} entries "
+         f"(version {BASELINE_CACHE_VERSION}, path {baseline_cache_path}).")
     all_samples: List[Dict] = []
     symbols_seen: Dict[str, int] = {}
     for symbol in args.symbols:
@@ -672,10 +795,27 @@ def main():
                 predictor, h_records, frame, time_list, symbol, device,
                 f"{symbol}/{hname}", max_records=args.max_records,
                 deadline_s=baseline_deadline,
+                cache=baseline_cache, cache_path=baseline_cache_path,
+                n_denoise=args.baseline_samples, touched=touched_keys,
             )
             # tag horizon already set inside; just collect
             all_samples.extend(per_h_samples)
             _log(f"  [{symbol}/{hname}] produced {len(per_h_samples)} real samples")
+
+    # Prune the baseline cache to entries that are still alignable (i.e. were
+    # touched this run). Snapshots that aged out of the price window or left
+    # the 500/symbol history cap are evicted automatically, keeping the cache
+    # tight and the committed file small. Then flush once more (per-horizon
+    # flushes already happened, this catches the final prune).
+    if baseline_cache:
+        stale = [k for k in baseline_cache.keys() if k not in touched_keys]
+        for k in stale:
+            del baseline_cache[k]
+        if stale:
+            _log(f"\n🧹 Pruned {len(stale)} stale baseline cache entr(y) "
+                 f"(no longer alignable); {len(baseline_cache)} remain.")
+        _flush_baseline_cache(baseline_cache, baseline_cache_path)
+        _log(f"💾 Baseline cache saved: {len(baseline_cache)} entries.")
 
     real_total = len(all_samples)
     _log(f"\nTotal REAL samples (all symbols × horizons): {real_total}")
