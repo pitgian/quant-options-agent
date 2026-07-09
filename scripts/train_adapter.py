@@ -314,6 +314,9 @@ def build_training_samples(
     symbol: str,
     device: str,
     progress_label: str,
+    hname: str,
+    interval: str,
+    pred_len: int,
     max_records: Optional[int] = MAX_RECORDS_PER_SYMBOL,
     deadline_s: Optional[float] = None,
     cache: Optional[Dict[str, list]] = None,
@@ -321,11 +324,18 @@ def build_training_samples(
     n_denoise: int = 1,
     touched: Optional[set] = None,
 ) -> List[Dict]:
-    """For each historical options snapshot with a realized future, build a
-    (baseline forecast, covariates, target residual) sample for every horizon
-    whose future window is fully contained in the price history."""
+    """Build (baseline forecast, covariates, target residual) samples for ONE
+    horizon, aligned against the price frame PASSED BY THE CALLER.
+
+    The caller (main) loops over horizons and fetches the native-resolution
+    frame for each, so this function must process exactly that single
+    horizon — NOT loop over all horizons. The previous implementation looped
+    over every horizon internally using the single supplied frame, which
+    produced ~50% of samples at the WRONG resolution (e.g. '4h' samples built
+    from daily bars, with a ~6-month context instead of ~18h). That silently
+    corrupted training under each pred_len label.
+    """
     samples: List[Dict] = []
-    # Pre-compute valid price-index positions
     n_prices = len(price_time_list)
 
     # Subsample snapshots (evenly spaced in time) ONLY when an explicit cap is
@@ -344,81 +354,79 @@ def build_training_samples(
              f"(baseline cache active, no subsampling).")
 
     _log(f"[{progress_label}] Aligning {len(records)} snapshots against "
-         f"{n_prices} price bars...")
+         f"{n_prices} {interval} price bars (horizon {hname}, pred_len={pred_len})...")
 
-    # Group candidate (record, horizon) alignments first, then run baseline in
-    # batches per horizon to keep Kronos forward passes efficient.
-    for hname, interval, pred_len in HORIZONS:
-        per_h: List[Dict] = []
-        for record in records:
-            ts_utc = pd.to_datetime(record["timestamp"])
-            if ts_utc.tz is not None:
-                ts_utc = ts_utc.tz_convert("UTC").tz_localize(None)
-            ts_np = ts_utc.to_datetime64()
+    per_h: List[Dict] = []
+    for record in records:
+        ts_utc = pd.to_datetime(record["timestamp"])
+        if ts_utc.tz is not None:
+            ts_utc = ts_utc.tz_convert("UTC").tz_localize(None)
+        ts_np = ts_utc.to_datetime64()
 
-            valid = [i for i, t in enumerate(price_time_list) if t <= ts_np]
-            if not valid:
-                continue
-            p_idx = valid[-1]
-            if p_idx < CONTEXT_LEN or p_idx + pred_len >= n_prices:
-                continue  # not enough history or future not yet realized
+        valid = [i for i, t in enumerate(price_time_list) if t <= ts_np]
+        if not valid:
+            continue
+        p_idx = valid[-1]
+        if p_idx < CONTEXT_LEN or p_idx + pred_len >= n_prices:
+            continue  # not enough history or future not yet realized
 
-            ctx = price_df.iloc[p_idx - CONTEXT_LEN: p_idx].copy()
-            fut = price_df.iloc[p_idx: p_idx + pred_len].copy()
-            if ctx.isnull().values.any() or fut.isnull().values.any():
-                continue
-
-            per_h.append({
-                "context_df": ctx,
-                "future_df": fut,
-                "skew": float(record["volatility_skew_25d"]),
-                "pcr": float(record["put_call_oi_ratio"]),
-                "gex": float(record.get("total_net_gex", 0.0)) / 1e9,
-                "horizon": hname,
-                "interval": interval,
-                "pred_len": pred_len,
-            })
-
-        if not per_h:
+        ctx = price_df.iloc[p_idx - CONTEXT_LEN: p_idx].copy()
+        fut = price_df.iloc[p_idx: p_idx + pred_len].copy()
+        if ctx.isnull().values.any() or fut.isnull().values.any():
             continue
 
-        # Baseline forecasts (cache-aware: hits are free, misses are computed
-        # with N-sample averaging to denoise the target, then cached forever).
-        try:
-            resolved = _resolve_baselines(
-                predictor, per_h, pred_len, device,
-                symbol=symbol, deadline_s=deadline_s,
-                cache=cache, n_denoise=n_denoise, touched=touched,
-            )
-        except Exception as e:
-            _log(f"  [{hname}] baseline resolution failed: {e}")
-            continue
-        # Persist cache after each horizon so partial progress survives a
-        # mid-run deadline/timeout — the next run resumes via cache hits.
-        if cache is not None and cache_path is not None:
-            _flush_baseline_cache(cache, cache_path)
+        per_h.append({
+            "context_df": ctx,
+            "future_df": fut,
+            "skew": float(record["volatility_skew_25d"]),
+            "pcr": float(record["put_call_oi_ratio"]),
+            "gex": float(record.get("total_net_gex", 0.0)) / 1e9,
+            "horizon": hname,
+            "interval": interval,
+            "pred_len": pred_len,
+        })
 
-        for s, base_norm in resolved:
-            fut = s["future_df"]
-            y_actual = _prepare_block(fut, predictor)
-            # Reuse the same normalization the predictor would apply at inference:
-            # context mean/std. Reconstruct from context for consistency.
-            ctx = s["context_df"]
-            x = _prepare_block(ctx, predictor)
-            _, m, sd = _normalize_block(x, predictor.clip)
-            y_actual_norm = np.clip((y_actual - m) / sd, -predictor.clip, predictor.clip)
-            target_residual = y_actual_norm - base_norm
-            samples.append({
-                "baseline": base_norm.astype(np.float32),
-                "target_residual": target_residual.astype(np.float32),
-                "skew": s["skew"],
-                "pcr": s["pcr"],
-                "gex": s["gex"],
-                "pred_len": s["pred_len"],
-                "horizon": s["horizon"],
-                "symbol": symbol,
-            })
-        _log(f"  [{hname}] {len(per_h)} aligned samples (pred_len={pred_len})")
+    if not per_h:
+        _log(f"  [{hname}] 0 aligned samples")
+        return samples
+
+    # Baseline forecasts (cache-aware: hits are free, misses are computed
+    # with N-sample averaging to denoise the target, then cached forever).
+    try:
+        resolved = _resolve_baselines(
+            predictor, per_h, pred_len, device,
+            symbol=symbol, deadline_s=deadline_s,
+            cache=cache, n_denoise=n_denoise, touched=touched,
+        )
+    except Exception as e:
+        _log(f"  [{hname}] baseline resolution failed: {e}")
+        return samples
+    # Persist cache after this horizon so partial progress survives a mid-run
+    # deadline/timeout — the next run resumes via cache hits.
+    if cache is not None and cache_path is not None:
+        _flush_baseline_cache(cache, cache_path)
+
+    for s, base_norm in resolved:
+        fut = s["future_df"]
+        y_actual = _prepare_block(fut, predictor)
+        # Reuse the same normalization the predictor would apply at inference:
+        # context mean/std. Reconstruct from context for consistency.
+        ctx = s["context_df"]
+        x = _prepare_block(ctx, predictor)
+        _, m, sd = _normalize_block(x, predictor.clip)
+        y_actual_norm = np.clip((y_actual - m) / sd, -predictor.clip, predictor.clip)
+        target_residual = y_actual_norm - base_norm
+        samples.append({
+            "baseline": base_norm.astype(np.float32),
+            "target_residual": target_residual.astype(np.float32),
+            "skew": s["skew"],
+            "pcr": s["pcr"],
+            "gex": s["gex"],
+            "pred_len": s["pred_len"],
+            "horizon": s["horizon"],
+            "symbol": symbol,
+        })
+    _log(f"  [{hname}] {len(per_h)} aligned, {len(samples)} built (pred_len={pred_len})")
 
     return samples
 
@@ -793,7 +801,9 @@ def main():
             h_records = records  # all snapshots; alignment filters by availability
             per_h_samples = build_training_samples(
                 predictor, h_records, frame, time_list, symbol, device,
-                f"{symbol}/{hname}", max_records=args.max_records,
+                progress_label=f"{symbol}/{hname}",
+                hname=hname, interval=interval, pred_len=pred_len,
+                max_records=args.max_records,
                 deadline_s=baseline_deadline,
                 cache=baseline_cache, cache_path=baseline_cache_path,
                 n_denoise=args.baseline_samples, touched=touched_keys,
