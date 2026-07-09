@@ -748,7 +748,12 @@ def main():
             "5m": "5d",   # (legacy, kept for completeness)
             "15m": "5d",
             "1h": "30d",
-            "4h": "90d",  # downloaded as 1h then resampled to 4h (yfinance)
+            # yfinance exposes up to ~2y of 1h history (the ~60d limit only
+            # applies to sub-hourly intervals). Downloading 2y and resampling
+            # to 4h yields ~3000 4h bars so ALL historical snapshots in the
+            # 2-year window can form 4h training samples — previously the
+            # 90d cap starved the 4h training set to only the last ~108 days.
+            "4h": "2y",   # downloaded as 1h then resampled to 4h (yfinance)
             "1d": "2y",
         }
 
