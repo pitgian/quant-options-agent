@@ -10,25 +10,21 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DayTradingData, ExpiryFilter, KronosForecast } from '../types';
 import { fetchOptionsData, FetchResult, getTimeSinceUpdate } from '../services/dataService';
-import { gistRawUrl } from '../lib/gist';
 
 const KRONOS_REPO_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/kronos_forecast.json';
-const KRONOS_GIST_URL = gistRawUrl('kronos_forecast.json');
 const KRONOS_LOCAL_URL = '/data/kronos_forecast.json';
 
 const fetchKronosForecast = async (): Promise<Response | null> => {
   const now = Date.now();
   const isDev = import.meta.env.DEV;
 
-  // Build the list of URLs to try in order
+  // Build the list of URLs to try in order (single source: `data` branch)
   const urls: { name: string; url: string | null }[] = [];
-  
+
   if (isDev) {
     urls.push({ name: 'Local File', url: KRONOS_LOCAL_URL });
-    if (KRONOS_GIST_URL) urls.push({ name: 'Gist', url: KRONOS_GIST_URL });
     urls.push({ name: 'GitHub Repo Branch', url: KRONOS_REPO_URL });
   } else {
-    if (KRONOS_GIST_URL) urls.push({ name: 'Gist', url: KRONOS_GIST_URL });
     urls.push({ name: 'GitHub Repo Branch', url: KRONOS_REPO_URL });
     urls.push({ name: 'Local Static Fallback', url: KRONOS_LOCAL_URL });
   }

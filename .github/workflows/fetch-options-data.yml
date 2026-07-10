@@ -104,27 +104,6 @@ jobs:
           # market hours even though we have the last valid OI stored.
           git checkout origin/data -- data/options_data.json || true
 
-      - name: Restore options_history.json from Gist
-        continue-on-error: true
-        run: |
-          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
-            echo "GH_PAT or GIST_ID secret is missing. Skipping Gist restore."
-            exit 0
-          fi
-          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo_restore
-          if [ -f gist_repo_restore/options_history.json ] && [ ! -f data/options_history.json ]; then
-            echo "Restoring options_history.json from Gist..."
-            mkdir -p data
-            cp -f gist_repo_restore/options_history.json data/
-          fi
-          # Same for options_data.json — OI fallback source (see comment above).
-          if [ -f gist_repo_restore/options_data.json ] && [ ! -f data/options_data.json ]; then
-            echo "Restoring options_data.json from Gist for OI fallback..."
-            mkdir -p data
-            cp -f gist_repo_restore/options_data.json data/
-          fi
-          rm -rf gist_repo_restore
-
       - name: Fetch options data
         timeout-minutes: 10
         run: |
@@ -135,40 +114,8 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
 
-      - name: Push to Gist
-        id: gist_push
-        continue-on-error: true
+      - name: Push to repository data branch
         run: |
-          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
-            echo "GH_PAT or GIST_ID secret is missing. Skipping Gist update."
-            exit 1
-          fi
-          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo
-          cp data/options_data.json gist_repo/
-          cp data/options_history.json gist_repo/ || true
-          cd gist_repo
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add options_data.json options_history.json
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "No changes to push to Gist"
-            exit 0
-          fi
-          git commit -m "chore: update options data [job 1]"
-          for i in 1 2 3; do
-            if git push origin main || git push origin master; then
-              echo "Push to Gist successful"
-              exit 0
-            fi
-            git pull --rebase origin main || git pull --rebase origin master
-          done
-          echo "Gist push failed after 3 attempts"
-          exit 1
-
-      - name: Fallback — push to repository data branch
-        if: steps.gist_push.outcome == 'failure'
-        run: |
-          echo "Gist push failed. Pushing to the repository data branch..."
           mkdir -p /tmp/generated_data
           cp data/options_data.json /tmp/generated_data/
           cp data/options_history.json /tmp/generated_data/ || true
@@ -191,7 +138,7 @@ jobs:
             echo "No changes to commit on data branch."
             exit 0
           fi
-          git commit -m "chore: update options data [job 1 fallback] [skip ci]"
+          git commit -m "chore: update options data [job 1] [skip ci]"
           git push origin data
 
   # ============================================================================
@@ -260,18 +207,6 @@ jobs:
           # Pull the baseline cache so computed Kronos baselines survive across
           # runs (turns full-history adapter training into a one-time-per-snapshot cost).
           git checkout origin/data -- data/adapter_baselines_cache.json || true
-
-      - name: Restore state from Gist (fallback if data branch missing)
-        continue-on-error: true
-        run: |
-          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
-            exit 0
-          fi
-          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo_restore
-          [ -f gist_repo_restore/options_history.json ] && [ ! -f data/options_history.json ] && cp -f gist_repo_restore/options_history.json data/ && mkdir -p data
-          [ -f gist_repo_restore/covariate_adapter.pth ] && [ ! -f scripts/model/covariate_adapter.pth ] && mkdir -p scripts/model && cp -f gist_repo_restore/covariate_adapter.pth scripts/model/
-          [ -f gist_repo_restore/adapter_baselines_cache.json ] && [ ! -f data/adapter_baselines_cache.json ] && cp -f gist_repo_restore/adapter_baselines_cache.json data/
-          rm -rf gist_repo_restore
 
       - name: Freshness guard — skip if Kronos forecast is recent
         # Anti-pile-up: triggers fire every 5 min but a full Kronos run takes
@@ -356,43 +291,9 @@ jobs:
           TZ: America/New_York
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
 
-      - name: Push to Gist
+      - name: Push to repository data branch
         if: steps.freshness.outputs.skip != 'true'
-        id: gist_push
-        continue-on-error: true
         run: |
-          if [ -z "${{ secrets.GH_PAT }}" ] || [ -z "${{ secrets.GIST_ID }}" ]; then
-            exit 1
-          fi
-          git clone https://${{ secrets.GH_PAT }}@gist.github.com/${{ secrets.GIST_ID }}.git gist_repo
-          cp data/kronos_forecast.json gist_repo/
-          cp data/adapter_training_stats.json gist_repo/ || true
-          cp data/adapter_baselines_cache.json gist_repo/ || true
-          cp scripts/model/covariate_adapter.pth gist_repo/ || true
-          cd gist_repo
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add kronos_forecast.json 2>/dev/null || true
-          git add covariate_adapter.pth 2>/dev/null || true
-          git add adapter_training_stats.json 2>/dev/null || true
-          git add adapter_baselines_cache.json 2>/dev/null || true
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "No changes to push to Gist"
-            exit 0
-          fi
-          git commit -m "chore: update Kronos forecast [job 2]"
-          for i in 1 2 3; do
-            if git push origin main || git push origin master; then
-              exit 0
-            fi
-            git pull --rebase origin main || git pull --rebase origin master
-          done
-          exit 1
-
-      - name: Fallback — push to repository data branch
-        if: steps.freshness.outputs.skip != 'true' && steps.gist_push.outcome == 'failure'
-        run: |
-          echo "Gist push failed. Pushing to the repository data branch..."
           mkdir -p /tmp/generated_data
           cp data/kronos_forecast.json /tmp/generated_data/
           cp data/adapter_training_stats.json /tmp/generated_data/ || true
@@ -425,5 +326,5 @@ jobs:
             echo "No changes to commit on data branch."
             exit 0
           fi
-          git commit -m "chore: update Kronos forecast [job 2 fallback] [skip ci]"
+          git commit -m "chore: update Kronos forecast [job 2] [skip ci]"
           git push origin data

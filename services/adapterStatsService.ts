@@ -2,17 +2,14 @@
  * Covariate Adapter stats service
  *
  * Fetches data/adapter_training_stats.json (produced by train_adapter.py on
- * the `data` branch / Gist) with the same local→Gist→repo cascade used for
- * the other data files, plus a short in-memory cache.
+ * the `data` branch) with the same local→repo cascade used for the other
+ * data files, plus a short in-memory cache.
  *
  * @module services/adapterStatsService
  */
 
 import type { AdapterTrainingStats } from '../types';
 
-import { gistRawUrl } from '../lib/gist';
-
-const GIST_URL = gistRawUrl('adapter_training_stats.json');
 const REPO_URL =
   'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/adapter_training_stats.json';
 const LOCAL_URL = '/data/adapter_training_stats.json';
@@ -29,10 +26,8 @@ export async function fetchAdapterStats(force = false): Promise<AdapterTrainingS
   const urls: { name: string; url: string | null }[] = [];
   if (isDev) {
     urls.push({ name: 'Local', url: LOCAL_URL });
-    if (GIST_URL) urls.push({ name: 'Gist', url: GIST_URL });
     urls.push({ name: 'Repo', url: REPO_URL });
   } else {
-    if (GIST_URL) urls.push({ name: 'Gist', url: GIST_URL });
     urls.push({ name: 'Repo', url: REPO_URL });
     urls.push({ name: 'Local', url: LOCAL_URL });
   }

@@ -11,12 +11,11 @@
 // CONFIGURATION
 // ============================================================================
 
-import { gistRawUrl } from '../lib/gist';
-
-/** GitHub Raw URL for the options data JSON file (hardcoded fallback that
- *  always works even if the gist env vars are misconfigured). */
+/** GitHub Raw URL for the options data JSON on the `data` branch.
+ *  Fetched with a cache-busting `?t=` query, so GitHub's CDN always serves
+ *  the latest commit (no stale-cache lag — this is why a separate Gist is
+ *  no longer needed). */
 const REPO_DATA_URL = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/options_data.json';
-const GIST_DATA_URL = gistRawUrl('options_data.json');
 
 const LOCAL_DATA_URL = '/data/options_data.json';
 
@@ -115,7 +114,7 @@ let cache: CacheEntry | null = null;
 /**
  * Fetches the raw JSON data with in-memory caching.
  *
- * - Tries to fetch the latest data from GitHub Gist or Raw repo branch
+ * - Tries to fetch the latest data from the GitHub `data` branch (raw URL)
  * - Falls back to local JSON file
  * - Falls back to stale in-memory cache as last resort
  */
@@ -129,15 +128,13 @@ export async function fetchRawData(forceRefresh: boolean = false): Promise<RawJs
 
   const isDev = import.meta.env.DEV;
 
-  // Build the list of URLs to try in order
+  // Build the list of URLs to try in order (single source: `data` branch)
   const urls: { name: string; url: string | null }[] = [];
-  
+
   if (isDev) {
     urls.push({ name: 'Local File', url: LOCAL_DATA_URL });
-    if (GIST_DATA_URL) urls.push({ name: 'Gist', url: GIST_DATA_URL });
     urls.push({ name: 'GitHub Repo Branch', url: REPO_DATA_URL });
   } else {
-    if (GIST_DATA_URL) urls.push({ name: 'Gist', url: GIST_DATA_URL });
     urls.push({ name: 'GitHub Repo Branch', url: REPO_DATA_URL });
     urls.push({ name: 'Local Static Fallback', url: LOCAL_DATA_URL });
   }
