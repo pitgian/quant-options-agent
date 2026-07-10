@@ -330,12 +330,11 @@ jobs:
 
       - name: Train unified covariate adapter (new-data guarded)
         if: steps.freshness.outputs.skip != 'true' && steps.train_check.outputs.should_train == 'true'
-        timeout-minutes: 25
-        # Raised from 12 → 25 min: with baseline caching the FIRST run after
-        # new data computes baselines for all alignable snapshots (subsequent
-        # runs are near-instant via cache hits). The script's internal
-        # --baseline-budget-min deadline still bounds each run, and cached
-        # progress persists so a truncated run resumes next time.
+        timeout-minutes: 14
+        # Bounded runtime: max-records=80/symbol + denoise x4 + 7min baseline
+        # budget keeps the whole job ~8-12 min (was 25 min with no cap + x8
+        # denoise, which timed out and piled up runs). The baseline cache makes
+        # re-runs of the same capped snapshots instant after the cold start.
         # The script self-guards: it only writes a checkpoint when enough REAL
         # samples with realized future targets exist (MIN_REAL_SAMPLES).
         # Otherwise it leaves the existing adapter untouched. PYTHONUNBUFFERED

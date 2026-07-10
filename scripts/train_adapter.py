@@ -651,18 +651,20 @@ def main():
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden-dim", type=int, default=128)
-    parser.add_argument("--max-records", type=int, default=None,
-                        help="Cap snapshots per symbol (subsampling). Default: no "
-                             "cap — use ALL history, since baseline caching makes "
-                             "full-history training affordable across runs.")
-    parser.add_argument("--baseline-budget-min", type=float, default=15.0,
+    parser.add_argument("--max-records", type=int, default=80,
+                        help="Cap snapshots per symbol (subsampling). Bounds runtime: "
+                             "80/symbol x 2 symbols x 2 horizons = ~320 baselines, "
+                             "computable within the baseline budget. The persistent "
+                             "cache makes re-runs of the same (capped) snapshots instant.")
+    parser.add_argument("--baseline-budget-min", type=float, default=7.0,
                         help="Hard wall-clock budget (minutes) for baseline Kronos "
-                             "forwards in THIS run. Cache persists partial progress, "
-                             "so a truncated run resumes next time via cache hits.")
-    parser.add_argument("--baseline-samples", type=int, default=8,
+                             "forwards in THIS run. Bounded so the whole CI job stays "
+                             "~8-12 min (was 15, which made runs exceed the step timeout).")
+    parser.add_argument("--baseline-samples", type=int, default=4,
                         help="Number of stochastic Kronos samples to average per "
                              "baseline (denoises the training target). auto_regressive_"
-                             "inference averages internally, so cost is one forward.")
+                             "inference averages internally. 4 is a good cost/quality "
+                             "trade-off (was 8, which doubled runtime).")
     parser.add_argument("--cache-path", type=str, default=None,
                         help="Path to the baseline cache JSON (default: "
                              "data/adapter_baselines_cache.json).")
