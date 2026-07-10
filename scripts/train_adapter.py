@@ -338,17 +338,18 @@ def build_training_samples(
     samples: List[Dict] = []
     n_prices = len(price_time_list)
 
-    # Subsample snapshots (evenly spaced in time) ONLY when an explicit cap is
-    # set. With baseline caching enabled the default is to use ALL snapshots:
-    # the expensive Kronos forwards are computed once and reused across runs,
-    # so the CI time budget is no longer the binding constraint — and a larger,
-    # more diverse training set directly improves the adapter's generalization.
+    # Subsample to a cap when set. SELECTION MUST BE STABLE ACROSS RUNS so the
+    # baseline cache actually warms up: the history list churns (FIFO at the
+    # 500-record cap), so index-based linspace picks DIFFERENT snapshots every
+    # run (index 0 points to a newer record as old ones drop) and every key is
+    # a cache miss. Hashing each record's timestamp gives a position-independent
+    # stable score, so the same snapshots are selected run after run -> cache
+    # hits after warm-up. Coverage stays roughly uniform (hash is uniform).
     if max_records is not None and len(records) > max_records:
-        idx = np.linspace(0, len(records) - 1, max_records).round().astype(int)
-        idx = sorted(set(idx.tolist()))
-        records = [records[i] for i in idx]
+        scored = sorted(records, key=lambda r: hashlib.sha256(str(r["timestamp"]).encode()).hexdigest())
+        records = sorted(scored[:max_records], key=lambda r: r["timestamp"])
         _log(f"[{progress_label}] Subsampled to {len(records)} snapshots "
-             f"(cap {max_records}).")
+             f"(stable timestamp-hash, cap {max_records}).")
     else:
         _log(f"[{progress_label}] Using all {len(records)} snapshots "
              f"(baseline cache active, no subsampling).")
@@ -708,10 +709,13 @@ def main():
     # Make sure the adapter is OFF during baseline generation
     predictor.adapter = None
 
-    # 3. Build samples across symbols + horizons. Compute a shared wall-clock
-    # deadline for ALL baseline forwards so the run can never freeze the runner
-    # regardless of how slow autoregressive Kronos is on CPU.
-    baseline_deadline = time.time() + args.baseline_budget_min * 60
+    # 3. Build samples across symbols + horizons. Each (symbol, horizon) gets a
+    # FAIR slice of the baseline budget via a per-iteration deadline. A single
+    # shared deadline let the first-processed horizon (4h) consume the entire
+    # budget and starve 1d to 0 samples every run. The slices still sum to
+    # ~baseline_budget_min, so the total wall-clock cap (anti-freeze) holds.
+    n_iters = max(1, len(args.symbols) * len(HORIZONS))
+    per_iter_budget_s = args.baseline_budget_min * 60 / n_iters
     # Load the persistent baseline cache. The CI restores this file from the
     # data branch, so computed baselines survive across runs — turning the
     # expensive Kronos forwards into a one-time-per-snapshot cost and making
@@ -806,12 +810,13 @@ def main():
                 continue
 
             h_records = records  # all snapshots; alignment filters by availability
+            iter_deadline = time.time() + per_iter_budget_s
             per_h_samples = build_training_samples(
                 predictor, h_records, frame, time_list, symbol, device,
                 progress_label=f"{symbol}/{hname}",
                 hname=hname, interval=interval, pred_len=pred_len,
                 max_records=args.max_records,
-                deadline_s=baseline_deadline,
+                deadline_s=iter_deadline,
                 cache=baseline_cache, cache_path=baseline_cache_path,
                 n_denoise=args.baseline_samples, touched=touched_keys,
             )
