@@ -103,17 +103,27 @@ describe('getActiveKronosForecast — guards', () => {
 // ---------------------------------------------------------------------------
 
 describe('getActiveKronosForecast — multiday (4h, 1d)', () => {
-  it('locks scaleRatio to 1.0 (no jitter) and uses model last_price (4h)', () => {
-    // forecast last_price = 500, live spot = 510, but isStable → scaleRatio = 1
+  it('re-anchors candles & spot to the LIVE ETF spot (4h)', () => {
+    // forecast last_price = 500, live spot = 510 → scaleRatio = 1.02.
+    // The projection must start from the CURRENT price, not the frozen
+    // generation-time anchor, otherwise levels drift vs the live market.
     const result = getActiveKronosForecast(makeBiasItem(tenCandles), 510, '4h')!;
-    // first candle close was 500 → unscaled
-    expect(result.candles[0].close).toBeCloseTo(500, 4);
-    // lastPrice uses model price, not live spot
-    expect(result.lastPrice).toBe(500);
+    expect(result.scaleRatioUsed).toBeCloseTo(510 / 500, 6);
+    // first candle close was 500 → re-anchored to 510
+    expect(result.candles[0].close).toBeCloseTo(510, 4);
+    // lastPrice = live spot (NOT the model's frozen last_price)
+    expect(result.lastPrice).toBe(510);
   });
 
-  it('locks scaleRatio to 1.0 (no jitter) and uses model last_price (1d)', () => {
+  it('re-anchors candles & spot to the LIVE ETF spot (1d)', () => {
     const result = getActiveKronosForecast(makeBiasItem(tenCandles), 510, '1d')!;
+    expect(result.candles[0].close).toBeCloseTo(510, 4);
+    expect(result.lastPrice).toBe(510);
+  });
+
+  it('scaleRatio ≈ 1.0 when forecast anchor matches live spot (no-op)', () => {
+    const result = getActiveKronosForecast(makeBiasItem(tenCandles), 500, '1d')!;
+    expect(result.scaleRatioUsed).toBeCloseTo(1.0, 6);
     expect(result.candles[0].close).toBeCloseTo(500, 4);
     expect(result.lastPrice).toBe(500);
   });

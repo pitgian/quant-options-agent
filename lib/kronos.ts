@@ -48,8 +48,10 @@ export interface ScaledKronosCandle extends KronosPredictedCandle {
 }
 
 export interface ActiveKronosForecast {
-  /** Reference price (= live ETF spot for intraday, model price for multiday), already multiplied. */
+  /** Reference price = the LIVE ETF spot (re-anchored every render), already multiplied into display space. */
   lastPrice: number;
+  /** The live→forecast anchor ratio applied (liveSpot / forecastAnchor). ≈1.0 for a fresh forecast; >1/<1 realigns an ageing forecast to the current price. */
+  scaleRatioUsed: number;
   targetPrice: number;
   expectedHigh: number;
   expectedLow: number;
@@ -166,12 +168,15 @@ export function getActiveKronosForecast(
   if (!activeData?.candles || activeData.candles.length === 0) return null;
 
   const forecastLastPrice = activeData.last_price || etfSpot;
-  // For multiday forecasts (4h/1d), keep scaleRatio at 1.0 to prevent
-  // sub-second jitters; for intraday, scale dynamically to align with the
-  // live ETF spot.
-  const scaleRatio = isStable ? 1.0 : etfSpot / forecastLastPrice;
-  const baseLastPrice = isStable ? (activeData.last_price || etfSpot) : etfSpot;
-  const lastPrice = baseLastPrice * multiplier;
+  // ALWAYS re-anchor the model output to the LIVE ETF spot. The forecast's
+  // own last_price is frozen at generation time; anchoring the candles/spot
+  // to it makes the displayed levels drift away from the live market as the
+  // forecast ages (this was the root cause of 'spot non corrisponde' / levels
+  // misaligned vs the dashboard). scaleRatio = liveSpot/forecastAnchor shifts
+  // the whole projected path to start from the CURRENT price — for a fresh
+  // forecast this ≈ 1.0, for an older one it realigns the levels to today.
+  const scaleRatio = etfSpot / forecastLastPrice;
+  const lastPrice = etfSpot * multiplier;
 
   const sliced = activeData.candles.slice(0, candleCount);
   if (sliced.length === 0) return null;
@@ -210,6 +215,7 @@ export function getActiveKronosForecast(
 
   return {
     lastPrice,
+    scaleRatioUsed: scaleRatio,
     targetPrice,
     expectedHigh,
     expectedLow,

@@ -17,7 +17,7 @@ interface KronosForecastViewProps {
  */
 type ChartData = ActiveKronosForecast & { liveSpot: number };
 
-type DisplayMode = 'futures' | 'etf';
+type DisplayMode = 'futures' | 'index' | 'etf';
 
 // ===========================================================================
 // Sub-component: Control bar
@@ -101,6 +101,17 @@ function KronosControlBar({
               Futures ({market === 'SP500' ? 'ES' : 'NQ'})
             </button>
             <button
+              onClick={() => setDisplayMode('index')}
+              className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
+              style={{
+                backgroundColor: displayMode === 'index' ? '#1e293b' : 'transparent',
+                color: displayMode === 'index' ? '#e2e8f0' : '#64748b',
+              }}
+              title="Scala indice (SPX/NDX) — coincide con i muri della dashboard Volumi"
+            >
+              Index ({market === 'SP500' ? 'SPX' : 'NDX'})
+            </button>
+            <button
               onClick={() => setDisplayMode('etf')}
               className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
               style={{
@@ -165,7 +176,7 @@ function KronosSummaryCards({ chartData, kronosTimeframe, market, displayMode }:
         <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Prezzo Spot Corrente</span>
         <div className="mt-2">
           <span className="text-xl font-bold text-slate-100">${chartData.liveSpot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          <span className="text-[10px] text-gray-500 block">Unit: {displayMode === 'futures' ? (market === 'SP500' ? 'ES' : 'NQ') : (market === 'SP500' ? 'SPY' : 'QQQ')}</span>
+          <span className="text-[10px] text-gray-500 block">Unità: {displayMode === 'futures' ? (market === 'SP500' ? 'ES' : 'NQ') : displayMode === 'index' ? (market === 'SP500' ? 'SPX' : 'NDX') : (market === 'SP500' ? 'SPY' : 'QQQ')}</span>
         </div>
       </div>
 
@@ -693,25 +704,31 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
     return market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
   }, [kronosForecast, market]);
 
-  // Dynamically calculate conversion ratios based on Futures
-  const futuresRatio = useMemo(() => {
-    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
-    const fSpot = liveSpot[futuresSymbol as keyof typeof liveSpot];
-    if (fSpot && etfData?.spot) {
-      return fSpot / etfData.spot;
-    }
-    return market === 'SP500' ? 10.05 : 41.2;
-  }, [liveSpot, etfData, market]);
+  // Moltiplicatore di display: converte il forecast (in spazio ETF) nello
+  // strumento selezionato. 'index' (SPX/NDX) coincide ESATTAMENTE con la scala
+  // dei muri della dashboard Volumi; 'futures' (ES/NQ) con lo spot futures;
+  // 'etf' lascia in spazio ETF. Derivato dagli spot LIVE, così la proiezione
+  // è ancorata al prezzo corrente (vedi ri-ancoraggio in lib/kronos.ts).
+  const displayMultiplier = useMemo(() => {
+    if (!etfData?.spot) return 1.0;
+    if (displayMode === 'etf') return 1.0;
+    const sym = displayMode === 'futures'
+      ? (market === 'SP500' ? 'ES' : 'NQ')
+      : (market === 'SP500' ? 'SPX' : 'NDX');
+    const ref = liveSpot[sym as keyof typeof liveSpot];
+    // index ≈ futures ratio come fallback (NQ≈NDX, ES≈SPX in valore)
+    const fallback = market === 'SP500' ? 10.05 : 41.2;
+    return ref && ref > 0 ? ref / etfData.spot : fallback;
+  }, [liveSpot, etfData, market, displayMode]);
 
   // ---- Active chart data (timeframe→resolution + candle scaling now in lib/kronos.ts) ----
   const chartData = useMemo(() => {
     if (!biasItem || !etfData || !etfData.spot) return null;
-    const multiplier = displayMode === 'futures' ? futuresRatio : 1.0;
-    const forecast = getActiveKronosForecast(biasItem, etfData.spot, kronosTimeframe, { multiplier });
+    const forecast = getActiveKronosForecast(biasItem, etfData.spot, kronosTimeframe, { multiplier: displayMultiplier });
     if (!forecast) return null;
     // Map canonical `lastPrice` → `liveSpot` to preserve the JSX interface below.
     return { ...forecast, liveSpot: forecast.lastPrice } as ChartData;
-  }, [biasItem, etfData, futuresRatio, displayMode, kronosTimeframe]);
+  }, [biasItem, etfData, displayMultiplier, kronosTimeframe]);
 
   return (
     <div className="flex-1 flex flex-col">
