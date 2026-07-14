@@ -307,11 +307,11 @@ function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
 }
 
 function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
-  // Longitudinal view: one point per RUN (stable, comparable across days),
-  // as opposed to LossChart which only shows the per-epoch curve of the
-  // latest run (regenerated with stochastic Kronos baselines each time).
+  // Longitudinal view: ONE POINT PER DAY (median of the day's runs), stable
+  // across weeks. The CI trains every ~5 min during market hours, so a per-run
+  // chart was dominated by a single day (300 runs => only ~3 days visible at
+  // the old 60-run cap). Aggregating by day makes the time axis meaningful.
   const allRuns = stats.loss_history_runs ?? [];
-  const runs = allRuns.slice(-60); // cap to last 60 for readability
 
   const W = 760, H = 250;
   const padL = 52, padR = 52, padT = 14, padB = 34;
@@ -322,19 +322,76 @@ function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
   const sampleTop = lossTop + lossH + gap;
   const sampleH = 48;
 
-  if (runs.length < 2) {
+  const median = (xs: number[]): number => {
+    const s = [...xs].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+
+  // Aggregate runs into daily buckets keyed by YYYY-MM-DD. Loss uses the MEDIAN
+  // across the day's trained runs (robust to a single bad run, fairer than the
+  // mean for a "typical" value). Samples use the day's MAX (peak alignable
+  // snapshots, not the noisy run-to-run point value).
+  type DayAgg = {
+    day: string;               // YYYY-MM-DD
+    label: string;             // dd/mm
+    train: number | undefined; // median final_train_loss over trained runs
+    val: number | undefined;   // median final_val_loss over trained runs
+    samplesMax: number;        // max real_samples in the day
+    nRuns: number;
+    nTrained: number;          // runs that actually saved a checkpoint
+  };
+  const byDay = new Map<string, DayAgg>();
+  for (const r of allRuns) {
+    if (!r.ts) continue;
+    const day = r.ts.slice(0, 10); // YYYY-MM-DD (UTC, matches the trainer's tz)
+    let agg = byDay.get(day);
+    if (!agg) {
+      const label = new Date(day + 'T00:00:00Z').toLocaleDateString('it-IT', {
+        day: '2-digit', month: '2-digit', timeZone: 'UTC',
+      });
+      agg = { day, label, train: undefined, val: undefined, samplesMax: 0, nRuns: 0, nTrained: 0 };
+      byDay.set(day, agg);
+    }
+    agg.nRuns += 1;
+    agg.samplesMax = Math.max(agg.samplesMax, r.real_samples ?? 0);
+    if (r.trained) agg.nTrained += 1;
+  }
+  // Second pass: median loss per day from trained runs (kept separate so the
+  // first loop stays O(n) and side-effect-free on the loss arrays).
+  const trainedByDay = new Map<string, { train: number[]; val: number[] }>();
+  for (const r of allRuns) {
+    if (!r.ts || !r.trained) continue;
+    const day = r.ts.slice(0, 10);
+    const t = trainedByDay.get(day) ?? { train: [], val: [] };
+    if (r.final_train_loss != null && Number.isFinite(r.final_train_loss)) t.train.push(r.final_train_loss);
+    if (r.final_val_loss != null && Number.isFinite(r.final_val_loss)) t.val.push(r.final_val_loss);
+    trainedByDay.set(day, t);
+  }
+  for (const [day, t] of trainedByDay) {
+    const agg = byDay.get(day);
+    if (!agg) continue;
+    agg.train = t.train.length ? median(t.train) : undefined;
+    agg.val = t.val.length ? median(t.val) : undefined;
+  }
+
+  const MAX_DAYS = 45;
+  const allDays = [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  const days = allDays.slice(-MAX_DAYS);
+
+  if (days.length < 2) {
     return (
       <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4">
-        <h3 className="text-sm font-bold text-slate-300 mb-2">📉 Storico Loss — confronto tra le run</h3>
+        <h3 className="text-sm font-bold text-slate-300 mb-2">📉 Storico Loss — confronto giornaliero</h3>
         <p className="text-xs text-gray-500 leading-relaxed">
-          Questo grafico accumula un punto per ogni esecuzione di addestramento, così puoi confrontare l'andamento nel tempo (a differenza della curva per-epoca sotto, che mostra solo l'ultima run e viene ricalcolata ogni volta). Sarà popolato dopo i prossimi cicli: servono ≥ 2 run registrate.
+          Questo grafico accumula un punto al giorno (mediana delle run), così puoi confrontare l'andamento nel tempo. Sarà popolato dopo i prossimi cicli: servono ≥ 2 giorni registrati.
         </p>
       </div>
     );
   }
 
-  const lossVals = runs
-    .flatMap((r) => [r.final_train_loss, r.final_val_loss])
+  const lossVals = days
+    .flatMap((d) => [d.train, d.val])
     .filter((v): v is number => v != null && Number.isFinite(v));
   const maxLoss = lossVals.length ? Math.max(...lossVals) : 1;
   const minLoss = lossVals.length ? Math.min(...lossVals) : 0;
@@ -343,21 +400,20 @@ function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
   const yMax = maxLoss + lspan * 0.15;
   const ySpan = yMax - yMin || 1;
 
-  const samples = runs.map((r) => r.real_samples ?? 0);
-  const maxSamples = Math.max(1, ...samples);
+  const maxSamples = Math.max(1, ...days.map((d) => d.samplesMax));
 
-  const n = runs.length;
+  const n = days.length;
   const x = (i: number) => padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
   const yLoss = (v: number) => lossTop + lossH - ((v - yMin) / ySpan) * lossH;
   const ySamp = (v: number) => sampleTop + sampleH - (v / maxSamples) * sampleH;
 
-  const linePath = (sel: 'final_train_loss' | 'final_val_loss') => {
+  const linePath = (sel: 'train' | 'val') => {
     let d = '';
     let started = false;
-    runs.forEach((r, i) => {
-      const v = r[sel];
+    days.forEach((day, i) => {
+      const v = day[sel];
       if (v == null || !Number.isFinite(v)) {
-        started = false; // break the line at guard runs (no loss)
+        started = false; // break the line on guard-only days
         return;
       }
       d += `${started ? 'L' : 'M'} ${x(i).toFixed(1)} ${yLoss(v).toFixed(1)} `;
@@ -367,24 +423,28 @@ function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
   };
 
   const lossGrid = Array.from({ length: 4 }, (_, i) => yMin + (i / 3) * ySpan);
-  const tickCount = Math.min(6, n);
-  const tickIdx = Array.from({ length: tickCount }, (_, k) =>
-    Math.round((k / Math.max(1, tickCount - 1)) * (n - 1)),
-  );
+  // X ticks: one per day when few, else evenly subsample (~8 labels max).
+  const tickStep = Math.max(1, Math.ceil(n / 8));
+  const tickIdx = Array.from(new Set(
+    days.map((_, i) => i).filter((i) => i % tickStep === 0 || i === n - 1),
+  ));
 
-  const lastTrained = [...runs].reverse().find((r) => r.trained && r.final_val_loss != null);
-  const bestVal = runs.reduce<{ v: number | null; ts: string | null }>(
+  // "Last trained" / "best val" are reported on the RAW run level (not the
+  // daily median) so the numbers match what the user sees in the cards above.
+  const lastTrainedRun = [...allRuns].reverse().find((r) => r.trained && r.final_val_loss != null);
+  const bestValRun = allRuns.reduce<{ v: number | null; ts: string | null }>(
     (acc, r) =>
       r.final_val_loss != null && Number.isFinite(r.final_val_loss) && (acc.v == null || r.final_val_loss < acc.v)
         ? { v: r.final_val_loss, ts: r.ts }
         : acc,
     { v: null, ts: null },
   );
+  const totalRuns = allRuns.length;
 
   return (
     <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col gap-2">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h3 className="text-sm font-bold text-slate-300">📉 Storico Loss — confronto tra le run</h3>
+        <h3 className="text-sm font-bold text-slate-300">📉 Storico Loss — confronto giornaliero</h3>
         <div className="flex items-center gap-3 text-[10px]">
           <span className="flex items-center gap-1 text-blue-300"><span className="inline-block w-3 h-0.5 bg-blue-400" />train</span>
           <span className="flex items-center gap-1 text-amber-300"><span className="inline-block w-3 h-0.5 bg-amber-400" />val</span>
@@ -407,8 +467,8 @@ function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
         {/* sample-count band */}
         <line x1={padL} y1={sampleTop} x2={W - padR} y2={sampleTop} stroke="#1e293b" />
         <line x1={padL} y1={sampleTop + sampleH} x2={W - padR} y2={sampleTop + sampleH} stroke="#334155" />
-        {runs.map((r, i) => {
-          const v = r.real_samples ?? 0;
+        {days.map((d, i) => {
+          const v = d.samplesMax;
           const bw = Math.max(2, (innerW / n) * 0.6);
           const top = ySamp(v);
           return (
@@ -418,7 +478,7 @@ function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
               y={top}
               width={bw}
               height={Math.max(1, sampleTop + sampleH - top)}
-              fill={r.trained ? 'rgba(100,116,139,0.55)' : 'rgba(100,116,139,0.22)'}
+              fill={d.nTrained > 0 ? 'rgba(100,116,139,0.55)' : 'rgba(100,116,139,0.22)'}
             />
           );
         })}
@@ -426,42 +486,39 @@ function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
         <text x={padL - 6} y={sampleTop + sampleH + 3} fill="#475569" fontSize="8" textAnchor="end">0</text>
         <text x={padL - 6} y={sampleTop + sampleH / 2} fill="#475569" fontSize="8" textAnchor="end">n samp</text>
 
-        {/* loss lines (broken at guard runs with no loss) */}
-        <path d={linePath('final_train_loss')} fill="none" stroke="#60a5fa" strokeWidth="2" />
-        <path d={linePath('final_val_loss')} fill="none" stroke="#fbbf24" strokeWidth="2" strokeDasharray="4 3" />
+        {/* loss lines (broken on guard-only days) */}
+        <path d={linePath('train')} fill="none" stroke="#60a5fa" strokeWidth="2" />
+        <path d={linePath('val')} fill="none" stroke="#fbbf24" strokeWidth="2" strokeDasharray="4 3" />
 
-        {/* hollow markers for guard runs (no training) at the sample baseline */}
-        {runs.map((r, i) =>
-          r.trained ? null : (
+        {/* hollow markers for guard-only days (no trained run that day) */}
+        {days.map((d, i) =>
+          d.nTrained > 0 ? null : (
             <circle key={`u${i}`} cx={x(i)} cy={sampleTop + sampleH} r="2.5" fill="#0d1117" stroke="#475569" strokeWidth="1" />
           ),
         )}
 
-        {/* x-axis date labels */}
+        {/* x-axis date labels (one per day, subsampled if many) */}
         {tickIdx.map((idx) => {
-          const r = runs[idx];
-          if (!r) return null;
-          const label = r.ts
-            ? new Date(r.ts).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })
-            : `#${idx + 1}`;
+          const d = days[idx];
+          if (!d) return null;
           return (
-            <text key={`t${idx}`} x={x(idx)} y={H - 8} fill="#64748b" fontSize="9" textAnchor="middle">{label}</text>
+            <text key={`t${idx}`} x={x(idx)} y={H - 8} fill="#64748b" fontSize="9" textAnchor="middle">{d.label}</text>
           );
         })}
       </svg>
       <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-[10px] text-gray-500">
-        {lastTrained && lastTrained.final_val_loss != null && (
-          <span>ultima run addestrata: val <span className="font-mono text-amber-300">{lastTrained.final_val_loss.toFixed(4)}</span></span>
+        {lastTrainedRun && lastTrainedRun.final_val_loss != null && (
+          <span>ultima run addestrata: val <span className="font-mono text-amber-300">{lastTrainedRun.final_val_loss.toFixed(4)}</span></span>
         )}
-        {bestVal.v != null && (
-          <span>miglior val: <span className="font-mono text-emerald-300">{bestVal.v.toFixed(4)}</span></span>
+        {bestValRun.v != null && (
+          <span>miglior val: <span className="font-mono text-emerald-300">{bestValRun.v.toFixed(4)}</span></span>
         )}
-        <span>run mostrate: {n}{allRuns.length > n ? ` di ${allRuns.length}` : ''}</span>
+        <span>giorni: {n}{allDays.length > n ? ` di ${allDays.length}` : ''} · run totali: {totalRuns}</span>
         <span className="text-gray-600">·</span>
-        <span>pallini vuoti = run in guard (troppi pochi sample reali, adapter non sovrascritto)</span>
+        <span>pallini vuoti = giorni senza run addestrate (guard attiva)</span>
       </div>
       <p className="text-[11px] text-gray-500 leading-relaxed">
-        A differenza della curva per-epoca (sotto), questa è <b>stabile</b>: un punto per ogni esecuzione, accumulato nel tempo. Le barre grigie sono i sample reali — se oscillano è normale: il subsampling a 40 snapshot/simbolo e il budget temporale del CI fanno sì che il numero vari da run a run (vedi tendenza qui, non il numero puntuale).
+        Un punto per <b>giorno</b> (mediana delle run del giorno), non per esecuzione: il CI allena ogni ~5 minuti, quindi il grafico per-run mostrava solo mezza giornata. Le barre grigie sono il picco di sample reali allineabili quel giorno — se oscillano è normale (subsampling e budget variabili). I valori <i>ultima run</i> e <i>miglior val</i> si riferiscono alla singola esecuzione, non alla mediana giornaliera.
       </p>
     </div>
   );
