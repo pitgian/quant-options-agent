@@ -389,16 +389,53 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
     return eq + futuresBasis;
   };
 
-  // Sorted levels
-  const sortedResistance = useMemo(() => {
-    if (!data) return [];
-    return [...data.resistance].sort((a, b) => b.strike - a.strike);
-  }, [data]);
-
-  const sortedSupport = useMemo(() => {
-    if (!data) return [];
-    return [...data.support].sort((a, b) => b.strike - a.strike);
-  }, [data]);
+  // Re-classify levels in FUTURES scale against the LIVE futures spot.
+  //
+  // The original support/resistance type is assigned at generation time in
+  // keyLevelService.ts against the FROZEN ETF spot (QQQ). When the market
+  // rallies after generation, a put wall that was below the frozen QQQ spot
+  // stays labeled "support" even after the live price crosses it; converting
+  // it to the futures scale (× ratio + basis) then pushes it ABOVE the live
+  // NQ spot — so the page showed "supports" above the current price.
+  //
+  // Fix: take every level (support + resistance), project it into the futures
+  // scale we actually display, and re-derive its type from the live futures
+  // spot. This enforces "support below price, resistance above" in the exact
+  // scale the user reads. Falls back to the original classification when no
+  // live futures spot is available (pre-market / data glitch). Labels that
+  // describe the wall's nature ("Put Wall", "Major Gamma Wall") are kept as-is
+  // — they identify the OI concentration, not the side of the price.
+  const { sortedResistance, sortedSupport } = useMemo(() => {
+    if (!data) return { sortedResistance: [], sortedSupport: [] };
+    const all = [...data.resistance, ...data.support];
+    const futSpot = liveSpot[futuresSymbol];
+    if (!futSpot) {
+      // No live futures anchor: keep the generation-time classification.
+      return {
+        sortedResistance: [...data.resistance].sort((a, b) => b.strike - a.strike),
+        sortedSupport: [...data.support].sort((a, b) => b.strike - a.strike),
+      };
+    }
+    // Inline the futures conversion so this memo only depends on its own
+    // inputs (calculateFuturesEquivalent is recreated every render and would
+    // otherwise be a stale-closure footgun in the dependency array).
+    const toFut = (strike: number) =>
+      (activeSymbol === etfSymbol ? strike * indexToEtfRatio : strike) + futuresBasis;
+    const reclassified = all.map((lvl) => {
+      const futStrike = toFut(lvl.strike);
+      const type: 'support' | 'resistance' = futStrike < futSpot ? 'support' : 'resistance';
+      const distance = (Math.abs(futStrike - futSpot) / futSpot) * 100;
+      return { ...lvl, type, distance };
+    });
+    return {
+      sortedResistance: reclassified
+        .filter((l) => l.type === 'resistance')
+        .sort((a, b) => b.strike - a.strike),
+      sortedSupport: reclassified
+        .filter((l) => l.type === 'support')
+        .sort((a, b) => b.strike - a.strike),
+    };
+  }, [data, liveSpot, futuresSymbol, activeSymbol, etfSymbol, indexToEtfRatio, futuresBasis]);
 
   // Max values for normalization
   const { maxOI, maxVol } = useMemo(() => {
