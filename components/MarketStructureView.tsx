@@ -1038,12 +1038,29 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     const etfVolWidth = maxEtfTotalVol > 0 ? (d.etfTotalVol / maxEtfTotalVol) * 100 : 0;
                     const etfBarWidth = etfHasOI ? etfOIWidth : etfVolWidth;
 
+                    // Cross-symbol CONFLUENCE: a level where BOTH the Index OI and
+                    // the aligned ETF OI are strong (each >= 20% of its own max).
+                    // This marks price rows where put/call walls of the index and
+                    // the ETF converge on the SAME level — a reinforced strike.
+                    // The threshold is percentile-relative per side because index
+                    // and ETF OI live on very different absolute scales (e.g. NDX
+                    // walls ~1k contracts vs QQQ walls ~400k), so an absolute cutoff
+                    // would either fire only on the ETF or never on the index.
+                    // levelPrice is on the index scale; * basisMultiplier projects
+                    // it to futures (NQ/ES), matching the GEX-Flip / Kronos labels.
+                    const CONFLUENCE_OI_PCT = 20;
+                    const isConfluence =
+                      idxHasOI && etfHasOI && d.etfIsPrimary &&
+                      idxOIWidth >= CONFLUENCE_OI_PCT && etfOIWidth >= CONFLUENCE_OI_PCT;
+
                     // Blend backgrounds
                     let rowBg = 'transparent';
                     if (isClosest) {
                       rowBg = 'rgba(234,179,8,0.2)'; // Yellow highlight for spot price
                     } else if (isFlipRow) {
                       rowBg = 'rgba(249,115,22,0.08)'; // Orange highlight for GEX Flip row
+                    } else if (isConfluence) {
+                      rowBg = 'rgba(245,158,11,0.12)'; // Amber highlight for cross-symbol confluence
                     } else if (isInKronosRange) {
                       if (isHVN) {
                         rowBg = 'rgba(59,130,246,0.12)'; // Soft blue base + indigo HVN blend
@@ -1067,6 +1084,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     } else if (isFlipRow) {
                       borderTopStyle = '1px dashed rgba(249,115,22,0.5)';
                       borderBottomStyle = '1px dashed rgba(249,115,22,0.5)';
+                    } else if (isConfluence) {
+                      borderTopStyle = '1px dashed rgba(245,158,11,0.55)';
+                      borderBottomStyle = '1px dashed rgba(245,158,11,0.55)';
                     } else {
                       if (isKronosHighRow) {
                         borderTopStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
@@ -1095,6 +1115,11 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                         {isFlipRow && rowHeight >= 18 && (
                           <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[8px] font-extrabold uppercase tracking-wider bg-orange-600/95 text-white px-1.5 py-0.5 rounded border border-orange-500/40 whitespace-nowrap z-30 shadow-md">
                             ⚡ GEX Flip: ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
+                          </span>
+                        )}
+                        {isConfluence && rowHeight >= 18 && (
+                          <span className="absolute right-2 top-1/2 transform -translate-y-1/2 text-[8px] font-extrabold uppercase tracking-wider bg-amber-500/95 text-black px-1.5 py-0.5 rounded border border-amber-400/50 whitespace-nowrap z-30 shadow-md">
+                            ★ Confl. {futuresSymbol} ${(d.levelPrice * basisMultiplier).toFixed(0)}
                           </span>
                         )}
                         {isKronosHighRow && rowHeight >= 18 && (
