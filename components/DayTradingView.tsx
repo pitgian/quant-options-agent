@@ -102,6 +102,8 @@ interface LevelRowProps {
   activeSymbol?: string;
   isKrHigh?: boolean;
   isKrLow?: boolean;
+  /** Futures-scale equivalent of the cross-symbol paired strike (NQ/ES), if any. */
+  pairedFuturesEquivalent?: number;
 }
 
 const LevelRow: React.FC<LevelRowProps> = ({
@@ -115,6 +117,7 @@ const LevelRow: React.FC<LevelRowProps> = ({
   activeSymbol,
   isKrHigh,
   isKrLow,
+  pairedFuturesEquivalent,
 }) => {
   const isResistance = level.type === 'resistance';
   const isCross = !!level.isCrossSymbol;
@@ -214,19 +217,29 @@ const LevelRow: React.FC<LevelRowProps> = ({
         <span>Vol: <strong className="text-gray-400 font-mono">{formatCompact(level.totalVolume)}</strong></span>
       </div>
 
-      {/* Cross-symbol paired info sub-row */}
+      {/* Cross-symbol paired info sub-row.
+          Headline = futures-scale equivalent (NQ/ES) of the paired strike,
+          so the whole row reads in the same scale as the level above it;
+          the cash index/etf strike is the secondary context line. */}
       {isCross && level.pairedSymbol && level.pairedStrike != null && (
         <div className="flex items-center gap-1.5 mt-1.5 pl-3 sm:pl-[80px]">
           <span className="text-[10px] text-amber-400/50 font-bold">↳</span>
-          <span className="text-[9px] sm:text-[10px] text-gray-500">
-            {level.pairedSymbol}: <strong className="text-gray-300 font-mono">${level.pairedStrike.toFixed(0)}</strong>
+          <span className="text-[9px] sm:text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
+            {pairedFuturesEquivalent != null && futuresSymbol ? (
+              <span className="font-mono text-amber-300/90 font-bold">
+                {futuresSymbol} ${pairedFuturesEquivalent.toFixed(0)}
+              </span>
+            ) : null}
+            <span className="text-gray-600">
+              {level.pairedSymbol} ${level.pairedStrike.toFixed(0)}
+            </span>
             {level.pairedWallType && (
-              <span className="ml-1.5 px-1 py-0.2 text-[8px] font-bold rounded bg-amber-400/10 text-amber-400/70 border border-amber-400/10 uppercase font-mono">
+              <span className="px-1 py-0.2 text-[8px] font-bold rounded bg-amber-400/10 text-amber-400/70 border border-amber-400/10 uppercase font-mono">
                 {level.pairedWallType === 'put' ? 'Put' : level.pairedWallType === 'call' ? 'Call' : level.pairedWallType}
               </span>
             )}
             {level.pairedOI != null && (
-              <span className="ml-2 text-gray-650 font-mono">OI: <span className="text-gray-400">{formatCompact(level.pairedOI)}</span></span>
+              <span className="font-mono">OI: <span className="text-gray-400">{formatCompact(level.pairedOI)}</span></span>
             )}
           </span>
         </div>
@@ -386,6 +399,18 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
     if (activeSymbol === etfSymbol) {
       eq = eq * indexToEtfRatio;
     }
+    return eq + futuresBasis;
+  };
+
+  // Futures-scale equivalent of a CROSS-SYMBOL paired strike. The paired strike
+  // lives in the PAIRED symbol's scale (the opposite of the primary): when the
+  // page shows the ETF (QQQ), the paired is the index (NDX) and its strike is
+  // already index-scale, so only the basis is added; when the page shows the
+  // index, the paired is the ETF and needs the ratio too. activeSymbol is
+  // always the ETF on this page, but handle both for correctness.
+  const calculatePairedFuturesEquivalent = (pairedStrike: number, pairedSymbol?: string) => {
+    const pairedIsEtf = pairedSymbol?.toUpperCase() === etfSymbol.toUpperCase();
+    let eq = pairedIsEtf ? pairedStrike * indexToEtfRatio : pairedStrike;
     return eq + futuresBasis;
   };
 
@@ -666,6 +691,11 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
                     activeSymbol={activeSymbol}
                     isKrHigh={closestToKrHigh?.strike === level.strike}
                     isKrLow={closestToKrLow?.strike === level.strike}
+                    pairedFuturesEquivalent={
+                      level.isCrossSymbol && level.pairedStrike != null
+                        ? calculatePairedFuturesEquivalent(level.pairedStrike, level.pairedSymbol)
+                        : undefined
+                    }
                   />
                 ))}
             </div>
@@ -709,6 +739,11 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
                     activeSymbol={activeSymbol}
                     isKrHigh={closestToKrHigh?.strike === level.strike}
                     isKrLow={closestToKrLow?.strike === level.strike}
+                    pairedFuturesEquivalent={
+                      level.isCrossSymbol && level.pairedStrike != null
+                        ? calculatePairedFuturesEquivalent(level.pairedStrike, level.pairedSymbol)
+                        : undefined
+                    }
                   />
                 ))}
             </div>

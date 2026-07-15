@@ -138,13 +138,22 @@ export function buildDayTradingData(
   const spacedResistance = filterSpacedLevels(resistance, spot, 0.4);
 
   // Keep top 5 closest to spot
-  const finalSupport = spacedSupport
+  const topSupport = spacedSupport
     .sort((a, b) => Math.abs(a.distance) - Math.abs(b.distance))
     .slice(0, 5);
 
-  const finalResistance = spacedResistance
+  const topResistance = spacedResistance
     .sort((a, b) => Math.abs(a.distance) - Math.abs(b.distance))
     .slice(0, 5);
+
+  // Fold in cross-symbol confluence levels (ETF put/call walls that converge
+  // with the index walls at the same % distance from spot). These carry the
+  // paired-symbol info the "Confluenze" toggle surfaces. mergeLevels also
+  // re-checks direction (support below spot, resistance above) and caps each
+  // side at 10, so a few extra cross levels can't crowd out the wall levels.
+  const crossLevels = extractCrossSymbolLevels(symbol, crossSymbolConfluence, spot);
+  const finalSupport = mergeLevels(topSupport, crossLevels, spot, 'support');
+  const finalResistance = mergeLevels(topResistance, crossLevels, spot, 'resistance');
 
   return {
     symbol,
