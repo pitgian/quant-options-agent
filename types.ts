@@ -47,6 +47,10 @@ export interface DayTradingLevel {
 
   // Cross-symbol confluence fields (present when isCrossSymbol is true)
   isCrossSymbol?: boolean;
+  /** True when this level coincides with a cross-symbol confluence. Set on BOTH
+   *  cross-only levels (isCrossSymbol=true) and regular walls that a cross level
+   *  reinforces (isCrossSymbol=false, so the toggle never hides the wall). */
+  hasCrossConfluence?: boolean;
   crossScore?: number;          // cross-symbol confluence score (0-100)
   pairedSymbol?: string;        // the other symbol in the pair (e.g. "SPX" when viewing SPY)
   pairedStrike?: number;        // the strike on the paired symbol

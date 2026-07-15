@@ -281,12 +281,18 @@ function mergeLevels(
     mergedMap.set(l.strike, { ...l });
   });
 
-  // Merge the cross-symbol levels
+  // Merge the cross-symbol levels.
+  // IMPORTANT: a cross level that COINCIDES with a regular wall enriches that
+  // wall (paired info + badge) but MUST NOT set isCrossSymbol=true on it —
+  // otherwise the "Confluenze" toggle, which hides isCrossSymbol rows, would
+  // delete the underlying wall when turned off. The toggle is additive: it
+  // reveals/hides cross-ONLY levels, never the walls they happen to reinforce.
+  // So only levels that are cross-exclusive (no regular wall at that strike)
+  // stay isCrossSymbol=true.
   validCross.forEach(cl => {
     const existing = mergedMap.get(cl.strike);
     if (existing) {
-      // Merge! Keep the descriptive regular level's label (like 'Put Wall' or 'GEX Flip'), but mark it as cross symbol
-      existing.isCrossSymbol = true;
+      // Reinforce the existing wall with the cross info, keep it always-visible.
       existing.strength = Math.max(existing.strength, cl.strength);
       existing.pairedSymbol = cl.pairedSymbol;
       existing.pairedStrike = cl.pairedStrike;
@@ -297,9 +303,10 @@ function mergeLevels(
       existing.combinedOI = cl.combinedOI;
       existing.combinedVol = cl.combinedVol;
       existing.combinedActivity = cl.combinedActivity;
+      existing.hasCrossConfluence = true;
     } else {
-      // Just add it
-      mergedMap.set(cl.strike, cl);
+      // Cross-only level — this one IS toggleable.
+      mergedMap.set(cl.strike, { ...cl, hasCrossConfluence: true });
     }
   });
 

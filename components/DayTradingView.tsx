@@ -120,7 +120,12 @@ const LevelRow: React.FC<LevelRowProps> = ({
   pairedFuturesEquivalent,
 }) => {
   const isResistance = level.type === 'resistance';
+  // isCrossSymbol = a cross-ONLY level (no regular wall): full amber treatment
+  // and hidden by the "Confluenze" toggle. hasCrossConfluence = any level that
+  // coincides with a cross match (including walls a cross reinforces): shows the
+  // ★ badge + paired sub-row, but keeps the wall's own color and stays visible.
   const isCross = !!level.isCrossSymbol;
+  const showConfluence = !!level.hasCrossConfluence;
 
   // Cross-symbol levels use amber/gold accent; regular levels use red/green
   const color = isCross ? '#f59e0b' : (isResistance ? '#f87171' : '#4ade80');
@@ -159,14 +164,10 @@ const LevelRow: React.FC<LevelRowProps> = ({
 
         {/* Label badges */}
         <div className="flex items-center gap-1 flex-wrap">
-          {isCross ? (
-            <span
-              className="text-[8px] sm:text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/10"
-              title="Confluenza Cross-Symbol tra ETF e Indice"
-            >
-              ★ Confl.
-            </span>
-          ) : (
+          {/* Cross-ONLY levels (no wall underneath) get the full amber badge
+              as their identity. Walls that a cross reinforces keep their own
+              label (Put Wall / Call Wall) and get a small ★ chip beside it. */}
+          {!isCross && (
             <span
               className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded"
               style={{
@@ -175,6 +176,14 @@ const LevelRow: React.FC<LevelRowProps> = ({
               }}
             >
               {level.label}
+            </span>
+          )}
+          {showConfluence && (
+            <span
+              className="text-[8px] sm:text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/10"
+              title="Confluenza Cross-Symbol tra ETF e Indice"
+            >
+              {isCross ? '★ Confl.' : '★'}
             </span>
           )}
 
@@ -221,7 +230,7 @@ const LevelRow: React.FC<LevelRowProps> = ({
           Headline = futures-scale equivalent (NQ/ES) of the paired strike,
           so the whole row reads in the same scale as the level above it;
           the cash index/etf strike is the secondary context line. */}
-      {isCross && level.pairedSymbol && level.pairedStrike != null && (
+      {showConfluence && level.pairedSymbol && level.pairedStrike != null && (
         <div className="flex items-center gap-1.5 mt-1.5 pl-3 sm:pl-[80px]">
           <span className="text-[10px] text-amber-400/50 font-bold">↳</span>
           <span className="text-[9px] sm:text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
