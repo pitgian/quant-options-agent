@@ -353,15 +353,27 @@ function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
       agg = { day, label, train: undefined, val: undefined, samplesMax: 0, nRuns: 0, nTrained: 0 };
       byDay.set(day, agg);
     }
-    agg.nRuns += 1;
-    agg.samplesMax = Math.max(agg.samplesMax, r.real_samples ?? 0);
-    if (r.trained) agg.nTrained += 1;
+    // Entries flagged `aggregated` are already a daily mean produced by the
+    // Python two-tier retention — take their values directly instead of
+    // folding them into the median again (they are one-per-day by construction).
+    if (r.aggregated) {
+      agg.nRuns += r.n_runs ?? 1;
+      agg.samplesMax = Math.max(agg.samplesMax, r.real_samples ?? 0);
+      if (r.trained) agg.nTrained += r.n_runs ?? 1;
+      if (r.final_train_loss != null) agg.train = r.final_train_loss;
+      if (r.final_val_loss != null) agg.val = r.final_val_loss;
+    } else {
+      agg.nRuns += 1;
+      agg.samplesMax = Math.max(agg.samplesMax, r.real_samples ?? 0);
+      if (r.trained) agg.nTrained += 1;
+    }
   }
-  // Second pass: median loss per day from trained runs (kept separate so the
-  // first loop stays O(n) and side-effect-free on the loss arrays).
+  // Second pass: median loss per day from the RAW (non-aggregated) trained
+  // runs of the recent window. Aggregated days already carry their mean and
+  // are set above, so they are skipped here.
   const trainedByDay = new Map<string, { train: number[]; val: number[] }>();
   for (const r of allRuns) {
-    if (!r.ts || !r.trained) continue;
+    if (!r.ts || !r.trained || r.aggregated) continue;
     const day = r.ts.slice(0, 10);
     const t = trainedByDay.get(day) ?? { train: [], val: [] };
     if (r.final_train_loss != null && Number.isFinite(r.final_train_loss)) t.train.push(r.final_train_loss);

@@ -31,7 +31,7 @@ import json
 import math
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Tuple, Optional
 
 import numpy as np
@@ -103,12 +103,107 @@ STATS_OUTPUT_PATH = os.path.join(scripts_dir, "../data/adapter_training_stats.js
 # restores this file from the data branch BEFORE every training run, so
 # appending one record per run accumulates a stable history across runs
 # without needing a separate state file.
+#
+# Two-tier retention (see _compact_run_history):
+#   - RAW resolution (one entry per run) for the last RECENT_RAW_DAYS days —
+#     intra-day detail for the recent trend.
+#   - DAILY aggregate (one averaged entry per day) for everything older —
+#     keeps months of history compact. Without this, ~80 runs/day x 300 cap
+#     saturated the history to ~3-4 days, so the "storico" graph only ever
+#     showed the last few days.
 MAX_RUN_HISTORY = 300
+RECENT_RAW_DAYS = 2
 
 
 def _log(msg: str) -> None:
     """Print + flush so CI shows progress immediately (no block buffering)."""
     print(msg, flush=True)
+
+
+def _day_key(ts: str) -> str:
+    """YYYY-MM-DD (UTC) for a run timestamp, or '' if missing/malformed."""
+    if not isinstance(ts, str) or len(ts) < 10:
+        return ""
+    return ts[:10]
+
+
+def _compact_run_history(runs: List[Dict]) -> List[Dict]:
+    """Two-tier retention for loss_history_runs.
+
+    Keeps the last RECENT_RAW_DAYS days at full (per-run) resolution, then
+    folds every older day into a SINGLE averaged entry (mean of that day's
+    trained runs; real_samples uses the day's MAX since the alignable count
+    depends on the budget/subsampling and the peak is the meaningful signal).
+    Entries already flagged `aggregated` are preserved as-is (idempotent
+    across runs). Result is capped at MAX_RUN_HISTORY entries.
+    """
+    if not runs:
+        return []
+
+    today = _day_key(runs[-1].get("ts", "")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    recent_cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=RECENT_RAW_DAYS)
+                    ).strftime("%Y-%m-%d")
+
+    recent: List[Dict] = []
+    older_by_day: Dict[str, List[Dict]] = {}
+    older_aggregated: List[Dict] = []  # already-daily entries from a prior run
+
+    for r in runs:
+        day = _day_key(r.get("ts", ""))
+        if r.get("aggregated"):
+            # Preserve a previously-compacted daily entry verbatim.
+            older_aggregated.append(r)
+        elif day and day > recent_cutoff:
+            recent.append(r)
+        elif day:
+            older_by_day.setdefault(day, []).append(r)
+        # runs without a parseable day are dropped (legacy/malformed)
+
+    # Build one averaged entry per older day with trained runs.
+    numeric_fields = (
+        "final_train_loss", "final_val_loss", "best_val_loss",
+        "final_improvement_pct", "final_baseline_val_loss",
+        "train_samples", "val_samples", "best_epoch", "epochs_run",
+    )
+    for day, day_runs in older_by_day.items():
+        trained = [r for r in day_runs if r.get("trained")]
+        if not trained:
+            # Guard-only day (no checkpoint): keep the sample peak only.
+            peak = max((r.get("real_samples", 0) for r in day_runs), default=0)
+            older_aggregated.append({
+                "ts": f"{day}T23:59:59+00:00",
+                "trained": False,
+                "aggregated": True,
+                "day": day,
+                "real_samples": peak,
+                "n_runs": len(day_runs),
+            })
+            continue
+        agg: Dict = {
+            "ts": f"{day}T23:59:59+00:00",
+            "trained": True,
+            "aggregated": True,
+            "day": day,
+            "n_runs": len(day_runs),
+            # Peak alignable samples that day (more informative than the mean).
+            "real_samples": max((r.get("real_samples", 0) for r in day_runs), default=0),
+        }
+        for f in numeric_fields:
+            vals = [r[f] for r in trained if isinstance(r.get(f), (int, float))]
+            if vals:
+                agg[f] = sum(vals) / len(vals)
+        # Carry the per-horizon sample counts (peak per horizon that day).
+        per_h: Dict[str, int] = {}
+        for r in trained:
+            for h, v in (r.get("per_horizon_real_samples") or {}).items():
+                per_h[h] = max(per_h.get(h, 0), int(v) if isinstance(v, (int, float)) else 0)
+        if per_h:
+            agg["per_horizon_real_samples"] = per_h
+        older_aggregated.append(agg)
+
+    older_aggregated.sort(key=lambda r: _day_key(r.get("ts", "")))
+    compacted = older_aggregated + recent
+    return compacted[-MAX_RUN_HISTORY:]
 
 
 def _load_previous_runs(stats_path: str) -> List[Dict]:
@@ -880,7 +975,7 @@ def main():
             "per_horizon_real_samples": per_h_counts,
             "epochs_run": 0,
         })
-        stats["loss_history_runs"] = prev_runs[-MAX_RUN_HISTORY:]
+        stats["loss_history_runs"] = _compact_run_history(prev_runs)
         _write_stats(stats, args.stats_path)
         return
 
@@ -927,7 +1022,7 @@ def main():
         "stopped_early": info["stopped_early"],
         "validated_pred_lens": info["validated_pred_lens"],
     })
-    stats["loss_history_runs"] = prev_runs[-MAX_RUN_HISTORY:]
+    stats["loss_history_runs"] = _compact_run_history(prev_runs)
 
     # 6. Save checkpoint (v2 unified format)
     output_path = args.output_path or os.path.join(scripts_dir, "model/covariate_adapter.pth")

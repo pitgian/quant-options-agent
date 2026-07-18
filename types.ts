@@ -347,6 +347,15 @@ export interface AdapterLossRun {
   epochs_run?: number;
   stopped_early?: boolean;
   validated_pred_lens?: number[];
+  /** True when this entry is a DAILY AGGREGATE produced by the Python
+   *  two-tier retention (loss = mean of the day's trained runs, samples = peak).
+   *  Such entries are already one-per-day and must NOT be re-aggregated by the
+   *  UI — they plot as a single point like any other run. */
+  aggregated?: boolean;
+  /** Day string (YYYY-MM-DD) for aggregated entries. */
+  day?: string;
+  /** How many raw runs were folded into an aggregated day. */
+  n_runs?: number;
 }
 
 export interface AdapterTrainingStats {
