@@ -86,6 +86,25 @@ CROSS_SYMBOL_STRENGTH_WEIGHT = 0.25 # Weight for individual strength
 # Symbols processed when --symbol ALL is used
 ALL_SYMBOLS = ["SPY", "QQQ", "SPX", "NDX"]
 
+# Symbols appended to options_history.json for adapter training. The fetcher
+# still computes options data for ALL_SYMBOLS (SPX/NDX are shown live in the
+# UI), but only these contribute to the adapter's training history — they are
+# the symbols train_adapter.py actually consumes (--symbols SPY QQQ), and they
+# share a single ETF-scale covariate space. Writing SPX/NDX here would mix
+# index-scale GEX into the model and bias the correction silently.
+HISTORY_SYMBOLS = ["SPY", "QQQ"]
+
+# Retention policy for options_history.json. The adapter's 1d horizon needs
+# snapshots with >=5 realized daily bars AFTER them (~7 calendar days) to
+# build a training sample. The previous FIFO-500/symbol cap was filled in
+# ~5 days at the 5-min CI cadence, so every snapshot was evicted before the
+# 1d future materialized — structurally starving the 1d horizon to 0 samples.
+# Age-based retention keeps snapshots long enough for the 1d horizon to
+# accumulate real samples; HISTORY_SAFETY_CAP is a per-symbol upper bound that
+# only bites on accidental CI bursts (normally ~2200 records/symbol @ 14d).
+HISTORY_RETENTION_DAYS = 14
+HISTORY_SAFETY_CAP = 2500
+
 # ---------------------------------------------------------------------------
 # Symbol mapping
 # ---------------------------------------------------------------------------
@@ -1597,16 +1616,32 @@ def clean_expiry_iv(options: List[Dict[str, Any]], spot: float, dte: int, symbol
 
 def append_to_history(symbol: str, skew: float, pcr: float, net_gex: float, file_path: str = "data/options_history.json") -> None:
     """
-    Append skew, PCR and Net GEX metrics to history log, keeping the last 500 records per symbol.
+    Append skew, PCR and Net GEX metrics to history log with age-based retention.
 
-    Schema versioning (gex_v): records are tagged with the GEX computation
-    version they were produced by. When loading, any record whose version does
-    not match HISTORY_GEX_VERSION is DROPPED — this self-heals the log when the
-    GEX formula changes. In particular, all records produced before the
-    Black-Scholes IV fix (gex_v missing / =1) carried an artefactual GEX (the
-    Yahoo-IV-floor bug inflated GEX by ~99%), so they are discarded here on
-    the next append and accumulation restarts clean.
+    Two filters run on every append:
+
+    1. Schema versioning (gex_v): records tagged with an incompatible GEX
+       computation version are DROPPED — this self-heals the log when the GEX
+       formula changes. In particular, all records produced before the
+       Black-Scholes IV fix (gex_v missing / =1) carried an artefactual GEX
+       (the Yahoo-IV-floor bug inflated GEX by ~99%), so they are discarded
+       here on the next append and accumulation restarts clean.
+
+    2. Age-based retention: keeps records newer than HISTORY_RETENTION_DAYS
+       (per-symbol). The adapter's 1d horizon needs >=5 realized daily bars
+       AFTER each snapshot (~7 calendar days) to build a training sample; the
+       previous FIFO-500 cap filled in ~5 days and evicted every snapshot
+       before the 1d future materialized, structurally starving the 1d
+       horizon. HISTORY_SAFETY_CAP is a per-symbol upper bound for burst
+       protection.
+
+    Note: only HISTORY_SYMBOLS are appended. SPX/NDX are still fetched and
+    shown live in the UI, but they are index-scale and not consumed by
+    train_adapter.py; writing them here would mix scales and bias the model.
     """
+    if symbol not in HISTORY_SYMBOLS:
+        return
+
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     history = []
     if os.path.exists(file_path):
@@ -1633,11 +1668,33 @@ def append_to_history(symbol: str, skew: float, pcr: float, net_gex: float, file
     }
     history.append(new_record)
 
-    # Filter to keep only last 500 records per symbol
-    spy_records = [r for r in history if r.get("symbol") == "SPY"][-500:]
-    qqq_records = [r for r in history if r.get("symbol") == "QQQ"][-500:]
-    other_records = [r for r in history if r.get("symbol") not in ["SPY", "QQQ"]][-500:]
-    history = spy_records + qqq_records + other_records
+    # Age-based retention: drop records older than HISTORY_RETENTION_DAYS.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=HISTORY_RETENTION_DAYS)
+    kept = []
+    for r in history:
+        try:
+            ts = datetime.fromisoformat(r["timestamp"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except (ValueError, KeyError, TypeError):
+            # Malformed/missing timestamp: keep defensively (the gex_v filter
+            # above is the authoritative schema guard).
+            kept.append(r)
+            continue
+        if ts >= cutoff:
+            kept.append(r)
+    expired = len(history) - len(kept)
+    if expired:
+        logger.info(f"🧹 Dropped {expired} record(s) older than {HISTORY_RETENTION_DAYS}d from history")
+
+    # Per-symbol safety cap (burst protection; normally inactive at 14d).
+    by_sym: Dict[str, list] = {}
+    for r in kept:
+        by_sym.setdefault(r.get("symbol", "?"), []).append(r)
+    history = []
+    for sym, recs in by_sym.items():
+        recs.sort(key=lambda r: r.get("timestamp", ""))
+        history.extend(recs[-HISTORY_SAFETY_CAP:])
 
     try:
         with open(file_path, "w") as f:
