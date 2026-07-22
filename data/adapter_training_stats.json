@@ -1,13 +1,13 @@
 {
   "version": 2,
-  "trained_at": "2026-07-22T18:17:59.499954+00:00",
+  "trained_at": "2026-07-22T18:32:21.486090+00:00",
   "symbols": [
     "SPY",
     "QQQ"
   ],
   "history_records": {
-    "SPY": 781,
-    "QQQ": 782
+    "SPY": 783,
+    "QQQ": 784
   },
   "real_samples_total": 161,
   "per_horizon_real_samples": {
@@ -35,80 +35,85 @@
   },
   "train_samples": 129,
   "val_samples": 32,
-  "final_train_loss": 0.3582093318303426,
-  "final_val_loss": 0.3011048436164856,
-  "final_baseline_val_loss": 0.3347647786140442,
-  "final_improvement_pct": 10.150173624285545,
+  "final_train_loss": 0.31167665123939514,
+  "final_val_loss": 0.30207034945487976,
+  "final_baseline_val_loss": 0.3392423391342163,
+  "final_improvement_pct": 11.66417607795497,
   "horizons": {
     "4h": {
       "pred_len": 6,
       "val_samples": 30,
-      "val_mse": 0.3131498396396637,
-      "baseline_val_mse": 0.34462156891822815,
-      "improvement_pct": 9.132257294321105
+      "val_mse": 0.3133963942527771,
+      "baseline_val_mse": 0.3494587242603302,
+      "improvement_pct": 10.319481664661549
     }
   },
   "validated_pred_lens": [
     6
   ],
-  "best_epoch": 6,
-  "best_val_loss": 0.3007855713367462,
+  "best_epoch": 7,
+  "best_val_loss": 0.29967251420021057,
   "stopped_early": true,
   "loss_history": [
     {
       "epoch": 1,
-      "train_loss": 0.3512156705061595,
-      "val_loss": 0.33397412300109863
+      "train_loss": 0.3524051507314046,
+      "val_loss": 0.33851367235183716
     },
     {
       "epoch": 2,
-      "train_loss": 0.2809772342443466,
-      "val_loss": 0.3314444422721863
+      "train_loss": 0.2859603712956111,
+      "val_loss": 0.33640944957733154
     },
     {
       "epoch": 3,
-      "train_loss": 0.294562891125679,
-      "val_loss": 0.3242799639701843
+      "train_loss": 0.2883453418811162,
+      "val_loss": 0.32983043789863586
     },
     {
       "epoch": 4,
-      "train_loss": 0.2746572345495224,
-      "val_loss": 0.311588317155838
+      "train_loss": 0.2777559806903203,
+      "val_loss": 0.3164729177951813
     },
     {
       "epoch": 5,
-      "train_loss": 0.33617087205251056,
-      "val_loss": 0.30228129029273987
+      "train_loss": 0.3431307176748912,
+      "val_loss": 0.3041316866874695
     },
     {
       "epoch": 6,
-      "train_loss": 0.3389088610808055,
-      "val_loss": 0.3007855713367462
+      "train_loss": 0.32988834381103516,
+      "val_loss": 0.30018025636672974
     },
     {
       "epoch": 7,
-      "train_loss": 0.2508748024702072,
-      "val_loss": 0.3016488552093506
+      "train_loss": 0.23490661134322485,
+      "val_loss": 0.29967251420021057
     },
     {
       "epoch": 8,
-      "train_loss": 0.3020365238189697,
-      "val_loss": 0.3036915361881256
+      "train_loss": 0.31575794021288556,
+      "val_loss": 0.301466166973114
     },
     {
       "epoch": 9,
-      "train_loss": 0.3146469096342723,
-      "val_loss": 0.305983304977417
+      "train_loss": 0.2608887453873952,
+      "val_loss": 0.30415579676628113
     },
     {
       "epoch": 10,
-      "train_loss": 0.31235366066296893,
-      "val_loss": 0.30505526065826416
+      "train_loss": 0.2880200544993083,
+      "val_loss": 0.3033769428730011
     },
     {
       "epoch": 11,
-      "train_loss": 0.3582093318303426,
-      "val_loss": 0.3011048436164856
+      "train_loss": 0.38782525062561035,
+      "val_loss": 0.3013051748275757
+    },
+    {
+      "epoch": 12,
+      "train_loss": 0.31167665123939514,
+      "val_loss": 0.30207034945487976
     }
   ],
   "loss_history_runs": [
@@ -3428,6 +3433,28 @@
       "final_improvement_pct": 10.150173624285545,
       "final_baseline_val_loss": 0.3347647786140442,
       "epochs_run": 11,
+      "stopped_early": true,
+      "validated_pred_lens": [
+        6
+      ]
+    },
+    {
+      "ts": "2026-07-22T18:32:21.486090+00:00",
+      "trained": true,
+      "real_samples": 161,
+      "per_horizon_real_samples": {
+        "4h": 145,
+        "1d": 16
+      },
+      "train_samples": 129,
+      "val_samples": 32,
+      "final_train_loss": 0.31167665123939514,
+      "final_val_loss": 0.30207034945487976,
+      "best_val_loss": 0.29967251420021057,
+      "best_epoch": 7,
+      "final_improvement_pct": 11.66417607795497,
+      "final_baseline_val_loss": 0.3392423391342163,
+      "epochs_run": 12,
       "stopped_early": true,
       "validated_pred_lens": [
         6
