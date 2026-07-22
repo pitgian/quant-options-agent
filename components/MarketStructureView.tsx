@@ -557,6 +557,46 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     return { maxEtfVolume: maxEtf, maxIndexVolume: maxIdx, maxFuturesVolume: maxFut, maxIndexTotalOI: maxIdxOI, maxEtfTotalOI: maxEtfOI, maxIndexTotalVol: maxIdxVol, maxEtfTotalVol: maxEtfVol };
   }, [zoomedProfile]);
 
+  // Cross-symbol CONFLUENCE pre-selection (capped).
+  // A row qualifies when BOTH the Index OI and the aligned ETF OI are strong
+  // (each >= CONFLUENCE_OI_PCT of its own max). The threshold is percentile-
+  // relative per side because index and ETF OI live on very different absolute
+  // scales (NDX walls ~1k contracts vs QQQ ~400k), so an absolute cutoff would
+  // fire only on the ETF or never on the index.
+  //
+  // To keep the chart readable we DON'T flag every qualifying row: we rank
+  // candidates by combined OI width (index + etf) and keep only the top
+  // CONFLUENCE_MAX_LEVELS. Without this cap a dense NDX ladder produced ~17
+  // markers — noise, not signal.
+  // Each confluence is classified by put/call dominance: put-heavy => support
+  // (red), call-heavy => resistance (green). The per-side OI fractions are
+  // already computed in the row renderer; here we aggregate them.
+  const CONFLUENCE_OI_PCT = 40;
+  const CONFLUENCE_MAX_LEVELS = 8;
+  const confluenceStrikes = useMemo(() => {
+    const candidates = zoomedProfile
+      .filter(d => d.etfIsPrimary)
+      .map(d => {
+        const idxTotalOI = d.indexCallOI + d.indexPutOI;
+        const etfTotalOI = d.etfCallOI + d.etfPutOI;
+        const idxHasOI = idxTotalOI > 0;
+        const etfHasOI = etfTotalOI > 0;
+        const idxOIWidth = maxIndexTotalOI > 0 ? (idxTotalOI / maxIndexTotalOI) * 100 : 0;
+        const etfOIWidth = maxEtfTotalOI > 0 ? (etfTotalOI / maxEtfTotalOI) * 100 : 0;
+        const qualifies = idxHasOI && etfHasOI &&
+          idxOIWidth >= CONFLUENCE_OI_PCT && etfOIWidth >= CONFLUENCE_OI_PCT;
+        // put/call dominance aggregated across index + etf (absolute OI).
+        const putOI = d.indexPutOI + d.etfPutOI;
+        const callOI = d.indexCallOI + d.etfCallOI;
+        const type: 'support' | 'resistance' = putOI >= callOI ? 'support' : 'resistance';
+        return { strike: d.strike, qualifies, combinedWidth: idxOIWidth + etfOIWidth, type };
+      })
+      .filter(c => c.qualifies)
+      .sort((a, b) => b.combinedWidth - a.combinedWidth)
+      .slice(0, CONFLUENCE_MAX_LEVELS);
+    return new Map(candidates.map(c => [c.strike, c.type]));
+  }, [zoomedProfile, maxIndexTotalOI, maxEtfTotalOI]);
+
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={handleRefresh} />;
   if (!indexData || !etfData) return <ErrorState message="Dati non disponibili" onRetry={handleRefresh} />;
@@ -1038,20 +1078,12 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     const etfVolWidth = maxEtfTotalVol > 0 ? (d.etfTotalVol / maxEtfTotalVol) * 100 : 0;
                     const etfBarWidth = etfHasOI ? etfOIWidth : etfVolWidth;
 
-                    // Cross-symbol CONFLUENCE: a level where BOTH the Index OI and
-                    // the aligned ETF OI are strong (each >= 20% of its own max).
-                    // This marks price rows where put/call walls of the index and
-                    // the ETF converge on the SAME level — a reinforced strike.
-                    // The threshold is percentile-relative per side because index
-                    // and ETF OI live on very different absolute scales (e.g. NDX
-                    // walls ~1k contracts vs QQQ walls ~400k), so an absolute cutoff
-                    // would either fire only on the ETF or never on the index.
-                    // levelPrice is on the index scale; * basisMultiplier projects
-                    // it to futures (NQ/ES), matching the GEX-Flip / Kronos labels.
-                    const CONFLUENCE_OI_PCT = 20;
-                    const isConfluence =
-                      idxHasOI && etfHasOI && d.etfIsPrimary &&
-                      idxOIWidth >= CONFLUENCE_OI_PCT && etfOIWidth >= CONFLUENCE_OI_PCT;
+                    // Cross-symbol CONFLUENCE flag for this row. Candidates are
+                    // pre-selected (capped at CONFLUENCE_MAX_LEVELS, ranked by
+                    // combined OI width) in the `confluenceStrikes` memo above;
+                    // here we just check membership and pull the put/call type.
+                    const confluenceType = confluenceStrikes.get(d.strike);
+                    const isConfluence = confluenceType !== undefined;
 
                     // Blend backgrounds
                     let rowBg = 'transparent';
@@ -1118,8 +1150,12 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                           </span>
                         )}
                         {isConfluence && rowHeight >= 18 && (
-                          <span className="absolute right-2 top-1/2 transform -translate-y-1/2 text-[8px] font-extrabold uppercase tracking-wider bg-amber-500/95 text-black px-1.5 py-0.5 rounded border border-amber-400/50 whitespace-nowrap z-30 shadow-md">
-                            ★ Confl. {futuresSymbol} ${(d.levelPrice * basisMultiplier).toFixed(0)}
+                          <span className={`absolute right-2 top-1/2 transform -translate-y-1/2 text-[8px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded whitespace-nowrap z-30 shadow-md ${
+                            confluenceType === 'support'
+                              ? 'bg-red-600/95 text-white border border-red-400/50'
+                              : 'bg-emerald-600/95 text-white border border-emerald-400/50'
+                          }`}>
+                            ★ Confl. {confluenceType === 'support' ? 'Put' : 'Call'} {futuresSymbol} ${(d.levelPrice * basisMultiplier).toFixed(0)}
                           </span>
                         )}
                         {isKronosHighRow && rowHeight >= 18 && (
