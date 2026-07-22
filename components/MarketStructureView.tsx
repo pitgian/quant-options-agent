@@ -557,20 +557,24 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     return { maxEtfVolume: maxEtf, maxIndexVolume: maxIdx, maxFuturesVolume: maxFut, maxIndexTotalOI: maxIdxOI, maxEtfTotalOI: maxEtfOI, maxIndexTotalVol: maxIdxVol, maxEtfTotalVol: maxEtfVol };
   }, [zoomedProfile]);
 
-  // Cross-symbol CONFLUENCE pre-selection (capped).
+  // Cross-symbol CONFLUENCE pre-selection (capped + direction-filtered).
   // A row qualifies when BOTH the Index OI and the aligned ETF OI are strong
   // (each >= CONFLUENCE_OI_PCT of its own max). The threshold is percentile-
   // relative per side because index and ETF OI live on very different absolute
   // scales (NDX walls ~1k contracts vs QQQ ~400k), so an absolute cutoff would
   // fire only on the ETF or never on the index.
   //
+  // DIRECTION must also agree: a true confluence is a put wall on BOTH the
+  // index and the ETF (support), or a call wall on BOTH (resistance). When the
+  // two sides disagree (e.g. index call-heavy but ETF put-heavy) it is NOT a
+  // confluence — it's a structural disagreement — and is dropped. Comparing
+  // put/call FRACTIONS per symbol (not absolute OI) avoids the ETF always
+  // outvoting the index because of its larger contract scale.
+  //
   // To keep the chart readable we DON'T flag every qualifying row: we rank
   // candidates by combined OI width (index + etf) and keep only the top
   // CONFLUENCE_MAX_LEVELS. Without this cap a dense NDX ladder produced ~17
   // markers — noise, not signal.
-  // Each confluence is classified by put/call dominance: put-heavy => support
-  // (red), call-heavy => resistance (green). The per-side OI fractions are
-  // already computed in the row renderer; here we aggregate them.
   const CONFLUENCE_OI_PCT = 40;
   const CONFLUENCE_MAX_LEVELS = 8;
   const confluenceStrikes = useMemo(() => {
@@ -583,17 +587,24 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
         const etfHasOI = etfTotalOI > 0;
         const idxOIWidth = maxIndexTotalOI > 0 ? (idxTotalOI / maxIndexTotalOI) * 100 : 0;
         const etfOIWidth = maxEtfTotalOI > 0 ? (etfTotalOI / maxEtfTotalOI) * 100 : 0;
-        const qualifies = idxHasOI && etfHasOI &&
+        const strongEnough = idxHasOI && etfHasOI &&
           idxOIWidth >= CONFLUENCE_OI_PCT && etfOIWidth >= CONFLUENCE_OI_PCT;
-        // put/call dominance aggregated across index + etf (absolute OI).
-        const putOI = d.indexPutOI + d.etfPutOI;
-        const callOI = d.indexCallOI + d.etfCallOI;
-        const type: 'support' | 'resistance' = putOI >= callOI ? 'support' : 'resistance';
-        return { strike: d.strike, qualifies, combinedWidth: idxOIWidth + etfOIWidth, type };
+        // Per-symbol put/call direction (fractions, scale-free).
+        const idxPutFrac = idxHasOI ? d.indexPutOI / idxTotalOI : 0;
+        const etfPutFrac = etfHasOI ? d.etfPutOI / etfTotalOI : 0;
+        const idxIsPut = idxPutFrac > 0.5;
+        const etfIsPut = etfPutFrac > 0.5;
+        // Both sides must agree on direction to be a real confluence.
+        const direction = idxIsPut === etfIsPut
+          ? (idxIsPut ? 'support' : 'resistance')
+          : null; // disagreement -> not a confluence
+        const qualifies = strongEnough && direction !== null;
+        return { strike: d.strike, qualifies, combinedWidth: idxOIWidth + etfOIWidth, type: direction as 'support' | 'resistance' | null };
       })
-      .filter(c => c.qualifies)
+      .filter(c => c.qualifies && c.type !== null)
       .sort((a, b) => b.combinedWidth - a.combinedWidth)
-      .slice(0, CONFLUENCE_MAX_LEVELS);
+      .slice(0, CONFLUENCE_MAX_LEVELS)
+      .map(c => ({ strike: c.strike, type: c.type as 'support' | 'resistance' }));
     return new Map(candidates.map(c => [c.strike, c.type]));
   }, [zoomedProfile, maxIndexTotalOI, maxEtfTotalOI]);
 
