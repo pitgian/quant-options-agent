@@ -127,8 +127,15 @@ const LevelRow: React.FC<LevelRowProps> = ({
   const isCross = !!level.isCrossSymbol;
   const showConfluence = !!level.hasCrossConfluence;
 
-  // Cross-symbol levels use amber/gold accent; regular levels use red/green
-  const color = isCross ? '#f59e0b' : (isResistance ? '#f87171' : '#4ade80');
+  // All levels use put/call color (red support / green resistance). Previously
+  // cross-only levels were forced to amber, hiding the put/call identity the
+  // server already classified; that made them look like the pre-fix chart and
+  // inconsistent with the dashboard (which now colors confluences put/call too).
+  const color = isResistance ? '#f87171' : '#4ade80';
+  const confBg = isHovered
+    ? (isResistance ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)')
+    : 'transparent';
+  const accent = isResistance ? '#f87171' : '#4ade80';
 
   return (
     <div
@@ -136,10 +143,8 @@ const LevelRow: React.FC<LevelRowProps> = ({
       onMouseLeave={() => onHover(null)}
       className="flex flex-col px-2 sm:px-3 py-2 rounded-lg transition-all duration-150 cursor-default"
       style={{
-        backgroundColor: isHovered
-          ? (isCross ? 'rgba(245,158,11,0.08)' : (isResistance ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)'))
-          : (isCross ? 'rgba(245,158,11,0.03)' : 'transparent'),
-        borderLeft: isCross ? '2px solid rgba(245,158,11,0.4)' : 'none',
+        backgroundColor: confBg,
+        borderLeft: showConfluence ? `2px solid ${accent}66` : 'none',
       }}
     >
       <div className="grid grid-cols-[85px_1fr_45px] sm:grid-cols-[105px_160px_54px_1fr] gap-2 sm:gap-2.5 items-center">
@@ -164,26 +169,29 @@ const LevelRow: React.FC<LevelRowProps> = ({
 
         {/* Label badges */}
         <div className="flex items-center gap-1 flex-wrap">
-          {/* Cross-ONLY levels (no wall underneath) get the full amber badge
-              as their identity. Walls that a cross reinforces keep their own
-              label (Put Wall / Call Wall) and get a small ★ chip beside it. */}
-          {!isCross && (
-            <span
-              className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded"
-              style={{
-                backgroundColor: isResistance ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
-                color,
-              }}
-            >
-              {level.label}
-            </span>
-          )}
+          {/* Always show the wall label (Put Wall / Call Wall). Previously
+              suppressed on cross-only rows, which hid the server-classified
+              put/call identity — now every level shows it for consistency. */}
+          <span
+            className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded"
+            style={{
+              backgroundColor: isResistance ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
+              color,
+            }}
+          >
+            {level.label}
+          </span>
           {showConfluence && (
             <span
-              className="text-[8px] sm:text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/10"
+              className="text-[8px] sm:text-[9px] font-extrabold px-1.5 py-0.5 rounded"
+              style={{
+                backgroundColor: isResistance ? 'rgba(239,68,68,0.18)' : 'rgba(34,197,94,0.18)',
+                color,
+                border: `1px solid ${isResistance ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
+              }}
               title="Confluenza Cross-Symbol tra ETF e Indice"
             >
-              {isCross ? '★ Confl.' : '★'}
+              {isCross ? `★ Confl. ${isResistance ? 'Call' : 'Put'}` : '★'}
             </span>
           )}
 
