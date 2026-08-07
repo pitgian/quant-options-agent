@@ -1,0 +1,515 @@
+{
+  "updated_at": "2026-09-16T00:18:04.085882+00:00",
+  "SP500_bias": {
+    "ticker": "SPY",
+    "last_price_4h": 759.66,
+    "last_price_1d": 759.66,
+    "trend_bias": "BEARISH",
+    "strength_pct": -2.42,
+    "coherence": {
+      "score": 50.2,
+      "agree": true,
+      "label": "MISTO",
+      "strength_4h_pct": -0.009,
+      "strength_1d_pct": -2.422
+    },
+    "forecast_4h": {
+      "last_price": 759.66,
+      "expected_high": 762.59,
+      "expected_low": 746.62,
+      "expected_high_p50": 761.07,
+      "expected_low_p50": 756.84,
+      "predicted_volatility_pct": 2.102,
+      "candles": [
+        {
+          "timestamp": "2026-09-16T00:00:00-04:00",
+          "open": 760.89,
+          "high": 761.07,
+          "low": 759.37,
+          "close": 759.57,
+          "volume": 28860.1,
+          "close_p10": 757.01,
+          "close_p90": 761.96,
+          "high_p10": 758.62,
+          "high_p90": 761.7,
+          "low_p10": 757.22,
+          "low_p90": 761.59
+        },
+        {
+          "timestamp": "2026-09-16T04:00:00-04:00",
+          "open": 759.45,
+          "high": 761.01,
+          "low": 759.19,
+          "close": 759.65,
+          "volume": 142296.1,
+          "close_p10": 755.49,
+          "close_p90": 761.62,
+          "high_p10": 757.33,
+          "high_p90": 762.59,
+          "low_p10": 755.51,
+          "low_p90": 761.34
+        },
+        {
+          "timestamp": "2026-09-16T08:00:00-04:00",
+          "open": 759.9,
+          "high": 760.62,
+          "low": 759.01,
+          "close": 759.31,
+          "volume": 148524.0,
+          "close_p10": 754.24,
+          "close_p90": 761.08,
+          "high_p10": 755.93,
+          "high_p90": 762.08,
+          "low_p10": 754.95,
+          "low_p90": 761.17
+        },
+        {
+          "timestamp": "2026-09-16T12:00:00-04:00",
+          "open": 759.84,
+          "high": 759.5,
+          "low": 758.26,
+          "close": 758.36,
+          "volume": 283715.2,
+          "close_p10": 752.42,
+          "close_p90": 759.52,
+          "high_p10": 754.3,
+          "high_p90": 760.7,
+          "low_p10": 752.85,
+          "low_p90": 759.76
+        },
+        {
+          "timestamp": "2026-09-16T16:00:00-04:00",
+          "open": 758.24,
+          "high": 758.97,
+          "low": 757.83,
+          "close": 758.22,
+          "volume": 273709.8,
+          "close_p10": 749.35,
+          "close_p90": 759.49,
+          "high_p10": 751.77,
+          "high_p90": 760.38,
+          "low_p10": 749.66,
+          "low_p90": 759.27
+        },
+        {
+          "timestamp": "2026-09-16T20:00:00-04:00",
+          "open": 757.13,
+          "high": 759.94,
+          "low": 756.84,
+          "close": 759.59,
+          "volume": 240927.5,
+          "close_p10": 748.42,
+          "close_p90": 760.82,
+          "high_p10": 750.27,
+          "high_p90": 761.36,
+          "low_p10": 746.62,
+          "low_p90": 757.75
+        }
+      ],
+      "adapter_status": {
+        "applied": true,
+        "pred_len": 6,
+        "residual_norm": 0.437348,
+        "supported": true,
+        "reason": null,
+        "covariates": {
+          "skew": 0.08435,
+          "pcr": 2.86884,
+          "gex_b": -1179.9547785221891
+        }
+      },
+      "bias_correction": {
+        "applied": false,
+        "method": "none",
+        "correction_pct": 0.0,
+        "n_samples": 1331,
+        "n_train": 0,
+        "holdout_n": 0,
+        "holdout_delta_pp": 0.0,
+        "window_days": 14,
+        "reason": "finestra degenerata (herding: 89% delle previsioni nella stessa direzione)"
+      },
+      "band_calibration": {
+        "applied": true,
+        "method": "conformal_scale",
+        "factor": 1.899,
+        "n_samples": 1331,
+        "holdout_n": 399,
+        "holdout_cov_native": 0.8997,
+        "holdout_cov_calibrated": 0.9624,
+        "coverage_gain_pp": 6.27,
+        "reason": "holdout OK (\u0394cov=+6.3pp, nat=90%\u219296%, n=399)"
+      }
+    },
+    "forecast_1d": {
+      "last_price": 759.66,
+      "expected_high": 761.25,
+      "expected_low": 730.84,
+      "expected_high_p50": 751.21,
+      "expected_low_p50": 733.25,
+      "predicted_volatility_pct": 4.003,
+      "candles": [
+        {
+          "timestamp": "2026-09-16T00:00:00+00:00",
+          "open": 739.98,
+          "high": 747.15,
+          "low": 733.25,
+          "close": 744.03,
+          "volume": 1925420.0,
+          "close_p10": 738.72,
+          "close_p90": 749.93,
+          "high_p10": 744.12,
+          "high_p90": 750.83,
+          "low_p10": 730.84,
+          "low_p90": 738.63
+        },
+        {
+          "timestamp": "2026-09-17T00:00:00+00:00",
+          "open": 741.37,
+          "high": 749.35,
+          "low": 739.92,
+          "close": 745.04,
+          "volume": 1797502.2,
+          "close_p10": 741.54,
+          "close_p90": 750.49,
+          "high_p10": 745.69,
+          "high_p90": 753.33,
+          "low_p10": 733.48,
+          "low_p90": 744.91
+        },
+        {
+          "timestamp": "2026-09-18T00:00:00+00:00",
+          "open": 746.29,
+          "high": 751.21,
+          "low": 743.74,
+          "close": 746.8,
+          "volume": 2024253.0,
+          "close_p10": 743.36,
+          "close_p90": 750.9,
+          "high_p10": 747.97,
+          "high_p90": 761.25,
+          "low_p10": 740.04,
+          "low_p90": 750.22
+        },
+        {
+          "timestamp": "2026-09-21T00:00:00+00:00",
+          "open": 748.26,
+          "high": 747.35,
+          "low": 740.97,
+          "close": 743.77,
+          "volume": 1644566.5,
+          "close_p10": 739.31,
+          "close_p90": 747.94,
+          "high_p10": 743.97,
+          "high_p90": 751.83,
+          "low_p10": 737.69,
+          "low_p90": 746.48
+        },
+        {
+          "timestamp": "2026-09-22T00:00:00+00:00",
+          "open": 743.01,
+          "high": 744.99,
+          "low": 739.38,
+          "close": 741.26,
+          "volume": 1625979.8,
+          "close_p10": 734.3,
+          "close_p90": 746.14,
+          "high_p10": 739.1,
+          "high_p90": 748.72,
+          "low_p10": 732.35,
+          "low_p90": 744.06
+        }
+      ],
+      "adapter_status": {
+        "applied": true,
+        "pred_len": 5,
+        "residual_norm": 0.320692,
+        "supported": true,
+        "reason": null,
+        "covariates": {
+          "skew": 0.07972,
+          "pcr": 2.99367,
+          "gex_b": -949.3884911112355
+        }
+      },
+      "bias_correction": {
+        "applied": false,
+        "method": "none",
+        "correction_pct": 0.0,
+        "n_samples": 738,
+        "n_train": 0,
+        "holdout_n": 0,
+        "holdout_delta_pp": 0.0,
+        "window_days": 14,
+        "reason": "finestra degenerata (herding: 88% delle previsioni nella stessa direzione)"
+      },
+      "band_calibration": {
+        "applied": false,
+        "method": "conformal_scale",
+        "factor": 1.0,
+        "n_samples": 738,
+        "holdout_n": 221,
+        "holdout_cov_native": 0.6335,
+        "holdout_cov_calibrated": 0.6833,
+        "coverage_gain_pp": 4.98,
+        "reason": "holdout non migliora abbastanza (\u0394cov=+5.0pp < 5.0pp)"
+      }
+    }
+  },
+  "NASDAQ_bias": {
+    "ticker": "QQQ",
+    "last_price_4h": 704.11,
+    "last_price_1d": 704.08,
+    "trend_bias": "BEARISH",
+    "strength_pct": -3.3,
+    "coherence": {
+      "score": 61.5,
+      "agree": true,
+      "label": "MISTO",
+      "strength_4h_pct": -0.758,
+      "strength_1d_pct": -3.297
+    },
+    "forecast_4h": {
+      "last_price": 704.11,
+      "expected_high": 713.61,
+      "expected_low": 686.87,
+      "expected_high_p50": 704.03,
+      "expected_low_p50": 696.12,
+      "predicted_volatility_pct": 3.798,
+      "candles": [
+        {
+          "timestamp": "2026-09-16T00:00:00-04:00",
+          "open": 703.38,
+          "high": 704.03,
+          "low": 701.55,
+          "close": 702.45,
+          "volume": 19362.9,
+          "close_p10": 698.81,
+          "close_p90": 707.75,
+          "high_p10": 701.95,
+          "high_p90": 707.75,
+          "low_p10": 697.75,
+          "low_p90": 706.04
+        },
+        {
+          "timestamp": "2026-09-16T04:00:00-04:00",
+          "open": 702.12,
+          "high": 703.71,
+          "low": 700.87,
+          "close": 701.57,
+          "volume": 46580.8,
+          "close_p10": 697.1,
+          "close_p90": 710.19,
+          "high_p10": 699.84,
+          "high_p90": 711.52,
+          "low_p10": 695.71,
+          "low_p90": 707.47
+        },
+        {
+          "timestamp": "2026-09-16T08:00:00-04:00",
+          "open": 702.01,
+          "high": 702.96,
+          "low": 699.87,
+          "close": 700.9,
+          "volume": 49306.0,
+          "close_p10": 690.76,
+          "close_p90": 710.33,
+          "high_p10": 695.57,
+          "high_p90": 711.62,
+          "low_p10": 690.24,
+          "low_p90": 709.66
+        },
+        {
+          "timestamp": "2026-09-16T12:00:00-04:00",
+          "open": 701.27,
+          "high": 700.84,
+          "low": 697.66,
+          "close": 697.77,
+          "volume": 90575.0,
+          "close_p10": 691.05,
+          "close_p90": 710.15,
+          "high_p10": 693.76,
+          "high_p90": 710.74,
+          "low_p10": 688.84,
+          "low_p90": 709.3
+        },
+        {
+          "timestamp": "2026-09-16T16:00:00-04:00",
+          "open": 698.88,
+          "high": 700.45,
+          "low": 697.39,
+          "close": 698.76,
+          "volume": 76652.7,
+          "close_p10": 689.55,
+          "close_p90": 709.34,
+          "high_p10": 693.85,
+          "high_p90": 710.26,
+          "low_p10": 689.17,
+          "low_p90": 708.38
+        },
+        {
+          "timestamp": "2026-09-16T20:00:00-04:00",
+          "open": 698.2,
+          "high": 700.96,
+          "low": 696.12,
+          "close": 698.77,
+          "volume": 70898.7,
+          "close_p10": 689.48,
+          "close_p90": 712.29,
+          "high_p10": 691.89,
+          "high_p90": 713.61,
+          "low_p10": 686.87,
+          "low_p90": 709.05
+        }
+      ],
+      "adapter_status": {
+        "applied": true,
+        "pred_len": 6,
+        "residual_norm": 0.302032,
+        "supported": true,
+        "reason": null,
+        "covariates": {
+          "skew": 0.06719,
+          "pcr": 1.41688,
+          "gex_b": -438.2831774680852
+        }
+      },
+      "bias_correction": {
+        "applied": false,
+        "method": "none",
+        "correction_pct": 0.0,
+        "n_samples": 1331,
+        "n_train": 0,
+        "holdout_n": 0,
+        "holdout_delta_pp": 0.0,
+        "window_days": 14,
+        "reason": "finestra degenerata (herding: 93% delle previsioni nella stessa direzione)"
+      },
+      "band_calibration": {
+        "applied": true,
+        "method": "conformal_scale",
+        "factor": 1.977,
+        "n_samples": 1331,
+        "holdout_n": 399,
+        "holdout_cov_native": 0.8271,
+        "holdout_cov_calibrated": 0.8947,
+        "coverage_gain_pp": 6.77,
+        "reason": "holdout OK (\u0394cov=+6.8pp, nat=83%\u219289%, n=399)"
+      }
+    },
+    "forecast_1d": {
+      "last_price": 704.08,
+      "expected_high": 710.22,
+      "expected_low": 655.2,
+      "expected_high_p50": 689.81,
+      "expected_low_p50": 668.99,
+      "predicted_volatility_pct": 7.814,
+      "candles": [
+        {
+          "timestamp": "2026-09-16T00:00:00+00:00",
+          "open": 678.15,
+          "high": 686.58,
+          "low": 668.99,
+          "close": 682.02,
+          "volume": 634216.2,
+          "close_p10": 680.11,
+          "close_p90": 702.89,
+          "high_p10": 685.5,
+          "high_p90": 710.22,
+          "low_p10": 668.1,
+          "low_p90": 681.5
+        },
+        {
+          "timestamp": "2026-09-17T00:00:00+00:00",
+          "open": 678.24,
+          "high": 687.52,
+          "low": 675.5,
+          "close": 681.68,
+          "volume": 565702.1,
+          "close_p10": 677.37,
+          "close_p90": 697.35,
+          "high_p10": 683.32,
+          "high_p90": 701.43,
+          "low_p10": 666.79,
+          "low_p90": 686.52
+        },
+        {
+          "timestamp": "2026-09-18T00:00:00+00:00",
+          "open": 683.48,
+          "high": 689.81,
+          "low": 678.85,
+          "close": 682.76,
+          "volume": 606031.5,
+          "close_p10": 671.23,
+          "close_p90": 697.0,
+          "high_p10": 681.61,
+          "high_p90": 705.26,
+          "low_p10": 665.11,
+          "low_p90": 693.97
+        },
+        {
+          "timestamp": "2026-09-21T00:00:00+00:00",
+          "open": 682.99,
+          "high": 684.55,
+          "low": 673.8,
+          "close": 678.6,
+          "volume": 547051.1,
+          "close_p10": 668.71,
+          "close_p90": 694.29,
+          "high_p10": 675.55,
+          "high_p90": 701.4,
+          "low_p10": 661.41,
+          "low_p90": 686.05
+        },
+        {
+          "timestamp": "2026-09-22T00:00:00+00:00",
+          "open": 676.89,
+          "high": 686.26,
+          "low": 669.37,
+          "close": 680.87,
+          "volume": 567091.9,
+          "close_p10": 659.75,
+          "close_p90": 692.73,
+          "high_p10": 671.28,
+          "high_p90": 698.7,
+          "low_p10": 655.2,
+          "low_p90": 679.26
+        }
+      ],
+      "adapter_status": {
+        "applied": true,
+        "pred_len": 5,
+        "residual_norm": 0.245343,
+        "supported": true,
+        "reason": null,
+        "covariates": {
+          "skew": 0.06182,
+          "pcr": 1.41693,
+          "gex_b": -433.1974090277483
+        }
+      },
+      "bias_correction": {
+        "applied": false,
+        "method": "none",
+        "correction_pct": 0.0,
+        "n_samples": 738,
+        "n_train": 0,
+        "holdout_n": 0,
+        "holdout_delta_pp": 0.0,
+        "window_days": 14,
+        "reason": "finestra degenerata (herding: 99% delle previsioni nella stessa direzione)"
+      },
+      "band_calibration": {
+        "applied": false,
+        "method": "conformal_scale",
+        "factor": 1.0,
+        "n_samples": 738,
+        "holdout_n": 221,
+        "holdout_cov_native": 0.8733,
+        "holdout_cov_calibrated": 0.8733,
+        "coverage_gain_pp": 0.0,
+        "reason": "holdout non migliora abbastanza (\u0394cov=+0.0pp < 5.0pp)"
+      }
+    }
+  }
+}
