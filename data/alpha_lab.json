@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "generated_at": "2026-09-21T15:04:51.151177+00:00",
+  "min_test": 20,
+  "min_skill_pct": 3.0,
+  "alpha_p": 0.05,
+  "dampen_factor": 0.15,
+  "config": {
+    "min_train_recal": 30,
+    "min_train_feats": 60,
+    "half_life": 120,
+    "feature_keys": [
+      "momentum_5",
+      "momentum_10",
+      "ma_dev_20",
+      "rsi_14",
+      "rv_20",
+      "skew",
+      "pcr",
+      "gex"
+    ]
+  },
+  "groups": {
+    "QQQ|1d": {
+      "n_targets": 10,
+      "arena": {
+        "naive_zero": {
+          "n_test": 10,
+          "mae_pct": 1.3074
+        },
+        "issued": {
+          "n_test": 10,
+          "mae_pct": 1.3107,
+          "skill_vs_naive_pct": -0.25,
+          "beats_naive_p": 0.82812
+        },
+        "recal": null,
+        "feats": null
+      },
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "beats_naive_p": null,
+      "feature_coverage": {}
+    },
+    "QQQ|4h": {
+      "n_targets": 71,
+      "arena": {
+        "naive_zero": {
+          "n_test": 71,
+          "mae_pct": 0.6958
+        },
+        "issued": {
+          "n_test": 71,
+          "mae_pct": 0.9723,
+          "skill_vs_naive_pct": -39.74,
+          "beats_naive_p": 0.99909
+        },
+        "recal": {
+          "n_test": 41,
+          "mae_pct": 0.713,
+          "skill_vs_naive_pct": -2.47,
+          "beats_naive_p": 0.26635
+        },
+        "feats": null
+      },
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -39.74,
+      "beats_naive_p": 0.99909,
+      "feature_coverage": {
+        "momentum_5": 0.01,
+        "momentum_10": 0.01,
+        "ma_dev_20": 0.01,
+        "rsi_14": 0.01,
+        "rv_20": 0.01,
+        "skew": 0.01,
+        "pcr": 0.01,
+        "gex": 0.01
+      }
+    },
+    "SPY|1d": {
+      "n_targets": 10,
+      "arena": {
+        "naive_zero": {
+          "n_test": 10,
+          "mae_pct": 0.7559
+        },
+        "issued": {
+          "n_test": 10,
+          "mae_pct": 0.8261,
+          "skill_vs_naive_pct": -9.28,
+          "beats_naive_p": 0.62305
+        },
+        "recal": null,
+        "feats": null
+      },
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "beats_naive_p": null,
+      "feature_coverage": {}
+    },
+    "SPY|4h": {
+      "n_targets": 71,
+      "arena": {
+        "naive_zero": {
+          "n_test": 71,
+          "mae_pct": 0.5722
+        },
+        "issued": {
+          "n_test": 71,
+          "mae_pct": 0.6414,
+          "skill_vs_naive_pct": -12.1,
+          "beats_naive_p": 0.76166
+        },
+        "recal": {
+          "n_test": 41,
+          "mae_pct": 0.5349,
+          "skill_vs_naive_pct": 6.53,
+          "beats_naive_p": 0.37761
+        },
+        "feats": null
+      },
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -12.1,
+      "beats_naive_p": 0.76166,
+      "feature_coverage": {
+        "momentum_5": 0.01,
+        "momentum_10": 0.01,
+        "ma_dev_20": 0.01,
+        "rsi_14": 0.01,
+        "rv_20": 0.01,
+        "skew": 0.01,
+        "pcr": 0.01,
+        "gex": 0.01
+      }
+    }
+  },
+  "timeline": [
+    {
+      "ts": "2026-09-21T15:04:51.151177+00:00",
+      "group": "QQQ|1d",
+      "n_targets": 10,
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "issued_skill": -0.25,
+      "recal_skill": null,
+      "feats_skill": null
+    },
+    {
+      "ts": "2026-09-21T15:04:51.151177+00:00",
+      "group": "QQQ|4h",
+      "n_targets": 71,
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -39.74,
+      "issued_skill": -39.74,
+      "recal_skill": -2.47,
+      "feats_skill": null
+    },
+    {
+      "ts": "2026-09-21T15:04:51.151177+00:00",
+      "group": "SPY|1d",
+      "n_targets": 10,
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "issued_skill": -9.28,
+      "recal_skill": null,
+      "feats_skill": null
+    },
+    {
+      "ts": "2026-09-21T15:04:51.151177+00:00",
+      "group": "SPY|4h",
+      "n_targets": 71,
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -12.1,
+      "issued_skill": -12.1,
+      "recal_skill": 6.53,
+      "feats_skill": null
+    }
+  ]
+}
