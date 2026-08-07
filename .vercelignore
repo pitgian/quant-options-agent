@@ -1,0 +1,33 @@
+# Local development files
+scripts/
+backend/
+.venv/
+*.py
+*.pyc
+__pycache__/
+.env.local
+plans/
+docs/
+vitePlugins/
+electron/
+
+# API routes non necessarie per Vercel pubblico
+# (manteniamo api/index.ts solo come fallback)
+
+# Development configs
+.eslintrc.*
+.prettierrc*
+tsconfig.json
+
+# Test files
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+__tests__/
+coverage/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log

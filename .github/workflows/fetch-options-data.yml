@@ -1,0 +1,365 @@
+name: Fetch Options Data
+
+# =============================================================================
+# Two-job pipeline (refactored 2026-06-22).
+#
+# PROBLEM this fixes:
+#   Previously a single job ran fetch-options → train-adapter → run-kronos →
+#   push, all under ONE concurrency group with cancel-in-progress: true.
+#   The job took ~8 minutes (Kronos model download + 20 epochs of adapter
+#   training), but the cron fires every 5 minutes during market hours.
+#   Result: every run was cancelled mid-flight by the next cron tick, so the
+#   data branch was NEVER updated during market hours — exactly when it
+#   matters most. Last successful data update was 05:49 UTC (pre-market),
+#   every run after that died in "Train covariate adapters".
+#
+# FIX:
+#   Split into two jobs with INDEPENDENT concurrency groups:
+#
+#     JOB 1 "fetch-options"   (critical, ~2-3 min)
+#       - fetches options data, pushes options_data.json + options_history.json
+#       - cancel-in-progress: FALSE (queue) — this job MUST complete, never kill
+#       - concurrency group: fetch-options-data
+#
+#     JOB 2 "kronos-forecast"  (non-critical, ~5-10 min)
+#       - needs: fetch-options (runs after data is published)
+#       - trains adapter ONLY if the existing one is > 24h old (was every 5 min!)
+#       - runs Kronos, pushes kronos_forecast.json + covariate_adapter.pth
+#       - cancel-in-progress: TRUE — safe to kill, options data already saved
+#       - concurrency group: kronos-forecast
+#
+#   If Kronos is slow and gets cancelled, the options data is still fresh.
+#
+# UPDATE 2026-06-24 (death-spiral fix):
+#   cronjob.org triggers a workflow_dispatch every 5 minutes, but Job 2 takes
+#   ~6-10 min. With cancel-in-progress:true, every new dispatch killed the
+#   in-flight Kronos run BEFORE it could commit — so kronos_forecast.json
+#   NEVER updated during frequent triggers (only the rare 3h cron survived).
+#   Job 2 is now cancel-in-progress:false (queue) + a "freshness guard" step
+#   that skips the whole job if the published forecast is <8 min old. Queued
+#   runs then exit in seconds instead of piling up, and the run that actually
+#   needs to work is never killed mid-flight.
+# =============================================================================
+
+on:
+  schedule:
+    # Every 5 minutes during US pre-market + regular market hours
+    - cron: '*/5 8-21 * * 1-5'
+    # Every 3 hours outside active trading hours
+    - cron: '0 0-7,22-23/3 * * 1-5'
+    # Every 6 hours on weekends
+    - cron: '0 */6 * * 0,6'
+  workflow_dispatch:
+
+# ============================================================================
+# JOB 1: Fetch options data + push (CRITICAL)
+# ============================================================================
+jobs:
+  fetch-options:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: fetch-options-data
+      # FALSE: this job must finish. Queue runs instead of killing them.
+      # The job is fast (~2-3 min) so the queue never grows beyond 1.
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Cache virtualenv
+        id: cache-venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('scripts/requirements.txt') }}
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+
+      - name: Restore options_history.json from data branch
+        continue-on-error: true
+        run: |
+          git fetch origin data || true
+          git checkout origin/data -- data/options_history.json || true
+          # Also restore options_data.json — needed by load_previous_oi_lookup()
+          # to fall back on the last known non-zero OI when Yahoo returns 0
+          # (pre-market, weekend, or data glitches). Without this, the OI
+          # fallback is silently disabled and the chart shows 0 OI outside
+          # market hours even though we have the last valid OI stored.
+          git checkout origin/data -- data/options_data.json || true
+
+      - name: Fetch options data
+        timeout-minutes: 10
+        run: |
+          source .venv/bin/activate
+          python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
+        env:
+          TZ: America/New_York
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+
+      - name: Push to repository data branch
+        # Safety net: 5-min cap prevents a stuck push from hanging the whole CI
+        # (see job 2's note on the 7.9GB / 10582-commit incident).
+        timeout-minutes: 5
+        run: |
+          mkdir -p /tmp/generated_data
+          cp data/options_data.json /tmp/generated_data/
+          cp data/options_history.json /tmp/generated_data/ || true
+          rm -f data/options_data.json data/options_history.json
+          git fetch origin data
+          git checkout --force -B data origin/data --
+          mkdir -p data
+          cp /tmp/generated_data/options_data.json data/
+          cp /tmp/generated_data/options_history.json data/ || true
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/options_data.json data/options_history.json
+          if [ ! -f vercel.json ]; then
+            # Disable Vercel deployments for the data branch — it receives ~565
+            # commits/day and would exhaust the 100/day free-tier deploy quota.
+            echo '{"git": {"deploymentEnabled": {"data": false}}, "ignoreCommand": "exit 0"}' > vercel.json
+            git add vercel.json
+          fi
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit on data branch."
+            exit 0
+          fi
+          # Amend the single data-branch commit (see job 2's note): keeps the
+          # branch at 1 commit, no accumulation. --force-with-lease is the safe
+          # force-push: refused if another run pushed since our checkout above.
+          git commit --amend -m "chore: data snapshot (options) [skip ci]"
+          git push --force-with-lease origin data
+
+  # ============================================================================
+  # JOB 2: Kronos forecast (non-critical, runs after job 1)
+  # ============================================================================
+  kronos-forecast:
+    needs: fetch-options
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: kronos-forecast
+      # FALSE: do NOT kill a running Kronos run. The pipeline takes ~6-10 min
+      # but triggers arrive every 5 min (cronjob.org). With cancel-in-progress:
+      # true this caused a death-spiral where no run ever finished. Instead we
+      # QUEUE runs and let the "freshness guard" step skip the ones that arrive
+      # while the forecast is still fresh, so the queue drains in seconds.
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-kronos-${{ hashFiles('scripts/run_kronos.py') }}
+          restore-keys: |
+            hf-models-kronos-
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Cache virtualenv (with torch)
+        id: cache-venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-torch-${{ runner.os }}-${{ hashFiles('scripts/requirements.txt') }}
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r scripts/requirements.txt
+
+      - name: Restore state from data branch (fetched by job 1)
+        continue-on-error: true
+        run: |
+          git fetch origin data || true
+          # Pull the freshly-fetched options data from job 1
+          git checkout origin/data -- data/options_data.json || true
+          git checkout origin/data -- data/options_history.json || true
+          # Pull the existing adapter (may be reused if recent enough)
+          git checkout origin/data -- scripts/model/covariate_adapter.pth || true
+          git checkout origin/data -- data/adapter_training_stats.json || true
+          # Pull the baseline cache so computed Kronos baselines survive across
+          # runs (turns full-history adapter training into a one-time-per-snapshot cost).
+          git checkout origin/data -- data/adapter_baselines_cache.json || true
+          # Pull the forecast-verification history so prior forecasts can be
+          # scored against realized prices (and the new one appended).
+          git checkout origin/data -- data/kronos_forecast_history.json || true
+
+      - name: Freshness guard — skip if Kronos forecast is recent
+        # Anti-pile-up: triggers fire every 5 min but a full Kronos run takes
+        # ~6-10 min. If the published forecast is younger than
+        # KRONOS_MIN_INTERVAL_MIN, this run is redundant — bail out early so
+        # queued runs drain fast instead of redoing the whole pipeline.
+        id: freshness
+        run: |
+          KRONOS_MIN_INTERVAL_MIN=8
+          LAST_TS=$(git log -1 --format="%ct" origin/data -- data/kronos_forecast.json 2>/dev/null || echo 0)
+          if [ "$LAST_TS" = "0" ]; then
+            echo "No previous Kronos forecast on data branch. Will run."
+            echo "skip=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          NOW_TS=$(date +%s)
+          AGE_MIN=$(( (NOW_TS - LAST_TS) / 60 ))
+          echo "Last published Kronos forecast is ${AGE_MIN} min old (threshold ${KRONOS_MIN_INTERVAL_MIN} min)."
+          if [ "$AGE_MIN" -lt "$KRONOS_MIN_INTERVAL_MIN" ]; then
+            echo "Forecast is fresh — skipping this run to avoid pile-up."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Forecast is stale — will regenerate."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if adapter training is needed (new data available)
+        if: steps.freshness.outputs.skip != 'true'
+        id: train_check
+        run: |
+          if [ ! -f scripts/model/covariate_adapter.pth ]; then
+            echo "Adapter missing, will train."
+            echo "should_train=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Train ONLY when new options data is available since the last adapter
+          # commit. The trainer is deterministic (fixed RNG seeds in train()):
+          # with unchanged options_history.json + unchanged price history it
+          # would produce a byte-identical checkpoint, so re-training on
+          # weekends (no new market data) was pure CI waste.
+          git fetch origin data || true
+          ADAPTER_TS=$(git log -1 --format="%ct" origin/data -- scripts/model/covariate_adapter.pth 2>/dev/null || echo 0)
+          HISTORY_TS=$(git log -1 --format="%ct" origin/data -- data/options_history.json 2>/dev/null || echo 0)
+          echo "adapter last committed: $ADAPTER_TS"
+          echo "options_history last committed: $HISTORY_TS"
+          if [ "$ADAPTER_TS" = "0" ]; then
+            echo "No adapter commit history, will train."
+            echo "should_train=true" >> $GITHUB_OUTPUT
+          elif [ "$HISTORY_TS" -gt "$ADAPTER_TS" ]; then
+            echo "New options data since last adapter, will train."
+            echo "should_train=true" >> $GITHUB_OUTPUT
+          else
+            echo "No new options data since last adapter, skipping training."
+            echo "should_train=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Train unified covariate adapter (new-data guarded)
+        if: steps.freshness.outputs.skip != 'true' && steps.train_check.outputs.should_train == 'true'
+        timeout-minutes: 14
+        # Bounded runtime: max-records=80/symbol + denoise x4 + 7min baseline
+        # budget keeps the whole job ~8-12 min (was 25 min with no cap + x8
+        # denoise, which timed out and piled up runs). The baseline cache makes
+        # re-runs of the same capped snapshots instant after the cold start.
+        # The script self-guards: it only writes a checkpoint when enough REAL
+        # samples with realized future targets exist (MIN_REAL_SAMPLES).
+        # Otherwise it leaves the existing adapter untouched. PYTHONUNBUFFERED
+        # streams progress so the run never looks "stuck" during baseline passes.
+        run: |
+          source .venv/bin/activate
+          python scripts/train_adapter.py --symbols SPY QQQ --epochs 40 || true
+        env:
+          TZ: America/New_York
+          PYTHONUNBUFFERED: "1"
+
+      - name: Run Kronos predictions
+        if: steps.freshness.outputs.skip != 'true'
+        timeout-minutes: 15
+        run: |
+          source .venv/bin/activate
+          python scripts/run_kronos.py
+        env:
+          TZ: America/New_York
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+
+      - name: Push to repository data branch
+        if: steps.freshness.outputs.skip != 'true'
+        # Safety net: this step once hung for >1h on a git push contention (the
+        # data branch had grown to 7.9GB / 10582 commits). The 5-min cap kills a
+        # stuck push so the next cron tick gets a clean slot.
+        timeout-minutes: 5
+        run: |
+          mkdir -p /tmp/generated_data
+          cp data/kronos_forecast.json /tmp/generated_data/
+          cp data/adapter_training_stats.json /tmp/generated_data/ || true
+          cp data/adapter_baselines_cache.json /tmp/generated_data/ || true
+          cp data/kronos_forecast_history.json /tmp/generated_data/ || true
+          cp scripts/model/covariate_adapter.pth /tmp/generated_data/ || true
+          # Remove the locally-restored copies of every file this job will
+          # re-place from /tmp/generated_data, PLUS options_data.json /
+          # options_history.json (restored by the "Restore state" step to feed
+          # run_kronos.py / train_adapter.py). job 1 already removes the latter
+          # (line ~122); this job didn't, which caused intermittent failures.
+          #
+          # Why --force on the checkout too: the "Restore state" step does
+          # `git checkout origin/data -- <file>`, which stages those files into
+          # the index. A plain `git checkout -B data origin/data` then aborts
+          # with "Your local changes ... would be overwritten by checkout" when
+          # a concurrent run pushed new commits to `data` in the meantime —
+          # because `rm` removes the working-tree copy but NOT the staged/index
+          # entry. `--force` discards the local tracked modifications cleanly.
+          rm -f data/kronos_forecast.json data/adapter_training_stats.json data/adapter_baselines_cache.json data/kronos_forecast_history.json scripts/model/covariate_adapter.pth data/options_data.json data/options_history.json
+          git fetch origin data
+          git checkout --force -B data origin/data --
+          mkdir -p data scripts/model
+          cp /tmp/generated_data/kronos_forecast.json data/
+          cp /tmp/generated_data/adapter_training_stats.json data/ || true
+          cp /tmp/generated_data/adapter_baselines_cache.json data/ || true
+          cp /tmp/generated_data/kronos_forecast_history.json data/ || true
+          cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # Each artifact is optional (stats/adapter may not exist when training is
+          # guarded out), so add individually with `|| true` and only fail if
+          # NOTHING changed.
+          git add data/kronos_forecast.json 2>/dev/null || true
+          git add data/adapter_training_stats.json 2>/dev/null || true
+          git add data/adapter_baselines_cache.json 2>/dev/null || true
+          git add data/kronos_forecast_history.json 2>/dev/null || true
+          git add scripts/model/covariate_adapter.pth 2>/dev/null || true
+          if [ ! -f vercel.json ]; then
+            # Disable Vercel deployments for the data branch — it receives ~565
+            # commits/day and would exhaust the 100/day free-tier deploy quota.
+            echo '{"git": {"deploymentEnabled": {"data": false}}, "ignoreCommand": "exit 0"}' > vercel.json
+            git add vercel.json
+          fi
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit on data branch."
+            exit 0
+          fi
+          # Amend the single data-branch commit instead of stacking a new one.
+          # Keeps the branch at 1 commit forever — no history accumulation, no
+          # repo bloat (this branch once grew to 7.9GB / 10582 chore commits and
+          # hung the CI on git fetch). --force-with-lease refuses the push if
+          # another run pushed since our `git checkout` above, which is the safe
+          # failure mode under the concurrency group that serializes this job.
+          git commit --amend -m "chore: data snapshot (forecast) [skip ci]"
+          git push --force-with-lease origin data

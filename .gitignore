@@ -1,0 +1,62 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vercel
+.vercel/
+.vercel
+
+# Generated data & model artifacts (produced by GitHub Actions on the
+# `data` branch / Gist; should never be committed on master)
+data/options_data.json
+data/options_history.json
+data/kronos_forecast.json
+data/kronos_forecast_history.json
+data/adapter_training_stats.json
+data/adapter_baselines_cache.json
+data/tv_levels.json
+scripts/model/covariate_adapter.pth
+
+# Local scratch / experiments
+scratch/
+
+# Local agent/tool state (ZCode session plans, etc.)
+.zcode/
