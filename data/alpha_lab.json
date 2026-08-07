@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "generated_at": "2026-09-19T20:18:16.984240+00:00",
+  "min_test": 20,
+  "min_skill_pct": 3.0,
+  "alpha_p": 0.05,
+  "dampen_factor": 0.15,
+  "config": {
+    "min_train_recal": 30,
+    "min_train_feats": 60,
+    "half_life": 120,
+    "feature_keys": [
+      "momentum_5",
+      "momentum_10",
+      "ma_dev_20",
+      "rsi_14",
+      "rv_20",
+      "skew",
+      "pcr",
+      "gex"
+    ]
+  },
+  "groups": {
+    "QQQ|1d": {
+      "n_targets": 9,
+      "arena": {
+        "naive_zero": {
+          "n_test": 9,
+          "mae_pct": 1.1484
+        },
+        "issued": {
+          "n_test": 9,
+          "mae_pct": 0.9767,
+          "skill_vs_naive_pct": 14.95,
+          "beats_naive_p": 0.74609
+        },
+        "recal": null,
+        "feats": null
+      },
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "beats_naive_p": null,
+      "feature_coverage": {}
+    },
+    "QQQ|4h": {
+      "n_targets": 76,
+      "arena": {
+        "naive_zero": {
+          "n_test": 76,
+          "mae_pct": 0.7013
+        },
+        "issued": {
+          "n_test": 76,
+          "mae_pct": 0.9205,
+          "skill_vs_naive_pct": -31.24,
+          "beats_naive_p": 0.98569
+        },
+        "recal": {
+          "n_test": 46,
+          "mae_pct": 0.7672,
+          "skill_vs_naive_pct": -9.38,
+          "beats_naive_p": 0.67063
+        },
+        "feats": null
+      },
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -31.24,
+      "beats_naive_p": 0.98569,
+      "feature_coverage": {}
+    },
+    "SPY|1d": {
+      "n_targets": 9,
+      "arena": {
+        "naive_zero": {
+          "n_test": 9,
+          "mae_pct": 0.7581
+        },
+        "issued": {
+          "n_test": 9,
+          "mae_pct": 0.7014,
+          "skill_vs_naive_pct": 7.48,
+          "beats_naive_p": 0.5
+        },
+        "recal": null,
+        "feats": null
+      },
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "beats_naive_p": null,
+      "feature_coverage": {}
+    },
+    "SPY|4h": {
+      "n_targets": 76,
+      "arena": {
+        "naive_zero": {
+          "n_test": 76,
+          "mae_pct": 0.5506
+        },
+        "issued": {
+          "n_test": 76,
+          "mae_pct": 0.6469,
+          "skill_vs_naive_pct": -17.49,
+          "beats_naive_p": 0.89663
+        },
+        "recal": {
+          "n_test": 46,
+          "mae_pct": 0.5384,
+          "skill_vs_naive_pct": 2.2,
+          "beats_naive_p": 0.2307
+        },
+        "feats": null
+      },
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -17.49,
+      "beats_naive_p": 0.89663,
+      "feature_coverage": {}
+    }
+  },
+  "timeline": [
+    {
+      "ts": "2026-09-19T20:18:16.984240+00:00",
+      "group": "QQQ|1d",
+      "n_targets": 9,
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "issued_skill": 14.95,
+      "recal_skill": null,
+      "feats_skill": null
+    },
+    {
+      "ts": "2026-09-19T20:18:16.984240+00:00",
+      "group": "QQQ|4h",
+      "n_targets": 76,
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -31.24,
+      "issued_skill": -31.24,
+      "recal_skill": -9.38,
+      "feats_skill": null
+    },
+    {
+      "ts": "2026-09-19T20:18:16.984240+00:00",
+      "group": "SPY|1d",
+      "n_targets": 9,
+      "champion": null,
+      "mode": "observe",
+      "skill_vs_naive_pct": null,
+      "issued_skill": 7.48,
+      "recal_skill": null,
+      "feats_skill": null
+    },
+    {
+      "ts": "2026-09-19T20:18:16.984240+00:00",
+      "group": "SPY|4h",
+      "n_targets": 76,
+      "champion": "naive_zero",
+      "mode": "dampen",
+      "skill_vs_naive_pct": -17.49,
+      "issued_skill": -17.49,
+      "recal_skill": 2.2,
+      "feats_skill": null
+    }
+  ]
+}
