@@ -223,12 +223,32 @@ jobs:
         # ~6-10 min. If the published forecast is younger than
         # KRONOS_MIN_INTERVAL_MIN, this run is redundant — bail out early so
         # queued runs drain fast instead of redoing the whole pipeline.
+        #
+        # Reads updated_at from the JSON itself (written by run_kronos.py:471 as
+        # datetime.now(timezone.utc).isoformat() on every run) rather than the
+        # git-log timestamp of the file. The git-log path broke after the data
+        # branch moved to --amend (PR #8): amend rewrites the commit on every
+        # push, so the commit timestamp is always "now" and the guard always
+        # saw a fresh forecast — freezing regeneration. The JSON updated_at is
+        # immune to that because Python sets it at generation time.
         id: freshness
         run: |
           KRONOS_MIN_INTERVAL_MIN=8
-          LAST_TS=$(git log -1 --format="%ct" origin/data -- data/kronos_forecast.json 2>/dev/null || echo 0)
-          if [ "$LAST_TS" = "0" ]; then
+          if [ ! -f data/kronos_forecast.json ]; then
             echo "No previous Kronos forecast on data branch. Will run."
+            echo "skip=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          LAST_TS=$(python3 -c "
+          import json, datetime
+          d = json.load(open('data/kronos_forecast.json'))
+          ts = d.get('updated_at', '')
+          if not ts: raise SystemExit(0)
+          dt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+          print(int(dt.timestamp()))
+          " 2>/dev/null || echo 0)
+          if [ "$LAST_TS" = "0" ]; then
+            echo "Could not parse updated_at; will run to be safe."
             echo "skip=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -253,20 +273,38 @@ jobs:
             exit 0
           fi
           # Train ONLY when new options data is available since the last adapter
-          # commit. The trainer is deterministic (fixed RNG seeds in train()):
+          # run. The trainer is deterministic (fixed RNG seeds in train()):
           # with unchanged options_history.json + unchanged price history it
           # would produce a byte-identical checkpoint, so re-training on
           # weekends (no new market data) was pure CI waste.
-          git fetch origin data || true
-          ADAPTER_TS=$(git log -1 --format="%ct" origin/data -- scripts/model/covariate_adapter.pth 2>/dev/null || echo 0)
-          HISTORY_TS=$(git log -1 --format="%ct" origin/data -- data/options_history.json 2>/dev/null || echo 0)
-          echo "adapter last committed: $ADAPTER_TS"
-          echo "options_history last committed: $HISTORY_TS"
-          if [ "$ADAPTER_TS" = "0" ]; then
-            echo "No adapter commit history, will train."
-            echo "should_train=true" >> $GITHUB_OUTPUT
-          elif [ "$HISTORY_TS" -gt "$ADAPTER_TS" ]; then
-            echo "New options data since last adapter, will train."
+          #
+          # Compares the ACTUAL record count in options_history.json against the
+          # count the adapter last saw (history_records in adapter_training_stats.json).
+          # This replaces a git-log timestamp comparison that broke after the
+          # data branch moved to --amend (PR #8): amend rewrites the commit on
+          # every push, so both files share the same commit timestamp and the
+          # old guard never saw "history newer than adapter" — freezing retraining.
+          # Record-count is the more direct signal ("are there NEW rows?") and
+          # is immune to commit-timestamp artifacts.
+          NEW_COUNT=$(python3 -c "
+          import json
+          hist = json.load(open('data/options_history.json'))
+          # history is a flat list of records; count those matching trained symbols.
+          print(len(hist))
+          " 2>/dev/null || echo 0)
+          SEEN_COUNT=$(python3 -c "
+          import json
+          try:
+              d = json.load(open('data/adapter_training_stats.json'))
+              rec = d.get('history_records', {})
+              print(sum(rec.values()) if isinstance(rec, dict) else int(rec or 0))
+          except Exception:
+              print(0)
+          " 2>/dev/null || echo 0)
+          echo "options_history records now: $NEW_COUNT"
+          echo "adapter last trained on:     $SEEN_COUNT records"
+          if [ "$NEW_COUNT" -gt "$SEEN_COUNT" ]; then
+            echo "New options data since last adapter (+$((NEW_COUNT-SEEN_COUNT)) records), will train."
             echo "should_train=true" >> $GITHUB_OUTPUT
           else
             echo "No new options data since last adapter, skipping training."
