@@ -494,9 +494,55 @@ def main():
                 print(f"  applying: {', '.join(applied)}")
             if skipped:
                 print(f"  skipped:  {', '.join(skipped)} (anti-worsening / few samples)")
+            if not bias_model:
+                # Cold start / stale track record: without this the corrector
+                # silently goes to zero (it did, for ~2 weeks in 2026-08 while
+                # the CI venv was broken) and the only trace is a vague
+                # "no model" reason per group. Surface the state explicitly in
+                # the JSON so the UI can show why no correction is active.
+                from bias_corrector import track_record_age_days
+                stale_days = track_record_age_days()
+                print(
+                    "  WARNING: no scored records in the estimation window — "
+                    f"bias correction OFF (track record age: {stale_days}d).",
+                    file=sys.stderr,
+                )
+                forecast_data["bias_correction_meta"] = {
+                    "applied": False,
+                    "reason": "cold start: nessun record scored nella finestra di stima",
+                    "track_record_age_days": stale_days,
+                    "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
             forecast_data = apply_correction(forecast_data, bias_model)
         except Exception as bias_err:
             print(f"Warning: bias correction skipped ({bias_err})", file=sys.stderr)
+
+        # Band calibration (self-improving, layer 2): the Monte Carlo p10-p90
+        # band systematically under-covers (0-6% measured vs 80% nominal — see
+        # scripts/diagnose_band_calibration.py). Learns a per-(symbol,horizon)
+        # widening factor from the same verification track record and widens
+        # the band edges around the (already bias-corrected) central
+        # trajectory. Runs AFTER bias correction because the track record it
+        # learns from was recorded on corrected forecasts. Same conservative
+        # gating (min samples + anti-worsening holdout) and never breaks the
+        # Kronos job on failure.
+        try:
+            from band_calibrator import estimate_band_calibration, apply_band_calibration
+            print("\n--- Band calibration (self-improving) ---")
+            calib = estimate_band_calibration()
+            cal_applied = [k for k, m in calib.items() if m.get("applied")]
+            cal_skipped = [k for k, m in calib.items() if not m.get("applied")]
+            if cal_applied:
+                detail = ", ".join(f"{k} ×{calib[k]['factor']}" for k in cal_applied)
+                print(f"  applying: {detail}")
+            if cal_skipped:
+                print(f"  skipped:  {', '.join(cal_skipped)} (anti-worsening / few samples)")
+            if not calib:
+                print("  WARNING: no scored records with band fields in the "
+                      "window — band calibration OFF (cold start).", file=sys.stderr)
+            forecast_data = apply_band_calibration(forecast_data, calib)
+        except Exception as cal_err:
+            print(f"Warning: band calibration skipped ({cal_err})", file=sys.stderr)
 
         # Save output to data/kronos_forecast.json
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)

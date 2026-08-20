@@ -298,6 +298,37 @@ export interface KronosResolutionForecast {
    *   reason:         why applied / why not (human-readable).
    */
   bias_correction?: KronosBiasCorrection;
+  /**
+   * Self-improving band-calibration diagnostic. Produced by scripts/band_calibrator.py:
+   * the Monte Carlo p10-p90 band systematically under-covers (measured 0-6% vs
+   * the nominal 80%), so each run learns an empirical widening factor from the
+   * verification track record and rescales the band edges around the central
+   * trajectory. Optional — absent on snapshots produced before the layer was
+   * deployed.
+   *
+   *   applied:            whether a widening was actually applied this run.
+   *   factor:             band half-width multiplier (1 = native dispersion).
+   *   coverage_gain_pp:   holdout coverage improvement in percentage points.
+   *                       Near-zero with applied=false means the anti-worsening
+   *                       gate rejected the widening.
+   *   holdout_cov_native / holdout_cov_calibrated: coverage before/after.
+   *   n_samples:          scored records used for the estimate.
+   *   reason:             why applied / why not (human-readable).
+   */
+  band_calibration?: KronosBandCalibration;
+}
+
+export interface KronosBandCalibration {
+  applied: boolean;
+  method: 'conformal_scale' | 'none' | string;
+  factor: number;
+  n_samples: number;
+  n_train?: number;
+  holdout_n?: number;
+  holdout_cov_native?: number;
+  holdout_cov_calibrated?: number;
+  coverage_gain_pp?: number;
+  reason: string;
 }
 
 export interface KronosBiasCorrection {
@@ -362,6 +393,20 @@ export interface KronosForecast {
   updated_at: string;
   SP500_bias: KronosForecastItem;
   NASDAQ_bias: KronosForecastItem;
+  /**
+   * Cold-start marker for the bias corrector: present ONLY when the estimation
+   * window had no scored records (fresh deployment, or the pipeline stopped
+   * recording — e.g. the 2026-08 CI break). Tells the UI why no correction is
+   * active instead of leaving it silently off.
+   */
+  bias_correction_meta?: KronosBiasCorrectionMeta;
+}
+
+export interface KronosBiasCorrectionMeta {
+  applied: false;
+  reason: string;
+  track_record_age_days: number | null;
+  checked_at: string;
 }
 
 // ============================================================================

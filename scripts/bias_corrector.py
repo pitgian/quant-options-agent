@@ -112,6 +112,35 @@ def _load_recent_scored(history_path: str, window_days: int) -> list[dict]:
     return out
 
 
+def track_record_age_days(history_path: str = HISTORY_PATH) -> float | None:
+    """Age in days of the newest SCORED record, or None if there is none.
+
+    Used by run_kronos to surface WHY the correction is off: an empty
+    estimation window is normal at cold start, but a large age means the
+    pipeline stopped recording (e.g. the 2026-08 CI break) and the corrector
+    has silently gone to zero.
+    """
+    if not os.path.exists(history_path):
+        return None
+    try:
+        with open(history_path) as f:
+            history = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(history, list):
+        return None
+    newest = None
+    for r in history:
+        if not isinstance(r, dict) or r.get("realized_price") is None:
+            continue
+        issued = ft._parse_dt(r.get("issued_at"))
+        if issued is not None and (newest is None or issued > newest):
+            newest = issued
+    if newest is None:
+        return None
+    return (ft._now_utc() - newest).total_seconds() / 86400.0
+
+
 def _per_record_features(rec: dict) -> dict | None:
     """Extract, for one scored record, the features used by the estimators.
 
