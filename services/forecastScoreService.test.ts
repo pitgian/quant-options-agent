@@ -11,7 +11,10 @@ function snap(overrides: Partial<ForecastSnapshot>): ForecastSnapshot {
   seq += 1;
   return {
     v: 1,
-    issued_at: `2026-07-${String(10).padStart(2, '0')}T10:00:00Z`,
+    // recentDay(1) keeps the fixture inside the default 30-day scoring
+    // window no matter when the suite runs — a fixed July 2026 date turned
+    // these tests into time bombs that all failed from 2026-08-10 onward.
+    issued_at: recentDay(1),
     symbol: 'SPY',
     horizon: '1d',
     target_at: '2026-07-15',

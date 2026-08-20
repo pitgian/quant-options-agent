@@ -3,6 +3,7 @@ import { UseOptionsDataReturn } from '../hooks/useOptionsData';
 import { IconRefresh } from './Icons';
 import type {
   AdapterTrainingStats,
+  KronosBiasCorrectionMeta,
   KronosForecastItem,
   KronosResolutionForecast,
 } from '../types';
@@ -600,9 +601,11 @@ function LossChart({ stats }: { stats: AdapterTrainingStats }) {
 function LiveStatusTable({
   item,
   label,
+  meta,
 }: {
   item: KronosForecastItem | null | undefined;
   label: string;
+  meta?: KronosBiasCorrectionMeta;
 }) {
   if (!item) {
     return (
@@ -616,12 +619,22 @@ function LiveStatusTable({
     const res: KronosResolutionForecast | undefined = item[key];
     const st = res?.adapter_status;
     const bc = res?.bias_correction;
-    return { h, res, st, bc };
+    const bcal = res?.band_calibration;
+    return { h, res, st, bc, bcal };
   });
 
   return (
     <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
       <h3 className="text-sm font-bold text-slate-300">⚡ {label} — Applicazione Live (ultimo forecast)</h3>
+      {meta ? (
+        <p
+          className="text-[10px] leading-relaxed text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2"
+          title={`${meta.reason} — track record: ${meta.track_record_age_days ?? '?'}g (check ${meta.checked_at})`}
+        >
+          ⚠️ Bias corrector in cold start: {meta.reason}
+          {meta.track_record_age_days != null ? ` (ultimo record verificato: ${Math.round(meta.track_record_age_days)}g fa)` : ''}.
+        </p>
+      ) : null}
       <div className="overflow-x-auto rounded-lg border border-slate-800">
         <table className="min-w-full text-xs text-left text-gray-300">
           <thead className="bg-[#0d1117] text-gray-400 uppercase tracking-wider text-[9px] font-bold border-b border-slate-800">
@@ -632,11 +645,12 @@ function LiveStatusTable({
               <th className="px-4 py-2.5">|Residuo|</th>
               <th className="px-4 py-2.5">Covariati (skew / pcr / gex)</th>
               <th className="px-4 py-2.5" title="Correzione auto-appresa dal track record (ultimi 14g). Applicata solo se l'holdout mostra un guadagno chiaro di accuracy.">Bias Corr.</th>
+              <th className="px-4 py-2.5" title="Allargamento empirico della banda Monte Carlo p10-p90, appreso dal track record (la banda nativa sottocopre: 0-6% misurato vs 80% nominale). Applicato solo se l'holdout mostra un guadagno chiaro di copertura.">Band Cal.</th>
               <th className="px-4 py-2.5">Note</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
-            {rows.map(({ h, st, bc }) => (
+            {rows.map(({ h, st, bc, bcal }) => (
               <tr key={h} className="hover:bg-slate-900/40">
                 <td className="px-4 py-2.5 font-semibold text-slate-200">{h}</td>
                 <td className="px-4 py-2.5">
@@ -674,6 +688,25 @@ function LiveStatusTable({
                     <span className="text-[10px] text-gray-600">—</span>
                   )}
                 </td>
+                <td className="px-4 py-2.5">
+                  {bcal?.applied ? (
+                    <span
+                      className="px-2 py-0.5 text-[9px] font-bold rounded bg-violet-500/10 text-violet-300 border border-violet-500/20"
+                      title={`${bcal.reason} (metodo: ${bcal.method}, n=${bcal.n_samples}, holdout cov ${((bcal.holdout_cov_native ?? 0) * 100).toFixed(0)}%→${((bcal.holdout_cov_calibrated ?? 0) * 100).toFixed(0)}%)`}
+                    >
+                      ×{bcal.factor.toFixed(1)}
+                    </span>
+                  ) : bcal ? (
+                    <span
+                      className="px-2 py-0.5 text-[9px] font-bold rounded bg-slate-700/40 text-slate-500 border border-slate-700"
+                      title={bcal.reason}
+                    >
+                      OFF
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-gray-600">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5 text-[10px] text-gray-500">{st?.reason ?? '—'}</td>
               </tr>
             ))}
@@ -685,7 +718,10 @@ function LiveStatusTable({
         (ultimi 14 giorni di previsioni verificate). Il sistema impara il bias sistematico del modello e lo
         compensa sulle nuove previsioni. <span className="text-blue-300">Blue +X%</span> = correzione applicata
         (tilt su); <span className="text-slate-500">OFF</span> = disattivata dall'anti-peggioramento (l'holdout
-        non mostrava un guadagno chiaro). Passa il mouse sul badge per i dettagli.
+        non mostrava un guadagno chiaro).{' '}
+        <span className="text-gray-400 font-semibold">Band Cal.</span> = allargamento empirico della banda Monte
+        Carlo p10-p90 (la banda nativa sottocopre nettamente); <span className="text-violet-300">viola ×k</span> =
+        banda allargata di k volte, OFF = gate anti-peggioramento. Passa il mouse sui badge per i dettagli.
       </p>
     </div>
   );
@@ -746,8 +782,8 @@ export const AdapterStatusView: React.FC<AdapterStatusViewProps> = ({ sharedStat
             {stats && <HorizonTable stats={stats} />}
             {stats && <RunsHistoryChart stats={stats} />}
             {stats && <LossChart stats={stats} />}
-            <LiveStatusTable item={kronosForecast?.SP500_bias} label="S&P 500 (SPY)" />
-            <LiveStatusTable item={kronosForecast?.NASDAQ_bias} label="Nasdaq 100 (QQQ)" />
+            <LiveStatusTable item={kronosForecast?.SP500_bias} label="S&P 500 (SPY)" meta={kronosForecast?.bias_correction_meta} />
+            <LiveStatusTable item={kronosForecast?.NASDAQ_bias} label="Nasdaq 100 (QQQ)" meta={kronosForecast?.bias_correction_meta} />
 
             <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4">
               <h3 className="text-sm font-bold text-slate-300 mb-3">ℹ️ Come funziona</h3>
