@@ -1,0 +1,129 @@
+name: Data staleness alert
+
+# =============================================================================
+# Watchdog for the data pipeline. The fetch-options / kronos jobs run every 5
+# minutes during market hours, but their failures are easy to miss: GitHub only
+# emails on workflow failures if you opted in, and in 2026-08 a broken cached
+# venv silently degraded the pipeline for ~2 weeks before anyone noticed — the
+# SPA kept serving stale JSON and nobody was alerted.
+#
+# This check runs hourly, reads the freshness of the PUBLISHED data (the
+# `updated_at` / `generated` timestamps inside the JSON on the data branch —
+# NOT git commit dates, which are meaningless there because the branch is
+# force-amended on every push), and manages a single `data-stale` issue:
+#
+#   stale  → open the issue (if not already open) with age + last timestamp
+#   fresh  → close any open `data-stale` issue with a recovery comment
+#
+# Threshold is time-aware: during US regular session the data should never be
+# older than ~1h; outside market hours the pipeline throttles to every 3-6h
+# (and pauses on weekends), so the allowance is wider.
+# =============================================================================
+
+on:
+  schedule:
+    # Hourly at :15 — offset from the busy :00 slots of the main pipeline.
+    - cron: '15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: data-staleness-alert
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout data branch (shallow)
+        uses: actions/checkout@v5
+        with:
+          ref: data
+          fetch-depth: 1
+
+      - name: Check published-data freshness
+        id: freshness
+        run: |
+          python3 - <<'EOF'
+          import json, datetime, os, sys
+
+          def read_ts(path, field):
+              try:
+                  with open(path) as f:
+                      return json.load(f).get(field)
+              except (OSError, json.JSONDecodeError):
+                  return None
+
+          # Primary: the Kronos forecast's own generation timestamp; fallback:
+          # the options snapshot's `generated` field. Both are written by the
+          # pipeline at generation time, so they are immune to the branch's
+          # amend-based commit dates.
+          ts = read_ts('data/kronos_forecast.json', 'updated_at') \
+              or read_ts('data/options_data.json', 'generated')
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          if not ts:
+              # No published data at all → maximally stale.
+              age_min = 10**6
+              last = 'none'
+          else:
+              dt = datetime.datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+              if dt.tzinfo is None:
+                  dt = dt.replace(tzinfo=datetime.timezone.utc)
+              age_min = int((now - dt).total_seconds() / 60)
+              last = ts
+
+          # Time-aware threshold. US regular session ≈ 09:30–16:00 ET
+          # (13:30–20:00 UTC for most of the year); pad by ~30 min on both
+          # sides so pre-market runs and the closing push don't trip it.
+          wd, h = now.weekday(), now.hour
+          market_hours = wd < 5 and 13 <= h < 21
+          threshold_min = 60 if market_hours else 13 * 60
+
+          print(f"Newest published data: {last} (age {age_min} min, "
+                f"threshold {threshold_min} min)")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f"age_min={age_min}\n")
+              out.write(f"threshold_min={threshold_min}\n")
+              out.write(f"stale={'true' if age_min > threshold_min else 'false'}\n")
+              out.write(f"last_ts={last}\n")
+          EOF
+
+      - name: Open or close the data-stale issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Idempotent label (ignore the error if it already exists).
+          gh label create data-stale --color d73a4a --description "Data pipeline output is stale" \
+            --repo "$REPO" 2>/dev/null || true
+          OPEN=$(gh issue list --repo "$REPO" --label data-stale --state open --json number --jq 'length')
+          if [ "${{ steps.freshness.outputs.stale }}" = "true" ]; then
+            BODY=":rotating_light: I dati pubblicati sul branch \`data\` sono stantii.
+
+          - Ultimo timestamp pubblicato: \`${{ steps.freshness.outputs.last_ts }}\`
+          - Età: ${{ steps.freshness.outputs.age_min }} min (soglia ${{ steps.freshness.outputs.threshold_min }} min)
+          - Check eseguito: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          Controllare i run del workflow *Fetch Options Data* (strumenti: Actions → Fetch Options Data)."
+            if [ "$OPEN" = "0" ]; then
+              gh issue create --repo "$REPO" --title "Data pipeline stale: nessun aggiornamento da ${{ steps.freshness.outputs.age_min }} min" \
+                --label data-stale --body "$BODY"
+              echo "Opened data-stale issue."
+            else
+              echo "data-stale issue already open — leaving it."
+            fi
+          else
+            if [ "$OPEN" != "0" ]; then
+              for n in $(gh issue list --repo "$REPO" --label data-stale --state open --json number --jq '.[].number'); do
+                gh issue close "$n" --repo "$REPO" \
+                  --comment ":white_check_mark: Dati di nuovo freschi (ultimo: ${{ steps.freshness.outputs.last_ts }}). Chiusura automatica."
+              done
+              echo "Closed open data-stale issue(s)."
+            else
+              echo "Data is fresh and no alert is open."
+            fi
+          fi
