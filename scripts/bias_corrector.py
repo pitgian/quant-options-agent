@@ -61,6 +61,11 @@ BIAS_WINDOW_DAYS = 14
 # Below this, the estimate is too noisy → correction is 0 (do no harm).
 MIN_SAMPLES_ESTIMATE = 20
 
+# Predicted moves below this magnitude (in %) are FLAT and excluded from the
+# herding-gate direction count (same convention as the tracker's
+# FLAT_MOVE_THRESHOLD_PCT).
+FLAT_EPS_PCT = 0.10
+
 # Anti-worsening gate: the correction must improve directional accuracy on the
 # holdout by at least this many percentage points, else it is zeroed. 2pp is
 # above the noise floor of a ~30-sample holdout (Wilson half-width ~18pp at
@@ -73,9 +78,23 @@ MIN_ACC_GAIN_PP = 2.0
 # want to know "would the past bias have helped the MORE RECENT forecasts?".
 HOLDOUT_FRACTION = 0.30
 
-# Cap on the absolute correction (%), as a safety net. A correction beyond this
-# would signal a degenerate estimate (or a model break) and is clamped.
-MAX_CORRECTION_PCT = 10.0
+# Caps on the absolute correction (%), per horizon. A correction is a *tilt*
+# of the forecast, so it must stay within what the horizon can plausibly
+# move: typical |realized| moves from the track record are ~0.7-1.1% on 4h
+# and ~1-2% on 1d (the "1d" horizon is 5 daily candles ≈ one week). A shift
+# beyond that is not bias correction — it is the estimator regime-fitting a
+# degenerate window. (2026-08 incident: a +6.25% offset on SPY 1d turned a
+# sane −0.7% forecast into a published +5.6%, with band factor ×4.8 on top.)
+MAX_CORRECTION_PCT_BY_HORIZON = {"4h": 1.0, "1d": 2.0}
+# Fallback for unknown horizons.
+MAX_CORRECTION_PCT = 1.0
+
+# Herding gate: if nearly every forecast in the window pointed the same way,
+# the window is regime-degenerate — the median bias measured on it mostly
+# reflects the regime, not a model offset, and a constant correction would
+# just flip the herd (2026-08 death spiral: bearish herd → +6% offset →
+# bullish herd → −X% offset → …). Require a minimally mixed window.
+HERD_DIRECTION_MAX_SHARE = 0.80  # >80% of non-FLAT predictions in one direction → skip
 
 # MA30 window for the context-deviation feature (scarto_context). Mirrors the
 # analysis that found the -0.76 correlation for the 1d horizon.
@@ -297,6 +316,31 @@ def estimate_bias(history_path: str = HISTORY_PATH,
         # Raw directional accuracy on the full window (for context)
         raw_acc_full = _directional_accuracy(recs)
 
+        # Herding gate — a window where (almost) every forecast pointed the
+        # same way is regime-degenerate: the median bias measured on it mostly
+        # reflects the regime, not a model offset, and a constant correction
+        # would just flip the herd (see HERD_DIRECTION_MAX_SHARE). Direction
+        # comes from pred_move (near-zero moves are FLAT and excluded).
+        dirs = [
+            1 if r["feat"]["pred_move"] > 0 else -1
+            for r in recs
+            if abs(r["feat"]["pred_move"]) > FLAT_EPS_PCT
+        ]
+        if dirs:
+            up_share = sum(1 for d in dirs if d == 1) / len(dirs)
+            dominant_share = max(up_share, 1 - up_share)
+            if dominant_share > HERD_DIRECTION_MAX_SHARE:
+                result[key] = _none_descriptor(
+                    n,
+                    reason=(
+                        f"finestra degenerata (herding: "
+                        f"{round(dominant_share * 100)}% delle previsioni "
+                        f"nella stessa direzione)"
+                    ),
+                )
+                continue
+
+
         # Build the estimator + a per-record correction function, by horizon.
         # correction_fn(record) → corrected pred_move (in %).
         if hor == "1d":
@@ -305,7 +349,7 @@ def estimate_bias(history_path: str = HISTORY_PATH,
             if med_bias is None:
                 result[key] = _none_descriptor(n, reason="mediana non calcolabile")
                 continue
-            correction_pct = _clamp(-med_bias)
+            correction_pct = _clamp(-med_bias, hor)
 
             def correction_fn(rec, _c=correction_pct):
                 return rec["feat"]["pred_move"] + _c
@@ -324,7 +368,7 @@ def estimate_bias(history_path: str = HISTORY_PATH,
             if med_bias is None:
                 result[key] = _none_descriptor(n, reason="mediana non calcolabile")
                 continue
-            correction_pct = _clamp(-med_bias)
+            correction_pct = _clamp(-med_bias, hor)
 
             def correction_fn(rec, _c=correction_pct):
                 return rec["feat"]["pred_move"] + _c
@@ -386,8 +430,9 @@ def _none_descriptor(n: int, reason: str) -> dict:
     }
 
 
-def _clamp(x: float, lo: float = -MAX_CORRECTION_PCT, hi: float = MAX_CORRECTION_PCT) -> float:
-    return max(lo, min(hi, x))
+def _clamp(x: float, horizon: str = "4h") -> float:
+    cap = MAX_CORRECTION_PCT_BY_HORIZON.get(horizon, MAX_CORRECTION_PCT)
+    return max(-cap, min(cap, x))
 
 
 # ---------------------------------------------------------------------------

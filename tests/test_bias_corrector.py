@@ -87,9 +87,38 @@ try:
     model = bc.estimate_bias(path, window_days=14)
     m = model.get("SPY|1d")
     check("SPY|1d present in model", m is not None, f"keys={list(model)}")
-    check("correction applied", m and m["applied"], f"model={m}")
-    check("correction ≈ +5% (recovers -5% bias)",
-          m and abs(m["correction_pct"] - 5.0) < 0.5,
+    # 2026-08: a 100%-one-direction window is exactly the herding pathology —
+    # the old code recovered a +5% offset from it and shipped it; the gate
+    # must refuse instead (see HERD_DIRECTION_MAX_SHARE).
+    check("herded window → correction REFUSED",
+          m and not m["applied"], f"model={m}")
+    check("refusal reason mentions herding",
+          m and "herding" in (m.get("reason") or ""),
+          f"reason={m.get('reason') if m else None}")
+finally:
+    os.unlink(path)
+
+
+# --- Test 1b: mixed window recovers the offset, clamped per horizon ---------
+print("\n=== Test 1b: mixed-direction window → offset recovered but CLAMPED ===")
+# 70% of predictions point DOWN (−1.2%), 30% UP (+1.0%); reality is always
+# +1.5%. Median bias ≈ −2.7% → correction ≈ +2.7%, but the 1d cap is 2.0%.
+# The clamp must bite: a shift larger than the horizon's plausible move is
+# never shipped.
+recs = []
+for i in range(60):
+    anchor = 100.0 + i * 0.01
+    pred = anchor * (0.988 if i % 10 < 7 else 1.010)
+    real = anchor * 1.015
+    recs.append(make_record("SPY", "1d", days_ago=13 - (i % 14),
+                            anchor=anchor, pred_target=pred, realized=real))
+path = write_history(recs)
+try:
+    model = bc.estimate_bias(path, window_days=14)
+    m = model.get("SPY|1d")
+    check("mixed window: correction applied", m and m["applied"], f"model={m}")
+    check("correction clamped to the 1d cap",
+          m and abs(m["correction_pct"] - bc.MAX_CORRECTION_PCT_BY_HORIZON["1d"]) < 1e-9,
           f"got {m['correction_pct'] if m else None}")
     check("holdout shows improvement",
           m and m["holdout_delta_pp"] > bc.MIN_ACC_GAIN_PP,

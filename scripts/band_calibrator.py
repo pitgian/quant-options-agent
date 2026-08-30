@@ -83,7 +83,11 @@ MIN_COV_GAIN_PP = 5.0
 
 # Widen-only clamp on the scale factor. A factor beyond this signals a
 # degenerate estimate (or a model break) — clamp rather than extrapolate.
-MAX_BAND_FACTOR = 6.0
+# NOTE (2026-08 incident): with the clamp at 6.0 the published SPY 1d band was
+# widened ×4.8, turning a broken forecast into a ±7% "80% band" that covered
+# ~100% by construction — honest-looking garbage. Beyond ~2.5× the model's
+# native dispersion is the wrong uncertainty model; surface it, don't inflate it.
+MAX_BAND_FACTOR = 2.5
 
 # Holdout fraction (most recent records), time-ordered — same convention as
 # bias_corrector.HOLDOUT_FRACTION.

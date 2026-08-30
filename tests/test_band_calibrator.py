@@ -75,12 +75,44 @@ def write_history(records):
     return f.name
 
 
-# --- Test 1: recover a known widening factor -------------------------------
-print("\n=== Test 1: estimate recovers a known widening factor (~×3) ===")
-# Band half-width = 1% of price; realized always lands 3 half-widths ABOVE the
-# center (the documented UP-side under-coverage). The 80th percentile of |z|
-# is exactly 3.0 → factor 3.0, and the holdout must show native coverage 0%
-# vs calibrated 100%.
+# --- Test 1: widening factor is recovered but CLAMPED at MAX_BAND_FACTOR ---
+print("\n=== Test 1: estimate recovers ×2.72 but clamps to MAX_BAND_FACTOR ===")
+# Band half-width = 1% of price; realized lands uniformly between 2.2 and 2.8
+# half-widths ABOVE the center. The q80 of |z| ≈ 2.72 — above the 2.5 cap —
+# so the factor must clamp to 2.5. Most holdout realizations (those within
+# 2.5 half-widths) still land inside the widened band → gain ≥ MIN_COV_GAIN_PP
+# → applied. (2026-08 incident: the cap was 6.0 and the published SPY 1d band
+# went ×4.8, covering ~100% by construction — honest-looking garbage.)
+recs = []
+for i in range(60):
+    center = 100.0 + i * 0.01
+    half = center * 0.01
+    z = 2.2 + 0.6 * ((i % 7) / 6.0)
+    realized = center + z * half
+    recs.append(make_record("SPY", "4h", days_ago=13 - (i % 14),
+                            center=center, half=half, realized=realized))
+path = write_history(recs)
+try:
+    model = bcal.estimate_band_calibration(path, window_days=14)
+    m = model.get("SPY|4h")
+    check("SPY|4h present in model", m is not None, f"keys={list(model)}")
+    check("calibration applied", m and m["applied"], f"model={m}")
+    check("factor clamped to MAX_BAND_FACTOR",
+          m and abs(m["factor"] - bcal.MAX_BAND_FACTOR) < 1e-9,
+          f"got {m['factor'] if m else None} (cap={bcal.MAX_BAND_FACTOR})")
+    check("holdout coverage improves",
+          m and m["coverage_gain_pp"] >= bcal.MIN_COV_GAIN_PP,
+          f"gain={m['coverage_gain_pp'] if m else None}pp")
+finally:
+    os.unlink(path)
+
+
+# --- Test 1b: needed widening beyond the cap with zero residual gain → REFUSED ---
+print("\n=== Test 1b: |z|=3.0 costante → widening inutile, NON applicato ===")
+# Every realization sits exactly 3 half-widths out: even at the 2.5 cap the
+# widened band still covers 0% — no honest partial fix exists, so the right
+# move is refusing and surfacing the reason, not shipping a fake-calibrated
+# band.
 recs = []
 for i in range(60):
     center = 100.0 + i * 0.01
@@ -92,14 +124,8 @@ path = write_history(recs)
 try:
     model = bcal.estimate_band_calibration(path, window_days=14)
     m = model.get("SPY|4h")
-    check("SPY|4h present in model", m is not None, f"keys={list(model)}")
-    check("calibration applied", m and m["applied"], f"model={m}")
-    check("factor ≈ 3.0",
-          m and abs(m["factor"] - 3.0) < 0.05,
-          f"got {m['factor'] if m else None}")
-    check("holdout coverage improves",
-          m and m["coverage_gain_pp"] >= bcal.MIN_COV_GAIN_PP,
-          f"gain={m['coverage_gain_pp'] if m else None}pp")
+    check("calibration NOT applied (no coverage gain at the cap)",
+          m and not m["applied"], f"model={m}")
     check("holdout native coverage ≈ 0%",
           m and m["holdout_cov_native"] < 0.05,
           f"native={m['holdout_cov_native'] if m else None}")
