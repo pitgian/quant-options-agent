@@ -934,6 +934,15 @@ def main():
         _flush_baseline_cache(baseline_cache, baseline_cache_path)
         _log(f"💾 Baseline cache saved: {len(baseline_cache)} entries.")
 
+    # Newest snapshot timestamp consumed by this run. The CI guard in
+    # fetch-options-data.yml ("train_check") uses it as the monotonic
+    # "is there NEW data?" signal: record COUNTS are not monotonic because
+    # options_history.json keeps a 14-day sliding retention window (old
+    # records are dropped as new ones arrive), so a count-based high-water
+    # mark froze retraining once the file passed its peak size.
+    _seen_ts = [r.get("timestamp") for r in history_data if r.get("timestamp")]
+    last_history_ts: str | None = max(_seen_ts) if _seen_ts else None
+
     real_total = len(all_samples)
     _log(f"\nTotal REAL samples (all symbols × horizons): {real_total}")
     _log(f"  history records seen: {symbols_seen}")
@@ -949,6 +958,7 @@ def main():
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "symbols": args.symbols,
         "history_records": symbols_seen,
+        "last_history_ts": last_history_ts,
         "real_samples_total": real_total,
         "per_horizon_real_samples": per_h_counts,
         "min_real_samples_required": MIN_REAL_SAMPLES,
@@ -964,12 +974,21 @@ def main():
                   f"Ground-truth accumulation continues via options_history.json.")
         stats["reason"] = reason
         _log("\n⏸️  GUARD: " + reason)
+        # A blocked run did NOT train: keep the previous trained_at (shown by
+        # the UI as "ultimo addestramento") instead of bumping it to now.
+        try:
+            with open(args.stats_path or STATS_OUTPUT_PATH, "r") as f:
+                _prev_trained_at = json.load(f).get("trained_at")
+            if _prev_trained_at:
+                stats["trained_at"] = _prev_trained_at
+        except (FileNotFoundError, json.JSONDecodeError, AttributeError):
+            pass
         # Even when the guard blocks training, record this run in the
         # longitudinal history so the UI can show real-sample accumulation
         # over time (the curve users compare across days).
         prev_runs = _load_previous_runs(args.stats_path or STATS_OUTPUT_PATH)
         prev_runs.append({
-            "ts": stats["trained_at"],
+            "ts": datetime.now(timezone.utc).isoformat(),
             "trained": False,
             "real_samples": real_total,
             "per_horizon_real_samples": per_h_counts,

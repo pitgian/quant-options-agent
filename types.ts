@@ -528,6 +528,8 @@ export interface AdapterTrainingStats {
   trained_at: string;
   symbols: string[];
   history_records?: Record<string, number>;
+  /** Newest options_history snapshot ts consumed by the trainer (monotonic CI-guard signal). */
+  last_history_ts?: string | null;
   real_samples_total: number;
   per_horizon_real_samples?: Record<string, number>;
   min_real_samples_required: number;
