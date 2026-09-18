@@ -375,6 +375,22 @@ jobs:
           TZ: America/New_York
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
 
+      - name: Skill report + alpha lab (self-improvement evidence)
+        if: steps.freshness.outputs.skip != 'true'
+        timeout-minutes: 4
+        # Both are fast (stdlib/numpy over the deduped track record, no torch):
+        #  - skill_evaluator measures TRUE skill vs the naive no-move baseline
+        #    (deduped per target — the duplicated-snapshot inflation is gone)
+        #    and publishes ALPHA / NO_ALPHA / ANTI verdicts per (symbol,horizon).
+        #  - alpha_lab replays history walk-forward, crowns a champion
+        #    correction per group and run_kronos.py applied it above; the
+        #    timeline it appends makes progress toward alpha visible over weeks.
+        # `|| true`: reporting layers must never break the forecast job.
+        run: |
+          source .venv/bin/activate
+          python scripts/skill_evaluator.py || true
+          python scripts/alpha_lab.py || true
+
       - name: Push to repository data branch
         if: steps.freshness.outputs.skip != 'true'
         # Safety net: this step once hung for >1h on a git push contention (the
@@ -387,6 +403,8 @@ jobs:
           cp data/adapter_training_stats.json /tmp/generated_data/ || true
           cp data/adapter_baselines_cache.json /tmp/generated_data/ || true
           cp data/kronos_forecast_history.json /tmp/generated_data/ || true
+          cp data/skill_report.json /tmp/generated_data/ || true
+          cp data/alpha_lab.json /tmp/generated_data/ || true
           cp scripts/model/covariate_adapter.pth /tmp/generated_data/ || true
           # Remove the locally-restored copies of every file this job will
           # re-place from /tmp/generated_data, PLUS options_data.json /
@@ -401,7 +419,7 @@ jobs:
           # a concurrent run pushed new commits to `data` in the meantime —
           # because `rm` removes the working-tree copy but NOT the staged/index
           # entry. `--force` discards the local tracked modifications cleanly.
-          rm -f data/kronos_forecast.json data/adapter_training_stats.json data/adapter_baselines_cache.json data/kronos_forecast_history.json scripts/model/covariate_adapter.pth data/options_data.json data/options_history.json
+          rm -f data/kronos_forecast.json data/adapter_training_stats.json data/adapter_baselines_cache.json data/kronos_forecast_history.json data/skill_report.json data/alpha_lab.json scripts/model/covariate_adapter.pth data/options_data.json data/options_history.json
           git fetch origin data
           git checkout --force -B data origin/data --
           mkdir -p data scripts/model
@@ -409,6 +427,8 @@ jobs:
           cp /tmp/generated_data/adapter_training_stats.json data/ || true
           cp /tmp/generated_data/adapter_baselines_cache.json data/ || true
           cp /tmp/generated_data/kronos_forecast_history.json data/ || true
+          cp /tmp/generated_data/skill_report.json data/ || true
+          cp /tmp/generated_data/alpha_lab.json data/ || true
           cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -418,6 +438,8 @@ jobs:
           git add data/kronos_forecast.json 2>/dev/null || true
           git add data/adapter_training_stats.json 2>/dev/null || true
           git add data/adapter_baselines_cache.json 2>/dev/null || true
+          git add data/skill_report.json 2>/dev/null || true
+          git add data/alpha_lab.json 2>/dev/null || true
           git add data/kronos_forecast_history.json 2>/dev/null || true
           git add scripts/model/covariate_adapter.pth 2>/dev/null || true
           if [ ! -f vercel.json ]; then

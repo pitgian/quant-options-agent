@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import math
 import datetime
 import numpy as np
 import pandas as pd
@@ -111,6 +112,60 @@ def get_futures_to_etf_ratio(futures_symbol: str, etf_symbol: str, default_ratio
     except Exception as e:
         print(f"Error computing dynamic futures ratio: {e}")
     return default_ratio
+
+
+def _compute_context_features(context_df) -> dict:
+    """Compact, horizon-agnostic technical context at decision time.
+
+    Pure pandas/math (no network). These values ride along with every forecast
+    block into the verification history (tracker schema v3) and become the
+    feature set of alpha_lab's 'feats' champion — the mechanism by which the
+    system discovers, over weeks of track record, which observable conditions
+    actually predict realized moves.
+    """
+    closes = context_df['close'].astype(float)
+    n = len(closes)
+    if n < 21:
+        return {}
+    last = float(closes.iloc[-1])
+    feats = {}
+    try:
+        ma20 = float(closes.iloc[-20:].mean())
+        if ma20 > 0:
+            feats["ma_dev_20"] = round((last / ma20 - 1.0) * 100.0, 4)
+        if n >= 6:
+            feats["momentum_5"] = round((last / float(closes.iloc[-6]) - 1.0) * 100.0, 4)
+        if n >= 11:
+            feats["momentum_10"] = round((last / float(closes.iloc[-11]) - 1.0) * 100.0, 4)
+        # Wilder RSI(14).
+        deltas = closes.diff().iloc[-15:].dropna()
+        if len(deltas) >= 14:
+            gains = deltas.clip(lower=0.0)
+            losses = (-deltas).clip(lower=0.0)
+            avg_gain = float(gains.iloc[:14].mean())
+            avg_loss = float(losses.iloc[:14].mean())
+            if avg_loss <= 0:
+                feats["rsi_14"] = 100.0 if avg_gain > 0 else 50.0
+            else:
+                rs = avg_gain / avg_loss
+                feats["rsi_14"] = round(100.0 - 100.0 / (1.0 + rs), 2)
+        # Realized volatility: std of the last 20 per-bar returns, in %.
+        rets = closes.pct_change().iloc[-20:].dropna()
+        if len(rets) >= 10:
+            feats["rv_20"] = round(float(np.std(rets) * 100.0), 4)
+    except Exception:
+        pass
+    # Options covariates at the last bar (already merged onto the frame).
+    for col, key in (("volatility_skew_25d", "skew"),
+                     ("put_call_oi_ratio", "pcr"),
+                     ("total_net_gex", "gex")):
+        try:
+            v = context_df[col].iloc[-1]
+            if v is not None and not (isinstance(v, float) and math.isnan(v)):
+                feats[key] = round(float(v), 6)
+        except (KeyError, IndexError, TypeError, ValueError):
+            pass
+    return feats
 
 
 def generate_future_trading_timestamps(last_ts, interval, pred_len):
@@ -295,6 +350,20 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
     # the central trajectory.
     expected_high = float(p90["high"].max())
     expected_low = float(p10["low"].min())
+
+    # Raw (pre-correction) predicted move of the final p50 candle, in % of the
+    # anchor. Stored per forecast block so the verification history records
+    # WHAT THE MODEL SAID before the self-improving layers (bias corrector,
+    # alpha lab, band calibration) touch it — that lets skill_evaluator /
+    # alpha_lab attribute error to individual layers over time.
+    raw_pred_move_pct = ((float(p50['close'][-1]) / last_price) - 1.0) * 100.0
+
+    # Context features at decision time. Persisted with every snapshot (from
+    # tracker schema v3) and consumed by alpha_lab's 'feats' champion: this is
+    # how the system accumulates EXPLAINABLE inputs over time instead of only
+    # remembering 'Kronos said +0.4%, reality did -0.2%'.
+    context_features = _compute_context_features(context_df)
+
     predicted_volatility_pct = ((expected_high - expected_low) / last_price) * 100
     # Tight central range (p50 trajectory) — the "most likely" excursion band.
     expected_high_p50 = float(p50["high"].max())
@@ -335,6 +404,8 @@ def run_forecast_for_resolution(fetch_ticker, ratio, interval, period, context_l
 
     return {
         "last_price": round(last_price, 2),
+        "raw_pred_move_pct": round(raw_pred_move_pct, 4),
+        "context_features": context_features,
         "expected_high": round(expected_high, 2),
         "expected_low": round(expected_low, 2),
         "expected_high_p50": round(expected_high_p50, 2),
@@ -516,6 +587,29 @@ def main():
             forecast_data = apply_correction(forecast_data, bias_model)
         except Exception as bias_err:
             print(f"Warning: bias correction skipped ({bias_err})", file=sys.stderr)
+
+        # Alpha lab (self-improving, layer 1.5): the walk-forward model arena.
+        # Every run replays the whole verification track record target-by-target
+        # and picks a per-(symbol,horizon) champion correction — recal/feats
+        # when a learned model beats the naive baseline significantly, a heavy
+        # dampening when the pipeline is anti-predictive, passthrough when the
+        # issued forecast is already skilled. Runs AFTER bias correction and
+        # BEFORE band calibration: its training rows are 'as-issued' forecasts,
+        # so it corrects exactly the residual the user is exposed to. Bands are
+        # shifted coherently; band_calibrator then re-widens them around the
+        # (possibly moved) p50 trajectory.
+        try:
+            from alpha_lab import apply_alpha_lab
+            print("\n--- Alpha lab (walk-forward champion) ---")
+            forecast_data, lab_summary = apply_alpha_lab(forecast_data)
+            for gk, gm in (lab_summary.get("groups") or {}).items():
+                print(f"  {gk:9s} mode={gm['mode']:11s} "
+                      f"issued={gm['issued_move_pct']:+.2f}% "
+                      f"applied={gm.get('applied_move_pct', float('nan')):+.2f}%")
+            if not lab_summary.get("applied"):
+                print("  passthrough/observe — no champion correction active")
+        except Exception as lab_err:
+            print(f"Warning: alpha lab skipped ({lab_err})", file=sys.stderr)
 
         # Band calibration (self-improving, layer 2): the Monte Carlo p10-p90
         # band systematically under-covers (0-6% measured vs 80% nominal — see

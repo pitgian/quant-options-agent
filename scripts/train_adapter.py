@@ -521,6 +521,23 @@ def build_training_samples(
             "pred_len": s["pred_len"],
             "horizon": s["horizon"],
             "symbol": symbol,
+            # Timestamp of the source snapshot: enables the TIME-ORDERED
+            # train/val split in train() (random splits leak: consecutive
+            # snapshots of the same target end up on both sides, so val
+            # metrics look great and generalize to nothing). The last context
+            # bar is monotonic in the snapshot time — one bar before it —
+            # which is exactly what an ordering split needs.
+            "ts": str(pd.Timestamp(ctx.index[-1])),
+            # Price-space anchors for the anti-naive gate: raw last context
+            # close (the naive 'no move' reference) and the realized future
+            # close (what actually happened), both in REAL price units.
+            "anchor_close": float(ctx['close'].iloc[-1]),
+            "future_close": float(fut['close'].iloc[-1]),
+            # Context normalization stats of the CLOSE channel (idx 3 in the
+            # [open, high, low, close, volume, amount] block) — needed to
+            # denormalize baseline/adapter outputs back into price space.
+            "m_close": float(m[3]),
+            "sd_close": float(sd[3]),
         })
     _log(f"  [{hname}] {len(per_h)} aligned, {len(samples)} built (pred_len={pred_len})")
 
@@ -539,16 +556,15 @@ def train(
     device: str,
     verbose: bool = True,
 ) -> Tuple[ResidualCovariateAdapter, Dict]:
-    # Train/val split (stratified-ish by shuffling deterministically)
-    rng = np.random.default_rng(42)
-    idx = np.arange(len(samples))
-    rng.shuffle(idx)
+    # Train/val split: TIME-ORDERED (last 20% by snapshot time = val).
+    # The previous random shuffle leaked: ~38 snapshots of the same target
+    # were distributed across both sides, so val metrics measured memorized
+    # targets, not generalization. With the ordered split, val is strictly
+    # 'the future' — the same protocol as skill_evaluator / alpha_lab.
+    samples = sorted(samples, key=lambda s: s.get("ts") or "")
     val_n = max(1, len(samples) // 5)
-    val_idx = set(idx[:val_n].tolist())
-    train_idx = [i for i in idx if i not in val_idx]
-
-    train_s = [samples[i] for i in train_idx]
-    val_s = [samples[i] for i in val_idx]
+    val_s = samples[-val_n:]
+    train_s = samples[:-val_n]
 
     # Covariate standardization stats from the TRAIN split only
     cov = np.array([[s["skew"], s["pcr"], s["gex"]] for s in train_s], dtype=np.float32)
@@ -684,7 +700,16 @@ def train(
         (overall_baseline_mse - overall_adapter_mse) / (overall_baseline_mse + 1e-8)
     ) * 100.0
 
-    # Per-horizon validation MSE (baseline vs adapter)
+    # Per-horizon validation MSE (baseline vs adapter) + ANTI-NAIVE GATE.
+    # MSE in normalized residual space only says 'did the adapter move the
+    # prediction toward the realized bar' — it does NOT say whether the whole
+    # pipeline beats doing nothing. The price-space block below answers that:
+    # mae_naive (|realized - anchor|), mae_kronos (|realized - Kronos|) and
+    # mae_adapter (|realized - adapter-corrected|), all as % of anchor. A
+    # horizon is validated ONLY if the adapter beats Kronos AND the whole
+    # chain beats the naive no-move forecast — otherwise applying it live
+    # destroys information (this is exactly how the 2026-08 anti-skill
+    # forecasts shipped unnoticed for weeks).
     horizon_metrics: Dict[str, Dict] = {}
     for hname, _, pred_len in HORIZONS:
         hv = [s for s in val_s if s["pred_len"] == pred_len]
@@ -698,21 +723,65 @@ def train(
         improvement_pct = (
             (baseline_mse - adapter_mse) / (baseline_mse + 1e-8)
         ) * 100.0
+
+        # Price-space skill on the FINAL predicted step (the one scored live).
+        # Errors accumulated directly as % of each sample's own anchor.
+        n_price = 0
+        sum_naive = sum_kronos = sum_adapter = 0.0
+        for j, smp in enumerate(hv):
+            plen = int(pl[j].item())
+            if plen <= 0:
+                continue
+            anchor = smp["anchor_close"]
+            realized = smp["future_close"]
+            if not anchor:
+                continue
+            kronos_close = smp["m_close"] + smp["sd_close"] * float(baselines[j, plen - 1, 3])
+            adapter_close = kronos_close + smp["sd_close"] * float(out[j, plen - 1, 3])
+            sum_naive += abs(realized - anchor) / abs(anchor) * 100.0
+            sum_kronos += abs(realized - kronos_close) / abs(anchor) * 100.0
+            sum_adapter += abs(realized - adapter_close) / abs(anchor) * 100.0
+            n_price += 1
+        if n_price:
+            mae_naive_pct = sum_naive / n_price
+            mae_kronos_pct = sum_kronos / n_price
+            mae_adapter_pct = sum_adapter / n_price
+            skill_adapter_vs_naive = (mae_naive_pct - mae_adapter_pct) / mae_naive_pct * 100.0 if mae_naive_pct > 0 else 0.0
+            skill_adapter_vs_kronos = (mae_kronos_pct - mae_adapter_pct) / mae_kronos_pct * 100.0 if mae_kronos_pct > 0 else 0.0
+        else:
+            mae_naive_pct = mae_kronos_pct = mae_adapter_pct = None
+            skill_adapter_vs_naive = skill_adapter_vs_kronos = None
+
         horizon_metrics[hname] = {
             "pred_len": pred_len,
             "val_samples": len(hv),
             "val_mse": adapter_mse,
             "baseline_val_mse": baseline_mse,
             "improvement_pct": improvement_pct,
+            "price_space": {
+                "n": n_price,
+                "mae_naive_pct": round(mae_naive_pct, 4) if mae_naive_pct is not None else None,
+                "mae_kronos_pct": round(mae_kronos_pct, 4) if mae_kronos_pct is not None else None,
+                "mae_adapter_pct": round(mae_adapter_pct, 4) if mae_adapter_pct is not None else None,
+                "skill_adapter_vs_naive_pct": round(skill_adapter_vs_naive, 2) if skill_adapter_vs_naive is not None else None,
+                "skill_adapter_vs_kronos_pct": round(skill_adapter_vs_kronos, 2) if skill_adapter_vs_kronos is not None else None,
+            },
         }
 
     # A horizon is "validated" (safe to apply live) only if it had enough val
-    # samples AND the adapter actually helps there (improvement_pct > 0).
-    # Horizons that fail either check are excluded from validated_pred_lens,
+    # samples, the adapter actually helps there (improvement_pct > 0) AND the
+    # full chain beats the naive no-move forecast in price space (anti-naive
+    # gate). Horizons that fail any check are excluded from validated_pred_lens,
     # and run_kronos.py will REFUSE to apply the adapter on them — applying
     # an un-validated or harmful correction silently corrupts forecasts.
+    def _passes_anti_naive(m: Dict) -> bool:
+        ps = m.get("price_space") or {}
+        skill = ps.get("skill_adapter_vs_naive_pct")
+        return skill is not None and skill > 0
+
     validated_pred_lens = sorted({
-        m["pred_len"] for m in horizon_metrics.values() if m["improvement_pct"] > 0
+        m["pred_len"] for m in horizon_metrics.values()
+        if m["improvement_pct"] > 0 and _passes_anti_naive(m)
     })
 
     final_train_loss = loss_history[-1]["train_loss"] if loss_history else None

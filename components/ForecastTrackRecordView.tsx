@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { UseOptionsDataReturn } from '../hooks/useOptionsData';
 import { IconRefresh } from './Icons';
 import type { ForecastSnapshot } from '../types';
+import { AlphaLabView } from './AlphaLabView';
 import {
   fetchTrackRecord,
   computeMetrics,
@@ -476,6 +477,7 @@ export const ForecastTrackRecordView: React.FC<ForecastTrackRecordViewProps> = (
             )}
 
             <SummaryCards metrics={metrics} />
+            <AlphaLabView />
             <RollingChart metrics={metrics} />
             <GroupTable metrics={metrics} />
 

@@ -45,7 +45,11 @@ TRACKER_SAFETY_CAP = 2000
 # v2: added band_p10 / band_p90 / band_hit — Monte Carlo percentile band
 #     coverage validation (forecast_tracker validates how often the realized
 #     price lands inside the 80% p10-p90 band).
-TRACKER_SCHEMA_VERSION = 2
+# v3: added raw_pred_move_pct (pre-correction model move), context_features
+#     (technical/options context at decision time) and the alpha_lab /
+#     bias_correction diagnostic blocks. Backward-compatible: readers use
+#     .get() everywhere, so v2 rows simply have the new keys = None.
+TRACKER_SCHEMA_VERSION = 3
 
 # (symbol_key_in_json, futures_ticker_for_yfinance) — Kronos forecasts run in
 # ETF space (SPY/QQQ), and the realized close is fetched on the same ETF.
@@ -102,12 +106,21 @@ def _load_history(path: str = HISTORY_PATH) -> list[dict]:
         print("forecast_tracker: history root is not a list; starting fresh.")
         return []
 
-    # Self-healing schema migration: drop records that don't match the current
-    # schema version. Same pattern as the GEX_VERSION filter in run_kronos.py.
-    kept = [r for r in history if isinstance(r, dict) and r.get("v") == TRACKER_SCHEMA_VERSION]
+    # Self-healing schema migration: drop records older than the oldest
+    # accepted schema. Same pattern as the GEX_VERSION filter in run_kronos.py.
+    # v3 is ADDITIVE over v2 (raw_pred_move_pct / context_features /
+    # alpha_lab / bias_correction, all optional): v2 rows remain fully usable,
+    # so they are kept — purging them would throw away the whole accumulated
+    # track record that skill_evaluator / alpha_lab learn from. Only truly
+    # ancient schemas (v1 / missing v) are dropped.
+    _MIN_ACCEPTED_SCHEMA = 2
+    kept = [r for r in history
+            if isinstance(r, dict)
+            and isinstance(r.get("v"), int)
+            and r["v"] >= _MIN_ACCEPTED_SCHEMA]
     purged = len(history) - len(kept)
     if purged:
-        print(f"forecast_tracker: purged {purged} records with old/missing schema version.")
+        print(f"forecast_tracker: purged {purged} records with old/missing schema version (< v{_MIN_ACCEPTED_SCHEMA}).")
     return kept
 
 
@@ -217,6 +230,14 @@ def _extract_snapshots(forecast: dict) -> list[dict]:
                 "band_p90": band_p90,
                 "predicted_direction": _predicted_direction(anchor_price, predicted_target),
                 "trend_bias": trend_bias,
+                # v3 attribution fields (None on legacy forecasts): the raw
+                # pre-correction model move lets skill_evaluator / alpha_lab
+                # measure HOW MUCH each self-improving layer helped, and the
+                # context features feed alpha_lab's feature-based champion.
+                "raw_pred_move_pct": res.get("raw_pred_move_pct"),
+                "context_features": res.get("context_features"),
+                "alpha_lab": res.get("alpha_lab"),
+                "bias_correction": res.get("bias_correction"),
                 # Scored later, when target_at has matured:
                 "realized_price": None,
                 "direction_correct": None,

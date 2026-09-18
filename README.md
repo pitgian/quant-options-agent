@@ -54,6 +54,34 @@ walls, Kronos inference) runs on free GitHub Actions compute and is cached as
 static JSON. Only the cheap, latency-sensitive spot-price lookup lives in a
 Vercel serverless function, keeping the bill near zero.
 
+### Self-improvement loop (skill → alpha)
+
+Every Kronos run closes the loop `forecast → registered → matured → scored →
+next correction` through three evidence-gated layers, in this order:
+
+1. **Bias corrector** (`scripts/bias_corrector.py`) — median/MA-dev offset
+   from the last 14d of scored records.
+2. **Alpha lab** (`scripts/alpha_lab.py`) — replays the WHOLE track record
+   walk-forward (one target ahead, deduped per target, recency-weighted)
+   across an arena of correction models (naive / issued / linear
+   recalibration / ridge on context features). A champion is promoted only if
+   it beats the naive "price does not move" baseline significantly (paired
+   sign test p<0.05, skill ≥3%, ≥20 test targets); otherwise the forecast move
+   is heavily dampened (×0.15) or left untouched. Champions + coefficients +
+   progress timeline land in `data/alpha_lab.json`.
+3. **Band calibrator** (`scripts/band_calibrator.py`) — conformal widening of
+   the p10–p90 band to its empirically measured coverage.
+
+Two CI steps (`Skill report + alpha lab`) publish `data/skill_report.json`
+(deduped skill vs naive + ALPHA/NO_ALPHA/ANTI verdicts, surfaced in the UI
+Track Record page) and `data/alpha_lab.json`. Context features
+(momentum, MA-dev, RSI, realized vol, skew/PCR/GEX) are stored with every
+snapshot (tracker schema v3), so the feature-based champion accumulates
+training material over time. The adapter trainer (`scripts/train_adapter.py`)
+uses a time-ordered validation split and an anti-naive gate: a horizon is
+marked deployable only if the adapter beats BOTH the Kronos baseline and the
+naive forecast in price space.
+
 ## Project Structure
 
 ```

@@ -39,6 +39,9 @@ def push_data_to_github():
         local_kro = os.path.join(repo_root, "data", "kronos_forecast.json")
         local_stats = os.path.join(repo_root, "data", "adapter_training_stats.json")
         local_adapter = os.path.join(repo_root, "scripts", "model", "covariate_adapter.pth")
+        # Optional self-improvement artifacts (skill_evaluator / alpha_lab).
+        local_skill = os.path.join(repo_root, "data", "skill_report.json")
+        local_lab = os.path.join(repo_root, "data", "alpha_lab.json")
         if not os.path.exists(local_opt) or not os.path.exists(local_kro):
             print("  > Error: Local data files not found. Skipping push.")
             return
@@ -50,19 +53,27 @@ def push_data_to_github():
             # Copy new data files to temp clone
             shutil.copy(local_opt, os.path.join(tmpdir, "data", "options_data.json"))
             shutil.copy(local_kro, os.path.join(tmpdir, "data", "kronos_forecast.json"))
+            to_add = ["data/options_data.json", "data/kronos_forecast.json"]
             if os.path.exists(local_stats):
                 os.makedirs(os.path.join(tmpdir, "data"), exist_ok=True)
                 shutil.copy(local_stats, os.path.join(tmpdir, "data", "adapter_training_stats.json"))
+                to_add.append("data/adapter_training_stats.json")
+            if os.path.exists(local_skill):
+                shutil.copy(local_skill, os.path.join(tmpdir, "data", "skill_report.json"))
+                to_add.append("data/skill_report.json")
+            if os.path.exists(local_lab):
+                shutil.copy(local_lab, os.path.join(tmpdir, "data", "alpha_lab.json"))
+                to_add.append("data/alpha_lab.json")
             if os.path.exists(local_adapter):
                 os.makedirs(os.path.join(tmpdir, "scripts", "model"), exist_ok=True)
                 shutil.copy(local_adapter, os.path.join(tmpdir, "scripts", "model", "covariate_adapter.pth"))
+                to_add.append("scripts/model/covariate_adapter.pth")
             
             # Configure Git inside temporary clone
             subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], cwd=tmpdir, check=True)
             subprocess.run(["git", "config", "user.name", "github-actions[bot]"], cwd=tmpdir, check=True)
 
-            subprocess.run(["git", "add", "data/options_data.json", "data/kronos_forecast.json",
-                             "data/adapter_training_stats.json", "scripts/model/covariate_adapter.pth"], cwd=tmpdir, check=True)
+            subprocess.run(["git", "add"] + to_add, cwd=tmpdir, check=True)
             
             diff_proc = subprocess.run(["git", "diff", "--staged", "--quiet"], cwd=tmpdir)
             if diff_proc.returncode == 0:
