@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { UseOptionsDataReturn } from '../hooks/useOptionsData';
-import { IconRefresh } from './Icons';
 import type { ForecastSnapshot } from '../types';
 import { AlphaLabView } from './AlphaLabView';
+import {
+  ControlBar, Segmented, Labeled, Freshness, Collapsible, Card,
+} from './ui';
 import {
   fetchTrackRecord,
   computeMetrics,
@@ -12,8 +14,18 @@ import {
   type TrackRecordMetrics,
   type MetricSet,
 } from '../services/forecastScoreService';
+import { fetchAdapterStats } from '../services/adapterStatsService';
+import type { AdapterTrainingStats } from '../types';
+import {
+  computeVerdict,
+  VerdictCard,
+  ImprovementCard,
+  HorizonTable,
+  RunsHistoryChart,
+  AdapterLiveTable,
+} from './AdapterStatusView';
 
-interface ForecastTrackRecordViewProps {
+interface TrustViewProps {
   sharedState: UseOptionsDataReturn;
 }
 
@@ -50,105 +62,6 @@ function fmtPct(v: number | null | undefined, digits = 1): string {
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || Number.isNaN(v)) return '—';
   return v.toFixed(digits);
-}
-
-// ---------------------------------------------------------------------------
-// Control bar
-// ---------------------------------------------------------------------------
-
-function ControlBar({
-  windowDays, setWindowDays,
-  symbolFilter, setSymbolFilter,
-  horizonFilter, setHorizonFilter,
-  refreshing, onRefresh, timeSinceUpdate,
-}: {
-  windowDays: WindowDays;
-  setWindowDays: (w: WindowDays) => void;
-  symbolFilter: SymbolFilter;
-  setSymbolFilter: (s: SymbolFilter) => void;
-  horizonFilter: HorizonFilter;
-  setHorizonFilter: (h: HorizonFilter) => void;
-  refreshing: boolean;
-  onRefresh: () => void;
-  timeSinceUpdate: string;
-}) {
-  return (
-    <div className="bg-[#161b22] border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm font-bold text-slate-200">📊 Track Record Kronos</span>
-
-        {/* Window selector */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Finestra:</span>
-          <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800">
-            {([7, 14, 30] as WindowDays[]).map((w) => (
-              <button
-                key={w}
-                onClick={() => setWindowDays(w)}
-                className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
-                style={{
-                  backgroundColor: windowDays === w ? '#1e293b' : 'transparent',
-                  color: windowDays === w ? '#e2e8f0' : '#64748b',
-                }}
-              >
-                {w}g
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Symbol filter */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Simbolo:</span>
-          <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800">
-            {(['ALL', 'SPY', 'QQQ'] as SymbolFilter[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setSymbolFilter(s)}
-                className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
-                style={{
-                  backgroundColor: symbolFilter === s ? '#1e293b' : 'transparent',
-                  color: symbolFilter === s ? '#e2e8f0' : '#64748b',
-                }}
-              >
-                {s === 'ALL' ? 'Tutti' : s}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Horizon filter */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Orizzonte:</span>
-          <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800">
-            {(['ALL', '4h', '1d'] as HorizonFilter[]).map((h) => (
-              <button
-                key={h}
-                onClick={() => setHorizonFilter(h)}
-                className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
-                style={{
-                  backgroundColor: horizonFilter === h ? '#1e293b' : 'transparent',
-                  color: horizonFilter === h ? '#e2e8f0' : '#64748b',
-                }}
-              >
-                {h === 'ALL' ? 'Tutti' : h}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <button
-        onClick={onRefresh}
-        disabled={refreshing}
-        className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-        title={timeSinceUpdate ? `Aggiornato: ${timeSinceUpdate}` : 'Aggiorna'}
-      >
-        <IconRefresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-        {timeSinceUpdate && <span className="text-[11px] text-gray-500">Aggiornato: {timeSinceUpdate}</span>}
-      </button>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -388,18 +301,32 @@ function GroupTable({ metrics }: { metrics: TrackRecordMetrics }) {
 // Main
 // ---------------------------------------------------------------------------
 
-export const ForecastTrackRecordView: React.FC<ForecastTrackRecordViewProps> = ({ sharedState }) => {
-  const { handleRefresh, refreshing, timeSinceUpdate } = sharedState;
+export const TrustView: React.FC<TrustViewProps> = ({ sharedState }) => {
+  const { kronosForecast, handleRefresh, refreshing, timeSinceUpdate, isBackgroundRefreshing, showUpdatedFlash } = sharedState;
   const [snapshots, setSnapshots] = useState<ForecastSnapshot[] | null>(null);
+  const [stats, setStats] = useState<AdapterTrainingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [windowDays, setWindowDays] = useState<WindowDays>(30);
   const [symbolFilter, setSymbolFilter] = useState<SymbolFilter>('ALL');
   const [horizonFilter, setHorizonFilter] = useState<HorizonFilter>('ALL');
+  const [flashVisible, setFlashVisible] = useState(false);
+
+  React.useEffect(() => {
+    if (showUpdatedFlash) {
+      setFlashVisible(true);
+      const timer = setTimeout(() => setFlashVisible(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [showUpdatedFlash]);
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchTrackRecord();
+      const [data, s] = await Promise.all([
+        fetchTrackRecord(),
+        fetchAdapterStats().catch(() => null),
+      ]);
       setSnapshots(data?.snapshots ?? []);
+      setStats(s);
     } catch (err) {
       console.error('Failed to load track record:', err);
       setSnapshots([]);
@@ -423,36 +350,70 @@ export const ForecastTrackRecordView: React.FC<ForecastTrackRecordViewProps> = (
     });
   }, [snapshots, windowDays, symbolFilter, horizonFilter]);
 
+  const verdict = useMemo(() => computeVerdict(stats), [stats]);
+
   const onRefresh = async () => {
     await Promise.all([load(), handleRefresh()]);
   };
 
   return (
     <div className="flex-1 flex flex-col">
-      <div
-        className="sticky z-40 bg-[#161b22]/95 backdrop-blur border-b border-slate-800"
-        style={{ top: 'var(--app-nav-h, 0px)' }}
-      >
-        <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-3">
-          <ControlBar
-            windowDays={windowDays}
-            setWindowDays={setWindowDays}
-            symbolFilter={symbolFilter}
-            setSymbolFilter={setSymbolFilter}
-            horizonFilter={horizonFilter}
-            setHorizonFilter={setHorizonFilter}
+      <ControlBar
+        title="Affidabilità"
+        icon="✅"
+        left={
+          <>
+            <Labeled label="Finestra">
+              <Segmented
+                value={windowDays}
+                onChange={(w) => setWindowDays(w)}
+                options={[
+                  { value: 7 as WindowDays, label: '7g' },
+                  { value: 14 as WindowDays, label: '14g' },
+                  { value: 30 as WindowDays, label: '30g' },
+                ]}
+              />
+            </Labeled>
+            <Labeled label="Simbolo">
+              <Segmented
+                value={symbolFilter}
+                onChange={(s) => setSymbolFilter(s)}
+                options={[
+                  { value: 'ALL' as SymbolFilter, label: 'Tutti' },
+                  { value: 'SPY' as SymbolFilter, label: 'SPY' },
+                  { value: 'QQQ' as SymbolFilter, label: 'QQQ' },
+                ]}
+              />
+            </Labeled>
+            <Labeled label="Orizzonte">
+              <Segmented
+                value={horizonFilter}
+                onChange={(h) => setHorizonFilter(h)}
+                options={[
+                  { value: 'ALL' as HorizonFilter, label: 'Tutti' },
+                  { value: '4h' as HorizonFilter, label: '4h' },
+                  { value: '1d' as HorizonFilter, label: '1d' },
+                ]}
+              />
+            </Labeled>
+          </>
+        }
+        right={
+          <Freshness
+            timeSinceUpdate={timeSinceUpdate}
             refreshing={refreshing}
             onRefresh={onRefresh}
-            timeSinceUpdate={timeSinceUpdate}
+            isBackgroundRefreshing={isBackgroundRefreshing}
+            flashVisible={flashVisible}
           />
-        </div>
-      </div>
+        }
+      />
 
       <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6 w-full">
         {loading && !snapshots ? (
           <div className="flex flex-col items-center justify-center min-h-[300px] bg-[#161b22] border border-slate-800 rounded-2xl">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-4" />
-            <span className="text-gray-400 text-sm">Caricamento track record…</span>
+            <span className="text-gray-400 text-sm">Caricamento affidabilità…</span>
           </div>
         ) : !metrics || metrics.totalCount === 0 ? (
           <div className="flex flex-col items-center justify-center min-h-[300px] bg-[#161b22] border border-slate-800 rounded-2xl p-6 text-center">
@@ -465,51 +426,61 @@ export const ForecastTrackRecordView: React.FC<ForecastTrackRecordViewProps> = (
           </div>
         ) : (
           <>
-            {/* Pending / sample-size banner */}
+            <AlphaLabView />
+
+            {/* Pending banner — ora su TARGET distinti (dedup), coerente con le card */}
             {metrics.pendingCount > 0 && (
               <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 flex items-center gap-3">
                 <span className="text-blue-400 text-sm">⏳</span>
                 <span className="text-[11px] text-blue-300/90">
-                  <b>{metrics.pendingCount}</b> forecast in attesa di scadenza (su {metrics.totalCount} totali nella finestra).
-                  Le statistiche si aggiornano da sole quando i loro orizzonti maturano e il prezzo reale diventa disponibile.
+                  <b>{metrics.pendingCount}</b> target in attesa di scadenza (su {metrics.totalCount} target distinti nella finestra).
+                  Le statistiche si aggiornano da sole quando gli orizzonti maturano e il prezzo reale diventa disponibile.
                 </span>
               </div>
             )}
 
             <SummaryCards metrics={metrics} />
-            <AlphaLabView />
             <RollingChart metrics={metrics} />
             <GroupTable metrics={metrics} />
 
-            {/* Explainer */}
-            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4">
-              <h3 className="text-sm font-bold text-slate-300 mb-3">ℹ️ Come leggere il track record</h3>
-              <div className="text-xs text-gray-400 space-y-3 max-w-3xl">
-                <div>
-                  <div className="text-slate-300 font-semibold mb-1">Cosa misura</div>
-                  <p>
-                    Ogni run di Kronos produce una proiezione (4h e 1d) che viene <b>registrata</b> prima di essere sovrascritta.
-                    Quando l'orizzonte della proiezione scade, lo scaricamento del prezzo reale ci permette di confrontare previsione e realtà:
-                    questa pagina aggrega quei confronti nelle tre metriche mostrate sopra.
-                  </p>
-                </div>
-                <div>
-                  <div className="text-slate-300 font-semibold mb-1">Le tre metriche</div>
-                  <ul className="list-disc pl-4 space-y-1">
-                    <li><b>Accuratezza direzionale</b> — quante volte il verso (su/giù) era giusto. Il 50% è il puro caso: sopra il 60% il modello ha davvero un margine.</li>
-                    <li><b>MAPE</b> — errore medio % tra il prezzo target previsto e quello realizzato. Più basso = più preciso in valore assoluto.</li>
-                    <li><b>Copertura del range</b> — quante volte il prezzo reale è caduto dentro il corridoio [min, max] previsto. Verifica se la stima di volatilità è ben calibrata.</li>
-                  </ul>
-                </div>
-                <div>
-                  <div className="text-slate-300 font-semibold mb-1">Esclusioni e caveat</div>
-                  <p>
-                    I forecast emessi con bias <b>NEUTRAL</b> (mossa prevista sotto soglia) non hanno una direzione dichiarata e sono esclusi dall'accuratezza direzionale: contarli come errore sarebbe ingiusto.
-                    L'intervallo di confidenza (IC 95%) riflette l'incertezza da sample size: con pochi forecast è largo, e va letto come "il vero valore sta in questo intorno", non come un punteggio definitivo.
-                  </p>
-                </div>
+            {/* Diagnostica tecnica — ripiegata: utile, ma non è la prima cosa da leggere */}
+            <Collapsible title="Dettagli tecnici — adapter & correzioni" icon="🔧" hint="stato training, miglioria vs Kronos, correzioni live">
+              <VerdictCard stats={stats} verdict={verdict} />
+              {stats && <ImprovementCard stats={stats} />}
+              {stats && <HorizonTable stats={stats} />}
+              {stats && <RunsHistoryChart stats={stats} />}
+              <AdapterLiveTable
+                entries={[
+                  { symbol: 'SPY', label: 'S&P 500', item: kronosForecast?.SP500_bias },
+                  { symbol: 'QQQ', label: 'Nasdaq 100', item: kronosForecast?.NASDAQ_bias },
+                ]}
+                meta={kronosForecast?.bias_correction_meta}
+              />
+              <div className="text-xs text-gray-400 space-y-2">
+                <div className="text-slate-300 font-semibold">In breve</div>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>L'<b>adapter</b> è una piccola rete che corregge il forecast Kronos usando skew, Put/Call OI e Net GEX. Viene salvato solo con ≥30 esempi reali e applicato solo sugli orizzonti validati.</li>
+                  <li>Le <b>correzioni</b> (bias, banda, alpha lab) si stimano dal track record e passano tutte un gate anti-peeggioramento su holdout temporale.</li>
+                  <li>Il campione evaluate è <b>deduplicato per target</b>: ogni scadenza conta una volta, non una per snapshot.</li>
+                </ul>
               </div>
-            </div>
+            </Collapsible>
+
+            {/* Explainer compatto */}
+            <Card>
+              <div className="flex items-center gap-2 mb-2">
+                <h3 className="text-sm font-bold text-slate-300">ℹ️ Come leggere</h3>
+                <span className="text-[11px] text-gray-500">
+                  Tutte le metriche sono calcolate su <b>target distinti</b> (una valutazione per scadenza, ultima previsione emessa).
+                </span>
+              </div>
+              <ul className="text-xs text-gray-400 list-disc pl-4 space-y-1">
+                <li><b>Accuratezza direzionale</b> — verso (su/giù) corretto; il 50% è il caso, sopra il 60% c'è margine reale.</li>
+                <li><b>MAPE</b> — errore medio % sul prezzo target.</li>
+                <li><b>Copertura range</b> — quante volte il prezzo reale è caduto nel range previsto (80% è la calibratione ideale).</li>
+                <li><b>Skill vs naive</b> (Alpha Lab) — confronto con la previsione banale «il prezzo non si muove»: positiva = il sistema batte il caso.</li>
+              </ul>
+            </Card>
           </>
         )}
       </div>

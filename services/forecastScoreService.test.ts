@@ -17,7 +17,11 @@ function snap(overrides: Partial<ForecastSnapshot>): ForecastSnapshot {
     issued_at: recentDay(1),
     symbol: 'SPY',
     horizon: '1d',
-    target_at: '2026-07-15',
+    // Each fixture is a DISTINCT target by default (computeMetrics dedupes
+    // per target_at — snapshots sharing a target collapse to one row, the
+    // last-issued). Tests that exercise dedup pass the same target_at
+    // explicitly.
+    target_at: `2026-07-15T${String(10 + (seq % 12)).padStart(2, '0')}:00:00Z#${seq}`,
     anchor_price: 100,
     predicted_target: 102,
     predicted_high: 104,
@@ -43,6 +47,22 @@ function recentDay(offsetDays: number): string {
 }
 
 describe('computeMetrics', () => {
+  it('dedupes snapshots per target_at, keeping the LAST issued', () => {
+    // 38 duplicates of the same target must count as ONE evaluation row, and
+    // the surviving row must be the most-informed (latest issued_at) one.
+    const t = '2026-08-20T00:00:00Z';
+    const snaps = [
+      snap({ target_at: t, issued_at: recentDay(2), direction_correct: false, abs_pct_error: 5, predicted_target: 105, realized_price: 101 }),
+      snap({ target_at: t, issued_at: recentDay(1), direction_correct: true, abs_pct_error: 1, predicted_target: 102, realized_price: 101 }),
+      snap({ target_at: t, issued_at: recentDay(1), direction_correct: false, abs_pct_error: 9, predicted_target: 110, realized_price: 101 }), // latest issued, same day → wins
+    ];
+    const m = computeMetrics(snaps);
+    expect(m.totalCount).toBe(1);
+    expect(m.overall.directionalN).toBe(1);
+    expect(m.overall.directionalAccuracy).toBe(0);          // last-issued was wrong
+    expect(m.overall.mape).toBeCloseTo(9, 6);                // its error, not the first's
+  });
+
   it('computes directional accuracy = hits / directional samples', () => {
     const snaps = [
       snap({ direction_correct: true }),

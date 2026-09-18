@@ -13,14 +13,16 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { ExpiryFilter } from '../types';
 import { useOptionsData } from '../hooks/useOptionsData';
-import { formatCompact, formatTimestamp } from '../utils/formatting';
-import { IconRefresh } from './Icons';
+import { formatCompact } from '../utils/formatting';
 import { LoadingState } from './LoadingState';
 import { ErrorState } from './ErrorState';
 import { EXPIRY_OPTIONS } from '../lib/expiry';
 import { KRONOS_TIMEFRAMES, getActiveKronosForecast, type KronosTimeframe } from '../lib/kronos';
-import { MarketStructureHeader, type FuturesTimeframe } from './MarketStructureHeader';
-import { StructuralAnalysisCard, LegendCard, type StructuralAnalysis } from './MarketStructurePanels';
+import { StructuralAnalysisCard, type StructuralAnalysis } from './MarketStructurePanels';
+import { ControlBar, Segmented, Labeled, Freshness, Card, Badge, InfoHint } from './ui';
+import { MarketLevelsColumn, TradingGuide } from './MarketLevelsPanel';
+
+export type FuturesTimeframe = 'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max';
 
 export function MarketStructureView({ sharedState }: { sharedState: ReturnType<typeof useOptionsData> }) {
   const state = sharedState;
@@ -48,7 +50,10 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   const [rowHeight, setRowHeight] = useState(22);
   const [flashVisible, setFlashVisible] = useState(false);
   const [selectedFuturesTf, setSelectedFuturesTf] = useState<FuturesTimeframe>('auto');
-  const [isGuideOpen, setIsGuideOpen] = useState(false);
+  // Mercato tab layout toggle: volume profile (hero) vs intraday key levels.
+  const [viewMode, setViewMode] = useState<'profile' | 'levels'>('profile');
+  // Confluence toggle for the embedded levels panel.
+  const [showCrossSymbol, setShowCrossSymbol] = useState(true);
   const [showKronosDetails, setShowKronosDetails] = useState(false);
   const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1d');
 
@@ -625,25 +630,70 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117]">
-      <MarketStructureHeader
-        market={market}
-        setMarket={setMarket}
-        zoomPct={zoomPct}
-        setZoomPct={setZoomPct}
-        rowHeight={rowHeight}
-        setRowHeight={setRowHeight}
-        expiryFilter={expiryFilter}
-        setExpiryFilter={setExpiryFilter}
-        selectedFuturesTf={selectedFuturesTf}
-        setSelectedFuturesTf={setSelectedFuturesTf}
-        kronosTimeframe={kronosTimeframe}
-        setKronosTimeframe={setKronosTimeframe}
-        refreshing={refreshing}
-        handleRefresh={handleRefresh}
-        timeSinceUpdate={timeSinceUpdate}
-        isBackgroundRefreshing={isBackgroundRefreshing}
-        flashVisible={flashVisible}
+      <ControlBar
+        left={
+          <>
+            <Segmented
+              value={market}
+              onChange={(m) => setMarket(m)}
+              options={[
+                { value: 'SP500', label: '🇺🇸 S&P 500' },
+                { value: 'NASDAQ100', label: '💻 Nasdaq 100' },
+              ]}
+            />
+            <Segmented
+              value={viewMode}
+              onChange={(v) => setViewMode(v)}
+              options={[
+                { value: 'profile', label: '📊 Profilo Volumi' },
+                { value: 'levels', label: '🎯 Livelli Intraday' },
+              ]}
+            />
+          </>
+        }
+        right={
+          <Freshness
+            timeSinceUpdate={timeSinceUpdate}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            isBackgroundRefreshing={isBackgroundRefreshing}
+            flashVisible={flashVisible}
+          />
+        }
       />
+      {viewMode === 'levels' && (
+        <div
+          className="sticky z-40 border-b border-slate-800 bg-[#161b22]/95 backdrop-blur px-4 py-2 sm:px-6"
+          style={{ top: 'calc(var(--app-nav-h, 0px) + 49px)' }}
+        >
+          <div className="max-w-[1850px] mx-auto flex items-center gap-3 flex-wrap">
+            <Labeled label="Scadenza">
+              <select
+                value={expiryFilter}
+                onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
+                className="bg-[#0d1117] border border-slate-800 text-gray-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 font-semibold"
+              >
+                {EXPIRY_OPTIONS.map((opt) => (
+                  <option key={opt.key} value={opt.key}>{opt.label}</option>
+                ))}
+              </select>
+            </Labeled>
+            <button
+              onClick={() => setShowCrossSymbol(!showCrossSymbol)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-all duration-150"
+              style={{
+                backgroundColor: showCrossSymbol ? 'rgba(245,158,11,0.15)' : 'transparent',
+                color: showCrossSymbol ? '#f59e0b' : '#64748b',
+                border: '1px solid',
+                borderColor: showCrossSymbol ? 'rgba(245,158,11,0.25)' : 'transparent',
+              }}
+              title={showCrossSymbol ? 'Nascondi confluenze cross-symbol' : 'Mostra confluenze cross-symbol'}
+            >
+              ★ Confluenze
+            </button>
+          </div>
+        </div>
+      )}
       {/* ================================================================== */}
       {/* MAIN CONTENT AREA                                                 */}
       {/* ================================================================== */}
@@ -651,294 +701,102 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
         <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col gap-6 w-full animate-fadeIn">
           
           {/* ================================================================== */}
-          {/* TOP PANEL: METRICS & SPOT                                          */}
+          {/* TICKER STRIP — compact one-row market state (was: 4 separate cards) */}
           {/* ================================================================== */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            
-            {/* Spot & Futures Prices */}
-            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
-              <div className="flex justify-between items-center mb-1.5">
-                <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Prezzi Spot & Futures</span>
+          <Card className="!p-3">
+            <div className="flex items-center gap-x-5 gap-y-2 flex-wrap">
+              <div className="flex flex-col">
+                <span className="text-[9px] text-blue-400 uppercase font-extrabold tracking-widest">{futuresSymbol} · LIVE</span>
+                <span className="text-xl font-mono font-extrabold text-white leading-none tnum">
+                  ${futuresSpot.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                </span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-[9px] text-gray-400 font-medium uppercase font-semibold">ETF Cash ({etfSymbol})</span>
-                  <div className="text-sm font-mono font-bold text-white">
-                    ${etfCashSpot.toFixed(2)}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-[9px] text-blue-400 font-medium uppercase font-semibold">Futures ({futuresSymbol})</span>
-                  <div className="text-sm font-mono font-bold text-blue-400 font-semibold">
-                    ${futuresSpot.toFixed(1)}
-                  </div>
-                </div>
+              <div className="w-px h-8 bg-slate-800 hidden sm:block" />
+              <div className="flex flex-col">
+                <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">{indexSymbol} / {etfSymbol}</span>
+                <span className="text-xs font-mono font-bold text-slate-200 tnum">
+                  ${cashSpot > 0 ? cashSpot.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'} · ${etfCashSpot > 0 ? etfCashSpot.toFixed(2) : '—'}
+                </span>
               </div>
-            </div>
-
-            {/* GEX Regimes */}
-            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-center">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Regime GEX & Covariate</span>
-              <div className="mt-2 grid grid-cols-2 gap-4">
-                <div>
-                  <span className="text-[9px] text-gray-400 font-medium block">Indice ({indexData.symbol})</span>
-                  <span
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold"
-                    style={{
-                      backgroundColor: indexData.gexRegime.regime === 'positive' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-                      color: indexData.gexRegime.regime === 'positive' ? '#4ade80' : '#f87171',
-                    }}
-                  >
-                    {indexData.gexRegime.regime === 'positive' ? '▲ Positivo' : '▼ Negativo'}
-                  </span>
+              <div className="w-px h-8 bg-slate-800 hidden sm:block" />
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Regime GEX</span>
+                <div className="flex items-center gap-1.5">
+                  <Badge tone={indexData.gexRegime.regime === 'positive' ? 'good' : indexData.gexRegime.regime === 'negative' ? 'bad' : 'neutral'}>
+                    {indexData.gexRegime.regime === 'positive' ? '▲ Positivo' : indexData.gexRegime.regime === 'negative' ? '▼ Negativo' : '◆ Neutrale'}
+                  </Badge>
                   {indexData.gexRegime.flipPoint && (
-                    <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
-                      Flip ({futuresSymbol}): ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
-                    </div>
-                  )}
-                  {indexData.volatilitySkew25d !== undefined && (
-                    <div className="text-[9px] text-gray-400 mt-1 font-mono">
-                      Skew: <span className="text-amber-400 font-bold">{indexData.volatilitySkew25d > 0 ? '+' : ''}{(indexData.volatilitySkew25d * 100).toFixed(1)}%</span>
-                    </div>
-                  )}
-                  {indexData.putCallOiRatio !== undefined && (
-                    <div className="text-[9px] text-gray-400 font-mono">
-                      PCR (OI): <span className="text-indigo-400 font-bold">{indexData.putCallOiRatio.toFixed(2)}</span>
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <span className="text-[9px] text-gray-400 font-medium block">ETF ({etfData.symbol})</span>
-                  <span
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold"
-                    style={{
-                      backgroundColor: etfData.gexRegime.regime === 'positive' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-                      color: etfData.gexRegime.regime === 'positive' ? '#4ade80' : '#f87171',
-                    }}
-                  >
-                    {etfData.gexRegime.regime === 'positive' ? '▲ Positivo' : '▼ Negativo'}
-                  </span>
-                  {etfData.gexRegime.flipPoint && (
-                    <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
-                      Flip ({futuresSymbol}): ${(etfData.gexRegime.flipPoint * ratio * basisMultiplier).toFixed(0)}
-                    </div>
-                  )}
-                  {etfData.volatilitySkew25d !== undefined && (
-                    <div className="text-[9px] text-gray-400 mt-1 font-mono">
-                      Skew: <span className="text-amber-400 font-bold">{etfData.volatilitySkew25d > 0 ? '+' : ''}{(etfData.volatilitySkew25d * 100).toFixed(1)}%</span>
-                    </div>
-                  )}
-                  {etfData.putCallOiRatio !== undefined && (
-                    <div className="text-[9px] text-gray-400 font-mono">
-                      PCR (OI): <span className="text-indigo-400 font-bold">{etfData.putCallOiRatio.toFixed(2)}</span>
-                    </div>
+                    <span className="text-[9px] text-gray-500 font-mono tnum">
+                      Flip ${(indexData.gexRegime.flipPoint * basisMultiplier).toFixed(0)}
+                    </span>
                   )}
                 </div>
               </div>
-            </div>
-
-            {/* Quick Market State */}
-            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-center">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Stato di Mercato</span>
-              {analysis && (
-                <div className="mt-1 text-xs leading-snug">
-                  {analysis.currentArea ? (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-400">Fair Value Area:</span>
-                      <span className="font-mono font-bold text-gray-200">${analysis.currentArea.low.toFixed(0)} - ${analysis.currentArea.high.toFixed(0)}</span>
-                    </div>
-                  ) : (
-                    <div className="text-gray-400">Prezzo fuori dai nodi principali</div>
-                  )}
-                  {analysis.nearestBoundary && (
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="text-gray-400">Confine {analysis.nearestBoundary.type.split(' ')[0]}:</span>
-                      <span className="font-mono font-bold text-rose-400">${analysis.nearestBoundary.low.toFixed(0)}</span>
-                    </div>
-                  )}
+              <div className="w-px h-8 bg-slate-800 hidden sm:block" />
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Skew 25D</span>
+                  <span className="text-[11px] font-mono font-bold text-amber-400 tnum">
+                    {indexData.volatilitySkew25d !== undefined ? ((indexData.volatilitySkew25d > 0 ? '+' : '') + (indexData.volatilitySkew25d * 100).toFixed(1) + '%') : '—'}
+                  </span>
                 </div>
-              )}
-            </div>
-
-            {/* Kronos Predictor */}
-            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col justify-between min-h-[140px] relative">
-              <div>
-                <div className="flex justify-between items-center mb-2">
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Kronos AI Predictor</span>
-                    {kronosForecast && (
-                      <span 
-                        className="text-[8px] text-gray-650 font-mono"
-                        title={`Aggiornato: ${new Date(kronosForecast.updated_at).toLocaleString()}`}
-                      >
-                        ({new Date(kronosForecast.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
-                      </span>
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">P/C OI</span>
+                  <span className="text-[11px] font-mono font-bold text-indigo-400 tnum">
+                    {indexData.putCallOiRatio !== undefined ? indexData.putCallOiRatio.toFixed(2) : '—'}
+                  </span>
+                </div>
+              </div>
+              <div className="w-px h-8 bg-slate-800 hidden sm:block" />
+              <div className="flex items-center gap-2">
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">
+                    Kronos ({kronosTimeframe})
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {activeKronosForecast ? (
+                      <>
+                        <Badge tone={activeKronosForecast.trendBias === 'BULLISH' ? 'good' : activeKronosForecast.trendBias === 'BEARISH' ? 'bad' : 'neutral'}>
+                          {activeKronosForecast.trendBias === 'BULLISH' ? '▲ Rialzista' : activeKronosForecast.trendBias === 'BEARISH' ? '▼ Ribassista' : '◆ Neutrale'}
+                        </Badge>
+                        <span className="text-[11px] font-mono font-bold text-blue-400 tnum" title="Range atteso (scala futures)">
+                          {kronosRange ? `$${kronosRange.low.toFixed(0)}–$${kronosRange.high.toFixed(0)}` : '—'}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-gray-500">in attesa…</span>
                     )}
                   </div>
                 </div>
-                {(() => {
-                  if (!kronosForecast) {
-                    return <div className="text-xs text-gray-500 mt-2">Caricamento previsioni...</div>;
-                  }
-                  if (!activeKronosForecast) {
-                    return <div className="text-xs text-gray-500 mt-2">Dati non disponibili</div>;
-                  }
-                  
-                  const isBullish = activeKronosForecast.trendBias === 'BULLISH';
-                  const isBearish = activeKronosForecast.trendBias === 'BEARISH';
-                  const trendColor = isBullish ? '#4ade80' : isBearish ? '#f87171' : '#94a3b8';
-                  const trendBg = isBullish ? 'rgba(34,197,94,0.12)' : isBearish ? 'rgba(239,68,68,0.12)' : 'rgba(148,163,184,0.12)';
-                  
-                  // Volatility Classification
-                  let volLabel = "Moderata";
-                  let volColor = "#eab308"; // yellow
-                  let volBg = "rgba(234,179,8,0.1)";
-                  if (activeKronosForecast.volatilityPct < 0.2) {
-                    volLabel = "Bassa";
-                    volColor = "#4ade80"; // green
-                    volBg = "rgba(34,197,94,0.1)";
-                  } else if (activeKronosForecast.volatilityPct >= 0.5) {
-                    volLabel = "Elevata";
-                    volColor = "#f87171"; // red
-                    volBg = "rgba(239,68,68,0.1)";
-                  }
-
-                  // Sparkline path math
-                  let sparklineSvg = null;
-                  if (activeKronosForecast.candles && activeKronosForecast.candles.length > 0) {
-                    const prices = [activeKronosForecast.lastPrice, ...activeKronosForecast.candles.map(c => c.close)];
-                    const minP = Math.min(...prices);
-                    const maxP = Math.max(...prices);
-                    const pRange = maxP - minP || 1;
-                    
-                    const w = 180;
-                    const h = 32;
-                    const padding = 3;
-                    
-                    const points = prices.map((p, i) => {
-                      const x = (i / (prices.length - 1)) * (w - 20) + 10;
-                      const y = h - ((p - minP) / pRange) * (h - 2 * padding) - padding;
-                      return { x, y, price: p };
-                    });
-                    
-                    const pointsStr = points.map(pt => `${pt.x},${pt.y}`).join(' ');
-                    
-                    sparklineSvg = (
-                      <div className="flex flex-col items-center mt-2 p-1.5 bg-slate-900/30 rounded-lg border border-slate-800/40">
-                        <span className="text-[8px] text-gray-500 mb-1 font-semibold uppercase tracking-wider">Traiettoria prezzi (Sparkline)</span>
-                        <svg width={w} height={h} className="overflow-visible">
-                          <polyline
-                            fill="none"
-                            stroke={trendColor}
-                            strokeWidth="1.5"
-                            strokeDasharray="1 1"
-                            points={pointsStr}
-                          />
-                          {points.map((pt, i) => (
-                            <g key={i}>
-                              <circle
-                                cx={pt.x}
-                                cy={pt.y}
-                                r={i === 0 ? "2.5" : i === points.length - 1 ? "3" : "2"}
-                                fill={i === 0 ? "#ffffff" : trendColor}
-                                stroke={i === 0 ? "#3b82f6" : "none"}
-                                strokeWidth={i === 0 ? "1" : "0"}
-                              />
-                              <title>Step {i}: ${pt.price.toFixed(2)}</title>
-                            </g>
-                          ))}
-                        </svg>
-                        <div className="flex justify-between w-full text-[8px] text-gray-500 px-1 mt-1 font-mono">
-                          <span>Spot</span>
-                          <span>
-                            {kronosTimeframe === '4h' ? '+24h' : '+1 sett.'}
-                          </span>
-                          <span>+{kronosTimeframe}</span>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="mt-1.5 text-xs leading-tight">
-                      {/* Bias and Strength */}
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-400">Bias:</span>
-                        <span
-                          className="font-bold px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
-                          style={{ backgroundColor: trendBg, color: trendColor }}
-                        >
-                          {isBullish ? '🟢 Rialzista' : isBearish ? '🔴 Ribassista' : '⚪ Neutrale'}
-                        </span>
-                      </div>
-
-                      {/* Expected Price Range */}
-                      <div className="flex flex-col gap-1 mt-1.5 pt-1.5 border-t border-slate-800/30">
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-400 font-medium">Range Atteso ({kronosTimeframe}):</span>
-                          <span className="font-mono font-semibold text-blue-400">
-                            ${kronosRange ? kronosRange.low.toFixed(0) : '0'} - ${kronosRange ? kronosRange.high.toFixed(0) : '0'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Expected Volatility */}
-                      <div className="flex items-center justify-between mt-1">
-                        <span className="text-gray-400 font-medium">Volatilità Prevista:</span>
-                        <span
-                          className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono"
-                          style={{ backgroundColor: volBg, color: volColor }}
-                          title={`Volatilità stimata sul range: ${activeKronosForecast.volatilityPct.toFixed(3)}%`}
-                        >
-                          {activeKronosForecast.volatilityPct.toFixed(2)}% ({volLabel})
-                        </span>
-                      </div>
-
-                      {sparklineSvg}
-
-                      {/* Expandable detailed timeline */}
-                      <div className="mt-2 pt-2 border-t border-slate-800/40">
-                        <button
-                          onClick={() => setShowKronosDetails(!showKronosDetails)}
-                          className="w-full text-center text-[9px] text-blue-400 hover:text-blue-300 font-semibold tracking-wider uppercase transition-colors"
-                        >
-                          {showKronosDetails ? '▲ Nascondi Timeline' : `▼ Mostra Proiezioni 15m (${kronosTimeframe})`}
-                        </button>
-                        
-                        {showKronosDetails && activeKronosForecast.candles && (
-                          <div className="mt-1.5 max-h-[120px] overflow-y-auto pr-0.5 custom-scrollbar text-[10px] bg-slate-900/50 rounded-lg p-2 border border-slate-800/60 font-mono">
-                            <div className="grid grid-cols-3 text-[8px] text-gray-500 font-bold uppercase pb-1 border-b border-slate-800">
-                              <span>Candela</span>
-                              <span className="text-center">Prezzo</span>
-                              <span className="text-right">Var.</span>
-                            </div>
-                            {activeKronosForecast.candles.map((candle, idx) => {
-                              const stepDelta = ((candle.close - activeKronosForecast.lastPrice) / activeKronosForecast.lastPrice) * 100;
-                              return (
-                                <div key={idx} className="grid grid-cols-3 py-0.5 text-gray-300 border-b border-slate-850/40 last:border-b-0">
-                                  <span className="text-gray-400 font-sans">+{15 * (idx + 1)}m</span>
-                                  <span className="text-center font-bold">${candle.close.toFixed(2)}</span>
-                                  <span 
-                                    className="text-right font-bold" 
-                                    style={{ color: stepDelta > 0 ? '#4ade80' : stepDelta < 0 ? '#f87171' : '#94a3b8' }}
-                                  >
-                                    {stepDelta > 0 ? '+' : ''}{stepDelta.toFixed(2)}%
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                    </div>
-                  );
-                })()}
+                {activeKronosForecast && (
+                  <Badge tone={activeKronosForecast.volatilityPct >= 0.5 ? 'bad' : activeKronosForecast.volatilityPct < 0.2 ? 'good' : 'warn'}
+                         title={`Volatilità stimata sul range: ${activeKronosForecast.volatilityPct.toFixed(3)}%`}>
+                    {activeKronosForecast.volatilityPct.toFixed(2)}% {activeKronosForecast.volatilityPct >= 0.5 ? 'ELEV' : activeKronosForecast.volatilityPct < 0.2 ? 'BASSA' : 'MOD'}
+                  </Badge>
+                )}
               </div>
             </div>
+          </Card>
 
-          </div>
-
+          {viewMode === 'levels' ? (
+            <>
+              <TradingGuide />
+              <MarketLevelsColumn
+                market={market}
+                defaultSymbol={etfSymbol}
+                etfSymbol={etfSymbol}
+                indexSymbol={indexSymbol}
+                futuresSymbol={futuresSymbol}
+                etfData={etfData}
+                indexData={indexData}
+                liveSpot={liveSpot}
+                kronosForecast={kronosForecast}
+                kronosTimeframe={kronosTimeframe}
+                showCrossSymbol={showCrossSymbol}
+              />
+            </>
+          ) : (
+          <>
           {/* ================================================================== */}
           {/* PROFILE CHART (WIDESCREEN FULL WIDTH)                              */}
           {/* ================================================================== */}
@@ -956,54 +814,19 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 <p className="text-xs text-gray-400 mt-1">
                   Analisi incrociata delle opzioni retail (ETF) a sinistra, opzioni istituzionali (Indice) al centro-destra e volumi futures a destra.
                 </p>
-                <div className="flex flex-wrap gap-4 mt-3 pt-3 border-t border-slate-850 text-[10px] text-gray-400">
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-5 rounded-full overflow-hidden flex" style={{ background: 'linear-gradient(to right, rgba(16,185,129,0.7) 50%, rgba(239,68,68,0.7) 50%)' }}></span>
-                    <span><strong>Larghezza barra:</strong> Open Interest totale (livello strutturale — definisce i wall)</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-3 rounded-full" style={{ background: 'linear-gradient(to right, rgba(16,185,129,0.7), rgba(239,68,68,0.7))' }}></span>
-                    <span><strong>Colore barra:</strong> 🟢 Call OI (resistenza) · 🔴 Put OI (supporto)</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-1 w-5 rounded-sm" style={{ backgroundColor: 'rgba(251,191,36,0.55)' }}></span>
-                    <span><strong>Striscia ambra in cima:</strong> Volume scambiato oggi (scala indipendente — flusso intraday)</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-1 py-0.5 rounded text-[8px] font-extrabold bg-amber-500/30 text-amber-200 border border-amber-400/50 uppercase">POC</span>
-                    <span><strong>Point of Control</strong> del timeframe futures selezionato (prezzo a maggior volume)</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40 uppercase">VAH · VAL</span>
-                    <span><strong>Value Area High/Low</strong> — range col 70% del volume del tf selezionato</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-500/40"></span>
-                    <span>
-                      <strong>Volumi Futures:</strong> Storico {
-                        selectedFuturesTf === 'auto' ? 'allineato alla scadenza' : 'personalizzato'
-                      } ({
-                        (() => {
-                          let tf = '30d';
-                          if (selectedFuturesTf === 'auto') {
-                            if (expiryFilter === '0dte') tf = '2d';
-                            else if (expiryFilter === '1-7dte') tf = '7d';
-                            else if (expiryFilter === '8-30dte') tf = '30d';
-                            else if (expiryFilter === '30+dte') tf = '90d';
-                          } else {
-                            tf = selectedFuturesTf;
-                          }
-                          return tf === '1d' ? 'Giornaliero' :
-                                 tf === '2d' ? '2 Giorni' :
-                                 tf === '5d' ? 'Settimanale' :
-                                 tf === '7d' ? '7 Giorni' :
-                                 tf === '30d' ? 'Mensile' :
-                                 tf === '90d' ? 'Trimestrale' :
-                                 tf === 'max' ? 'Cumulativo' : tf;
-                        })()
-                      })
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-850">
+                  <InfoHint title="Legenda — Profilo Volumi Unificato">
+                    <ul className="space-y-1.5">
+                      <li><b>Larghezza barra:</b> Open Interest totale (livello strutturale — definisce i wall).</li>
+                      <li><b>Colore barra:</b> 🟢 Call OI (resistenza) · 🔴 Put OI (supporto).</li>
+                      <li><b>Striscia ambra in cima:</b> volume scambiato oggi (scala indipendente — flusso intraday).</li>
+                      <li><b>POC</b> — Point of Control del timeframe futures selezionato (prezzo a maggior volume).</li>
+                      <li><b>VAH · VAL</b> — Value Area High/Low: range col 70% del volume del timeframe selezionato.</li>
+                      <li><b>Volumi Futures:</b> storico {selectedFuturesTf === 'auto' ? 'allineato alla scadenza selezionata' : 'su timeframe personalizzato'}.</li>
+                      <li><b>Rettangolo blu:</b> range atteso Kronos sull'orizzonte selezionato.</li>
+                    </ul>
+                  </InfoHint>
+                  <span className="text-[10px] text-gray-500">Legenda e significato dei colori</span>
                 </div>
               </div>
             </div>
@@ -1351,7 +1174,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
           {/* ================================================================== */}
           {/* BOTTOM PANEL: STRUCTURAL ANALYSIS, FVA LIST, AND COLLAPSIBLE LEGEND */}
           {/* ================================================================== */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
             {/* Structural Analysis Card */}
             <StructuralAnalysisCard analysis={analysis as StructuralAnalysis | null} />
@@ -1396,10 +1219,9 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
               </div>
             </div>
 
-            {/* Legend Card */}
-            <LegendCard isGuideOpen={isGuideOpen} setIsGuideOpen={setIsGuideOpen} />
-
           </div>
+            </>
+          )}
         </div>
       </main>
 

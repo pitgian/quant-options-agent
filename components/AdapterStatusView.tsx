@@ -8,6 +8,7 @@ import type {
   KronosResolutionForecast,
 } from '../types';
 import { fetchAdapterStats } from '../services/adapterStatsService';
+import { Badge } from './ui';
 
 interface AdapterStatusViewProps {
   sharedState: UseOptionsDataReturn;
@@ -51,7 +52,7 @@ interface Verdict {
   detail: string;
 }
 
-function computeVerdict(stats: AdapterTrainingStats | null): Verdict {
+export function computeVerdict(stats: AdapterTrainingStats | null): Verdict {
   if (!stats) {
     return { label: 'Nessun dato', tone: 'idle', detail: 'Statistiche di addestramento non disponibili.' };
   }
@@ -115,7 +116,7 @@ function ControlBar({
   );
 }
 
-function VerdictCard({ stats, verdict }: { stats: AdapterTrainingStats | null; verdict: Verdict }) {
+export function VerdictCard({ stats, verdict }: { stats: AdapterTrainingStats | null; verdict: Verdict }) {
   const toneStyles = {
     good: 'border-green-500/30 bg-green-500/5 text-green-300',
     warn: 'border-amber-500/30 bg-amber-500/5 text-amber-300',
@@ -140,7 +141,7 @@ function VerdictCard({ stats, verdict }: { stats: AdapterTrainingStats | null; v
   );
 }
 
-function StatCards({ stats }: { stats: AdapterTrainingStats }) {
+export function StatCards({ stats }: { stats: AdapterTrainingStats }) {
   const cards = [
     { label: 'Sample Reali', value: String(stats.real_samples_total), sub: `min richiesti: ${stats.min_real_samples_required}` },
     { label: 'Checkpoint Salvato', value: stats.saved ? 'SÌ' : 'NO', sub: stats.saved ? 'pesi aggiornati' : 'guard bloccata' },
@@ -171,7 +172,7 @@ function improvementTone(pct: number | null | undefined): { color: string; label
   return { color: 'text-red-400', label: 'Peggiorativo' };
 }
 
-function ImprovementCard({ stats }: { stats: AdapterTrainingStats }) {
+export function ImprovementCard({ stats }: { stats: AdapterTrainingStats }) {
   const pct = stats.final_improvement_pct;
   const baseline = stats.final_baseline_val_loss;
   const adapter = stats.final_val_loss;
@@ -234,7 +235,7 @@ function ImprovementCard({ stats }: { stats: AdapterTrainingStats }) {
   );
 }
 
-function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
+export function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
   const perH = stats.per_horizon_real_samples ?? {};
   const metrics = stats.horizons ?? {};
   const rows = HORIZON_ORDER.map((h) => {
@@ -307,7 +308,7 @@ function HorizonTable({ stats }: { stats: AdapterTrainingStats }) {
   );
 }
 
-function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
+export function RunsHistoryChart({ stats }: { stats: AdapterTrainingStats }) {
   // Longitudinal view: ONE POINT PER DAY (median of the day's runs), stable
   // across weeks. The CI trains every ~5 min during market hours, so a per-run
   // chart was dominated by a single day (300 runs => only ~3 days visible at
@@ -598,34 +599,33 @@ function LossChart({ stats }: { stats: AdapterTrainingStats }) {
   );
 }
 
-function LiveStatusTable({
-  item,
-  label,
+export interface AdapterLiveEntry {
+  symbol: string;
+  label: string;
+  item: KronosForecastItem | null | undefined;
+}
+
+/**
+ * ONE merged table for both symbols (the old page had two near-identical
+ * tables). Rows: symbol x resolution; badges carry the details on hover.
+ */
+export function AdapterLiveTable({
+  entries,
   meta,
 }: {
-  item: KronosForecastItem | null | undefined;
-  label: string;
+  entries: AdapterLiveEntry[];
   meta?: KronosBiasCorrectionMeta;
 }) {
-  if (!item) {
-    return (
-      <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4">
-        <h3 className="text-sm font-bold text-slate-300">{label} — Applicazione Live</h3>
-        <p className="text-xs text-gray-500 mt-2">Forecast Kronos non disponibile.</p>
-      </div>
-    );
-  }
-  const rows = RES_KEYS.map(({ key, h }) => {
-    const res: KronosResolutionForecast | undefined = item[key];
-    const st = res?.adapter_status;
-    const bc = res?.bias_correction;
-    const bcal = res?.band_calibration;
-    return { h, res, st, bc, bcal };
-  });
+  const rows = entries.flatMap(({ symbol, label, item }) =>
+    RES_KEYS.map(({ key, h }) => {
+      const res: KronosResolutionForecast | undefined = item?.[key];
+      return { symbol, label, h, res, st: res?.adapter_status, bc: res?.bias_correction, bcal: res?.band_calibration };
+    }),
+  );
 
   return (
     <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
-      <h3 className="text-sm font-bold text-slate-300">⚡ {label} — Applicazione Live (ultimo forecast)</h3>
+      <h3 className="text-sm font-bold text-slate-300">⚡ Correzioni attive (ultimo forecast)</h3>
       {meta ? (
         <p
           className="text-[10px] leading-relaxed text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2"
@@ -639,37 +639,31 @@ function LiveStatusTable({
         <table className="min-w-full text-xs text-left text-gray-300">
           <thead className="bg-[#0d1117] text-gray-400 uppercase tracking-wider text-[9px] font-bold border-b border-slate-800">
             <tr>
-              <th className="px-4 py-2.5">Risoluzione</th>
-              <th className="px-4 py-2.5">Adapter</th>
-              <th className="px-4 py-2.5">Pred Len</th>
-              <th className="px-4 py-2.5">|Residuo|</th>
-              <th className="px-4 py-2.5">Covariati (skew / pcr / gex)</th>
-              <th className="px-4 py-2.5" title="Correzione auto-appresa dal track record (ultimi 14g). Applicata solo se l'holdout mostra un guadagno chiaro di accuracy.">Bias Corr.</th>
-              <th className="px-4 py-2.5" title="Allargamento empirico della banda Monte Carlo p10-p90, appreso dal track record (la banda nativa sottocopre: 0-6% misurato vs 80% nominale). Applicato solo se l'holdout mostra un guadagno chiaro di copertura.">Band Cal.</th>
-              <th className="px-4 py-2.5">Note</th>
+              <th className="px-3 py-2.5">Simbolo</th>
+              <th className="px-3 py-2.5">Risoluzione</th>
+              <th className="px-3 py-2.5" title="Adapter covariati (MLP) sul forecast Kronos">Adapter</th>
+              <th className="px-3 py-2.5">Pred Len</th>
+              <th className="px-3 py-2.5" title="Correzione auto-appresa dal track record (ultimi 14g). Applicata solo se l'holdout mostra un guadagno chiaro di accuracy.">Bias Corr.</th>
+              <th className="px-3 py-2.5" title="Allargamento empirico della banda Monte Carlo p10-p90, appreso dal track record. Applicato solo se l'holdout mostra un guadagno chiaro di copertura.">Band Cal.</th>
+              <th className="px-3 py-2.5">Alpha Lab</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
-            {rows.map(({ h, st, bc, bcal }) => (
-              <tr key={h} className="hover:bg-slate-900/40">
-                <td className="px-4 py-2.5 font-semibold text-slate-200">{h}</td>
-                <td className="px-4 py-2.5">
+            {rows.map(({ symbol, h, st, bc, bcal, res }) => (
+              <tr key={`${symbol}-${h}`} className="hover:bg-slate-900/40">
+                <td className="px-3 py-2.5 font-semibold text-slate-200">{symbol}</td>
+                <td className="px-3 py-2.5 font-semibold text-slate-200">{h}</td>
+                <td className="px-3 py-2.5">
                   {st?.applied ? (
-                    <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-green-500/10 text-green-400 border border-green-500/20">APPLICATO</span>
+                    <Badge tone="good">APPLICATO</Badge>
                   ) : st?.supported ? (
-                    <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">SALTATO</span>
+                    <Badge tone="warn">SALTATO</Badge>
                   ) : (
-                    <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-slate-700/40 text-slate-400 border border-slate-700">NESSUN ADAPTER</span>
+                    <Badge tone="neutral">NO</Badge>
                   )}
                 </td>
-                <td className="px-4 py-2.5 font-mono text-gray-400">{st?.pred_len ?? '—'}</td>
-                <td className="px-4 py-2.5 font-mono">{st?.residual_norm != null ? fmt(st.residual_norm, 4) : '—'}</td>
-                <td className="px-4 py-2.5 font-mono text-gray-400 text-[10px]">
-                  {st?.covariates
-                    ? `${fmt(st.covariates.skew, 2)} / ${fmt(st.covariates.pcr, 2)} / ${fmt(st.covariates.gex_b, 2)}`
-                    : '—'}
-                </td>
-                <td className="px-4 py-2.5">
+                <td className="px-3 py-2.5 font-mono text-gray-400">{st?.pred_len ?? '—'}</td>
+                <td className="px-3 py-2.5">
                   {bc?.applied ? (
                     <span
                       className="px-2 py-0.5 text-[9px] font-bold rounded bg-blue-500/10 text-blue-300 border border-blue-500/20"
@@ -678,17 +672,12 @@ function LiveStatusTable({
                       {bc.correction_pct >= 0 ? '+' : ''}{bc.correction_pct.toFixed(2)}%
                     </span>
                   ) : bc ? (
-                    <span
-                      className="px-2 py-0.5 text-[9px] font-bold rounded bg-slate-700/40 text-slate-500 border border-slate-700"
-                      title={bc.reason}
-                    >
-                      OFF
-                    </span>
+                    <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-slate-700/40 text-slate-500 border border-slate-700" title={bc.reason}>OFF</span>
                   ) : (
                     <span className="text-[10px] text-gray-600">—</span>
                   )}
                 </td>
-                <td className="px-4 py-2.5">
+                <td className="px-3 py-2.5">
                   {bcal?.applied ? (
                     <span
                       className="px-2 py-0.5 text-[9px] font-bold rounded bg-violet-500/10 text-violet-300 border border-violet-500/20"
@@ -697,17 +686,21 @@ function LiveStatusTable({
                       ×{bcal.factor.toFixed(1)}
                     </span>
                   ) : bcal ? (
-                    <span
-                      className="px-2 py-0.5 text-[9px] font-bold rounded bg-slate-700/40 text-slate-500 border border-slate-700"
-                      title={bcal.reason}
-                    >
-                      OFF
-                    </span>
+                    <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-slate-700/40 text-slate-500 border border-slate-700" title={bcal.reason}>OFF</span>
                   ) : (
                     <span className="text-[10px] text-gray-600">—</span>
                   )}
                 </td>
-                <td className="px-4 py-2.5 text-[10px] text-gray-500">{st?.reason ?? '—'}</td>
+                <td className="px-3 py-2.5">
+                  {(res as { alpha_lab?: { mode?: string } })?.alpha_lab?.mode ? (
+                    <Badge tone={(res as { alpha_lab?: { mode?: string } }).alpha_lab?.mode === 'model' ? 'info' : 'neutral'}
+                           title={`Alpha lab: ${(res as { alpha_lab?: { mode?: string } }).alpha_lab?.mode}`}>
+                      {(res as { alpha_lab?: { mode?: string } }).alpha_lab?.mode}
+                    </Badge>
+                  ) : (
+                    <span className="text-[10px] text-gray-600">—</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -715,115 +708,16 @@ function LiveStatusTable({
       </div>
       <p className="text-[10px] text-gray-500 leading-relaxed">
         <span className="text-gray-400 font-semibold">Bias Corr.</span> = correzione auto-appresa dal track record
-        (ultimi 14 giorni di previsioni verificate). Il sistema impara il bias sistematico del modello e lo
-        compensa sulle nuove previsioni. <span className="text-blue-300">Blue +X%</span> = correzione applicata
-        (tilt su); <span className="text-slate-500">OFF</span> = disattivata dall'anti-peggioramento (l'holdout
-        non mostrava un guadagno chiaro).{' '}
-        <span className="text-gray-400 font-semibold">Band Cal.</span> = allargamento empirico della banda Monte
-        Carlo p10-p90 (la banda nativa sottocopre nettamente); <span className="text-violet-300">viola ×k</span> =
-        banda allargata di k volte, OFF = gate anti-peggioramento. Passa il mouse sui badge per i dettagli.
+        (applicata solo se l'holdout mostrava un guadagno chiaro).{' '}
+        <span className="text-gray-400 font-semibold">Band Cal.</span> = allargamento empirico della banda Monte Carlo
+        p10–p90. <span className="text-gray-400 font-semibold">Alpha Lab</span> = campione del torneo walk-forward
+        (modello / dampen / passthrough / observe). Passa il mouse sui badge per i dettagli.
       </p>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-export const AdapterStatusView: React.FC<AdapterStatusViewProps> = ({ sharedState }) => {
-  const { kronosForecast, handleRefresh, refreshing, timeSinceUpdate } = sharedState;
-  const [stats, setStats] = useState<AdapterTrainingStats | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const s = await fetchAdapterStats(true);
-      setStats(s);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const id = setInterval(load, 60000);
-    return () => clearInterval(id);
-  }, [load]);
-
-  const verdict = useMemo(() => computeVerdict(stats), [stats]);
-
-  const onRefresh = async () => {
-    await Promise.all([load(), handleRefresh()]);
-  };
-
-  return (
-    <div className="flex-1 flex flex-col">
-      <div
-        className="sticky z-40 bg-[#161b22]/95 backdrop-blur border-b border-slate-800"
-        style={{ top: 'var(--app-nav-h, 0px)' }}
-      >
-        <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-3">
-          <ControlBar timeSinceUpdate={timeSinceUpdate} refreshing={refreshing} onRefresh={onRefresh} />
-        </div>
-      </div>
-
-      <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6 w-full">
-        {loading && !stats ? (
-          <div className="flex flex-col items-center justify-center min-h-[300px] bg-[#161b22] border border-slate-800 rounded-2xl">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-4" />
-            <span className="text-gray-400 text-sm">Caricamento statistiche adapter…</span>
-          </div>
-        ) : (
-          <>
-            <VerdictCard stats={stats} verdict={verdict} />
-            {stats && <StatCards stats={stats} />}
-            {stats && <ImprovementCard stats={stats} />}
-            {stats && <HorizonTable stats={stats} />}
-            {stats && <RunsHistoryChart stats={stats} />}
-            {stats && <LossChart stats={stats} />}
-            <LiveStatusTable item={kronosForecast?.SP500_bias} label="S&P 500 (SPY)" meta={kronosForecast?.bias_correction_meta} />
-            <LiveStatusTable item={kronosForecast?.NASDAQ_bias} label="Nasdaq 100 (QQQ)" meta={kronosForecast?.bias_correction_meta} />
-
-            <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4">
-              <h3 className="text-sm font-bold text-slate-300 mb-3">ℹ️ Come funziona</h3>
-              <div className="text-xs text-gray-400 space-y-3 max-w-3xl">
-                <div>
-                  <div className="text-slate-300 font-semibold mb-1">Cosa corregge</div>
-                  <p>
-                    Kronos produce una previsione di prezzo; l'adapter è un piccolo rete neurale (<b>MLP</b>) che aggiunge una <b>correzione residua</b> sopra quella previsione, usando tre segnali dal mercato delle opzioni:
-                    lo <i>skew di volatilità</i> (paura di crash), il rapporto <i>Put/Call OI</i> (bilancio rialzo/ribasso) e il <i>Net GEX</i> (pressione dei dealer sui prezzi).
-                    Kronos non viene mai ritrattato: l'adapter lo corregge senza toccarlo, quindi se la correzione è peggiorativa basta non applicarla.
-                  </p>
-                </div>
-
-                <div>
-                  <div className="text-slate-300 font-semibold mb-1">Come impara</div>
-                  <p>
-                    Un <b>unico modello</b> copre entrambi gli orizzonti attivi (4h e 1d). Per ogni snapshot storico in <code>options_history.json</code> recuperiamo da yfinance le <b>barre di prezzo realizzate</b> nei giorni successivi, e insegniamo all'adapter a prevedere l'errore che Kronos ha effettivamente commesso. L'accumulo di esempi reali continua da solo a ogni ciclo.
-                  </p>
-                </div>
-
-                <div>
-                  <div className="text-slate-300 font-semibold mb-1">Quali garanzie</div>
-                  <ul className="list-disc pl-4 space-y-1">
-                    <li><b>Guard anti-overfit:</b> il modello viene salvato solo con ≥ 30 esempi reali; altrimenti il vecchio adapter resta intatto.</li>
-                    <li><b>Early stopping:</b> il training si ferma se la validazione non migliora per 5 epoche, e viene conservato il punto migliore (non l'ultimo).</li>
-                    <li><b>Validazione per orizzonte:</b> la correzione viene applicata live solo sugli orizzonti validati (≥ 5 campioni di validation <i>e</i> miglioramento positivo). Gli altri orizzonti ricevono la previsione Kronos pulita.</li>
-                  </ul>
-                </div>
-
-                <div>
-                  <div className="text-slate-300 font-semibold mb-1">GEX pulito</div>
-                  <p>
-                    Dal 2026-06-26 la volatilità implicita è calcolata via inversione di Black-Scholes dal prezzo bid/ask e con un fit della smile per scadenza. I record storici precedenti, calcolati con una formula artefatta, sono stati scartati automaticamente.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-};
+// (The former AdapterStatusView page component was folded into TrustView —
+// the "Affidabilità" tab composes these exported pieces together with the
+// track-record sections. The old internal ControlBar and per-symbol live
+// tables were removed as redundant.)

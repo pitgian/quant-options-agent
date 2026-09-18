@@ -58,3 +58,16 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }
+
+/* ---------------------------------------------------------------------------
+ * Tabular numbers for prices/metrics — digits keep a fixed width so values
+ * stop "jumping" on every refresh. Applied via the .tnum utility class.
+ * ------------------------------------------------------------------------- */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Prices and metrics are also tabular wherever the mono font is used. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}

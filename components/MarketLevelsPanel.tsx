@@ -1,22 +1,23 @@
 /**
- * DayTradingView — Redesigned Side-by-Side Day Trading Key Levels View
+ * MarketLevelsPanel — intraday key-levels panel (support/resistance with OI+Vol
+ * bars, GEX regime, futures hero price, Kronos boundary markers).
  *
- * Shows S&P 500 and Nasdaq 100 side-by-side, listing support/resistance key levels,
- * GEX regime, spot/futures prices, and Kronos AI expected ranges with confluence indicators.
+ * Exports:
+ *   MarketLevelsColumn — the full panel for ONE market (SP500 | NASDAQ100).
+ *                        Embedded in the Mercato tab next to the volume profile.
+ *   TradingGuide       — collapsible operational guide for the levels view.
  *
- * @module components/DayTradingView
+ * (Formerly DayTradingView: the duplicated page shell + dual-column layout
+ * live on only as this single-market panel — the market choice is owned by
+ * the shared ControlBar in App/App-level views.)
+ *
+ * @module components/MarketLevelsPanel
  */
 
-import React, { useMemo, useState, useEffect } from 'react';
-import { ExpiryFilter, DayTradingLevel, DayTradingData, KronosForecast } from '../types';
-import { useOptionsData } from '../hooks/useOptionsData';
-import { formatCompact, formatStrike, formatDistance, formatGEX, formatTimestamp } from '../utils/formatting';
-import { EXPIRY_OPTIONS } from '../lib/expiry';
-import { KRONOS_TIMEFRAMES, getActiveKronosForecast as computeKronosForecast, type KronosTimeframe } from '../lib/kronos';
-import { DayTradingHeader } from './DayTradingHeader';
-import { IconRefresh } from './Icons';
-import { LoadingState } from './LoadingState';
-import { ErrorState } from './ErrorState';
+import React, { useMemo, useState } from 'react';
+import { DayTradingLevel, DayTradingData, KronosForecast } from '../types';
+import { formatCompact, formatStrike, formatDistance, formatGEX } from '../utils/formatting';
+import { getActiveKronosForecast as computeKronosForecast, type KronosTimeframe } from '../lib/kronos';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -299,7 +300,7 @@ const RegimeBadge: React.FC<{
 };
 
 /** Trading Guide Accordion component */
-const TradingGuide: React.FC = () => {
+export const TradingGuide: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -364,7 +365,7 @@ interface MarketLevelsColumnProps {
   showCrossSymbol: boolean;
 }
 
-const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
+export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
   market,
   defaultSymbol,
   etfSymbol,
@@ -535,9 +536,6 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
     );
   }
 
-  const { spot: dataSpot, gexRegime } = data;
-  const etfSpot = liveSpot[etfSymbol] || etfData?.spot || 0;
-  const indexSpot = liveSpot[indexSymbol] || indexData?.spot || 0;
   const futuresSpot = liveSpot[futuresSymbol] || 0;
 
   return (
@@ -558,129 +556,10 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
             futures headline + ETF secondary is the only view shipped. */}
       </div>
 
-      {/* ⚡ FUTURES HERO BAR — the price the trader actually operates on (ES/NQ) */}
-      {futuresSpot > 0 && (
-        <div className="bg-gradient-to-r from-blue-500/15 to-indigo-500/10 border border-blue-500/30 rounded-xl p-3.5 flex items-center justify-between gap-3">
-          <div className="flex flex-col">
-            <span className="text-[9px] text-blue-300 uppercase font-extrabold tracking-widest flex items-center gap-1">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-              {futuresSymbol} FUTURES · LIVE
-            </span>
-            <span className="text-2xl sm:text-3xl font-mono font-extrabold text-white mt-0.5 leading-none">
-              ${futuresSpot.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-            </span>
-          </div>
-          <div className="flex flex-col items-end text-right">
-            <span className="text-[9px] text-gray-400 uppercase font-bold tracking-wider">Basis vs {indexSymbol}</span>
-            <span
-              className="text-sm font-mono font-bold mt-0.5"
-              style={{ color: futuresBasis >= 0 ? '#4ade80' : '#f87171' }}
-              title={`${futuresSymbol} − ${indexSymbol} (premium/discount sul fair value)`}
-            >
-              {futuresBasis >= 0 ? '+' : ''}{futuresBasis.toFixed(1)} pts
-              <span className="text-[10px] text-gray-500 ml-1">
-                ({futuresBasis >= 0 ? '+' : ''}{(futuresBasis / indexSpot * 100).toFixed(2)}%)
-              </span>
-            </span>
-            <span className="text-[8px] text-gray-500 mt-0.5 font-mono">
-              1 {indexSymbol} = {(indexToEtfRatio).toFixed(2)} {etfSymbol}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Spot context & GEX Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[#0d1117]/40 border border-slate-850 rounded-xl p-4">
-        {/* Spot info cell — secondary context (ETF + Index cash) */}
-        <div className="flex flex-col justify-center">
-          <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Cash Reference ({activeSymbol})</span>
-          <span className="text-lg font-mono font-bold text-slate-200 mt-0.5">
-            ${spot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-          <div className="mt-2 text-[9px] text-gray-400 space-y-0.5 font-semibold border-t border-slate-850 pt-2">
-            <div className="flex justify-between">
-              <span>Cash ETF ({etfSymbol}):</span>
-              <span className="font-mono text-gray-300">${etfSpot > 0 ? etfSpot.toFixed(2) : 'N/A'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Cash Index ({indexSymbol}):</span>
-              <span className="font-mono text-gray-300">${indexSpot > 0 ? indexSpot.toLocaleString(undefined, { maximumFractionDigits: 1 }) : 'N/A'}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* GEX State Cell */}
-        <div className="flex flex-col gap-2 justify-center border-t md:border-t-0 md:border-l border-slate-850 pt-3 md:pt-0 md:pl-4">
-          <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Stato Mercato & GEX</span>
-          <RegimeBadge
-            regime={gexRegime.regime}
-            label={gexRegime.label}
-            netGEX={gexRegime.netGEX}
-            flipPoint={gexRegime.flipPoint}
-          />
-          {(data.volatilitySkew25d !== undefined || data.putCallOiRatio !== undefined) && (
-            <div className="grid grid-cols-2 gap-1 border-t border-slate-850 pt-1.5 text-[9px] font-semibold text-gray-500">
-              {data.volatilitySkew25d !== undefined && (
-                <div className="flex flex-col">
-                  <span>Skew 25D</span>
-                  <span className="text-[10px] font-mono font-bold text-amber-400 mt-0.5">
-                    {data.volatilitySkew25d > 0 ? '+' : ''}{(data.volatilitySkew25d * 100).toFixed(1)}%
-                  </span>
-                </div>
-              )}
-              {data.putCallOiRatio !== undefined && (
-                <div className="flex flex-col">
-                  <span>P/C Ratio (OI)</span>
-                  <span className="text-[10px] font-mono font-bold text-indigo-400 mt-0.5">
-                    {data.putCallOiRatio.toFixed(2)}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Kronos AI expectations card */}
-      {activeForecast ? (
-        <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 flex flex-col gap-2">
-          <div className="flex justify-between items-center border-b border-blue-500/10 pb-1.5">
-            <span className="text-[9px] text-blue-400 font-bold uppercase tracking-wider">🤖 Previsioni Kronos AI</span>
-            <span className="text-[9px] text-slate-500 font-semibold font-mono">Zoom: {kronosTimeframe}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-center items-center">
-            <div className="flex flex-col items-center">
-              <span className="text-[9px] text-gray-500 uppercase font-bold">Trend Bias</span>
-              <span className={`text-[11px] font-extrabold mt-1 uppercase px-1.5 py-0.5 rounded ${
-                activeForecast.trendBias === 'BULLISH' ? 'text-green-400 bg-green-500/10' :
-                activeForecast.trendBias === 'BEARISH' ? 'text-red-400 bg-red-500/10' : 'text-gray-400 bg-gray-500/10'
-              }`}>
-                {activeForecast.trendBias === 'BULLISH' ? 'Rialzista' :
-                 activeForecast.trendBias === 'BEARISH' ? 'Ribassista' : 'Neutrale'}
-              </span>
-            </div>
-            
-            <div className="flex flex-col items-center col-span-2 border-l border-slate-850">
-              <span className="text-[9px] text-gray-500 uppercase font-bold">Range Atteso</span>
-              <span className="text-[11px] font-mono font-bold text-slate-200 mt-1">
-                ${(activeForecast.expectedLow * indexToEtfMultiplier).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} - ${(activeForecast.expectedHigh * indexToEtfMultiplier).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-              </span>
-            </div>
-          </div>
-          <div className="flex justify-between items-center mt-1 pt-1.5 border-t border-blue-500/10 text-[9px] text-gray-500 font-semibold">
-            <span>Volatilità Prevista: <strong className="text-gray-300 font-mono">{(activeForecast.volatilityPct).toFixed(3)}%</strong></span>
-            <span className={`px-1.5 py-0.2 rounded text-[8px] font-bold uppercase ${
-              activeForecast.volatilityPct > 0.4 ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'
-            }`}>
-              {activeForecast.volatilityPct > 0.4 ? 'Elevata' : 'Bassa'}
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-slate-900/30 border border-slate-850 rounded-xl p-3 text-center text-[10px] text-gray-500 italic">
-          Previsioni Kronos AI non disponibili per questo timeframe.
-        </div>
-      )}
+      {/* (Futures hero bar, cash/GEX summary and the Kronos card were removed:
+          the shared ticker strip in the Mercato tab already shows ES price +
+          basis, GEX regime, skew/PCR and the Kronos bias/range. The 🎯 Kr
+          High/Low markers below still reference the active Kronos forecast.) */}
 
       {/* Levels list layout */}
       <div className="flex flex-col gap-1.5">
@@ -784,123 +663,7 @@ const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
 };
 
 // ---------------------------------------------------------------------------
-// Main Component
+// (The former page-level DayTradingView shell — duplicate control bar, dual
+// market grid, footer — was removed in the UI restructure: the Mercato tab
+// owns the market selector and renders MarketLevelsColumn directly.)
 // ---------------------------------------------------------------------------
-
-interface DayTradingViewProps {
-  sharedState: ReturnType<typeof useOptionsData>;
-}
-
-export function DayTradingView({ sharedState }: DayTradingViewProps) {
-  const state = sharedState;
-
-  const {
-    loading,
-    error,
-    spyData,
-    spxData,
-    qqqData,
-    ndxData,
-    refreshing,
-    isBackgroundRefreshing,
-    showUpdatedFlash,
-    expiryFilter,
-    setExpiryFilter,
-    handleRefresh,
-    lastRefreshed,
-    kronosForecast,
-    liveSpot,
-  } = state;
-
-  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1d');
-  const [showCrossSymbol, setShowCrossSymbol] = useState(true);
-  const [flashVisible, setFlashVisible] = useState(false);
-
-  useEffect(() => {
-    if (showUpdatedFlash) {
-      setFlashVisible(true);
-      const timer = setTimeout(() => setFlashVisible(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [showUpdatedFlash]);
-
-  const lastUpdatedText = useMemo(() => {
-    const activeRef = spyData || qqqData || spxData || ndxData;
-    if (!activeRef?.timestamp) return '';
-    return formatTimestamp(activeRef.timestamp);
-  }, [spyData, qqqData, spxData, ndxData]);
-
-  // Loading & error states at application level
-  if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={error} onRetry={handleRefresh} />;
-  if (!spyData && !qqqData) return <ErrorState message="No data available" onRetry={handleRefresh} />;
-
-  return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#0d1117' }}>
-      
-      {/* GLOBAL CONTROL HEADER */}
-      <DayTradingHeader
-        kronosTimeframe={kronosTimeframe}
-        setKronosTimeframe={setKronosTimeframe}
-        expiryFilter={expiryFilter}
-        setExpiryFilter={setExpiryFilter}
-        showCrossSymbol={showCrossSymbol}
-        setShowCrossSymbol={setShowCrossSymbol}
-        refreshing={refreshing}
-        handleRefresh={handleRefresh}
-        lastUpdatedText={lastUpdatedText}
-        isBackgroundRefreshing={isBackgroundRefreshing}
-        flashVisible={flashVisible}
-      />
-      {/* MAIN CONTENT AREA */}
-      <main className="flex-1 px-6 py-6">
-        <div className="max-w-[1850px] mx-auto flex flex-col gap-4">
-          
-          {/* Trading operational guide at the top */}
-          <TradingGuide />
-
-          {/* S&P 500 and Nasdaq 100 Column Grid */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full pb-10">
-            {/* LEFT COLUMN: S&P 500 */}
-            <MarketLevelsColumn
-              market="SP500"
-              defaultSymbol="SPY"
-              etfSymbol="SPY"
-              indexSymbol="SPX"
-              futuresSymbol="ES"
-              etfData={spyData}
-              indexData={spxData}
-              liveSpot={liveSpot}
-              kronosForecast={kronosForecast}
-              kronosTimeframe={kronosTimeframe}
-              showCrossSymbol={showCrossSymbol}
-            />
-
-            {/* RIGHT COLUMN: Nasdaq 100 */}
-            <MarketLevelsColumn
-              market="NASDAQ100"
-              defaultSymbol="QQQ"
-              etfSymbol="QQQ"
-              indexSymbol="NDX"
-              futuresSymbol="NQ"
-              etfData={qqqData}
-              indexData={ndxData}
-              liveSpot={liveSpot}
-              kronosForecast={kronosForecast}
-              kronosTimeframe={kronosTimeframe}
-              showCrossSymbol={showCrossSymbol}
-            />
-          </div>
-        </div>
-      </main>
-
-      {/* FOOTER */}
-      <footer className="border-t border-gray-800/40 px-6 py-2.5 text-[10px] text-gray-600 flex justify-between">
-        <span>QuantFlow AI — Dual Intraday View</span>
-        {lastRefreshed && (
-          <span>Fetched: {lastRefreshed.toLocaleTimeString()}</span>
-        )}
-      </footer>
-    </div>
-  );
-}

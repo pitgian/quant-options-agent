@@ -12,6 +12,11 @@ foundation model fine-tuned with options-derived covariates.
 
 ## Features
 
+- **Tre aree, zero ridondanza** — 📈 *Mercato* (profilo volumi 3-profilo + livelli
+  intraday in toggle, ticker strip compatta), 🔮 *Proiezioni* (grafico Kronos con
+  banda Monte Carlo), ✅ *Affidabilità* (Alpha Lab, metriche deduplicate per
+  target, diagnostica adapter ripiegata). Un solo kit di componenti condivisi
+  (`components/ui.tsx`): ControlBar, Segmented, Badge, Freshness, InfoHint.
 - **Gamma Exposure (GEX)** — per-strike GEX, total net GEX, gamma flip point and
   volatility regime (positive / negative / neutral).
 - **Put / Call Walls** — DTE-aware scoring with cross-side penalty and Gaussian

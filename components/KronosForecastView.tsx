@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { UseOptionsDataReturn } from '../hooks/useOptionsData';
-import { IconRefresh } from './Icons';
+import { ControlBar, Segmented, Labeled, Card, Badge, InfoHint } from './ui';
 import { KRONOS_TIMEFRAMES, getActiveKronosForecast, type KronosTimeframe, type ActiveKronosForecast } from '../lib/kronos';
 import type { KronosCoherence } from '../types';
 
@@ -21,7 +21,7 @@ type ChartData = ActiveKronosForecast & { liveSpot: number };
 type DisplayMode = 'futures' | 'index' | 'etf';
 
 // ===========================================================================
-// Sub-component: Control bar
+// Sub-component: Control bar (shared kit — market / horizon / unit / freshness)
 // ===========================================================================
 
 interface KronosControlBarProps {
@@ -38,214 +38,123 @@ interface KronosControlBarProps {
 
 function KronosControlBar({
   market, setMarket, kronosTimeframe, setKronosTimeframe,
-  displayMode, setDisplayMode, refreshing, handleRefresh, timeSinceUpdate,
+  displayMode, setDisplayMode,
+  refreshing, handleRefresh, timeSinceUpdate,
 }: KronosControlBarProps) {
   return (
-    <div className="bg-[#161b22] border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        {/* Market selector (synchronized) */}
-        <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800 shrink-0">
-          <button
-            onClick={() => setMarket('SP500')}
-            className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-150"
-            style={{
-              backgroundColor: market === 'SP500' ? '#1e293b' : 'transparent',
-              color: market === 'SP500' ? '#e2e8f0' : '#64748b',
-            }}
-          >
-            🇺🇸 S&P 500
-          </button>
-          <button
-            onClick={() => setMarket('NASDAQ100')}
-            className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-150"
-            style={{
-              backgroundColor: market === 'NASDAQ100' ? '#1e293b' : 'transparent',
-              color: market === 'NASDAQ100' ? '#e2e8f0' : '#64748b',
-            }}
-          >
-            💻 Nasdaq 100
-          </button>
-        </div>
-
-        {/* Timeframe selector */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Orizzonte:</span>
-          <div className="flex items-center bg-[#0d1117] rounded-lg p-0.5 border border-slate-800">
-            {KRONOS_TIMEFRAMES.map((tf) => (
-              <button
-                key={tf.key}
-                onClick={() => setKronosTimeframe(tf.key)}
-                className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
-                style={{
-                  backgroundColor: kronosTimeframe === tf.key ? '#1e293b' : 'transparent',
-                  color: kronosTimeframe === tf.key ? '#e2e8f0' : '#64748b',
-                }}
-              >
-                {tf.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Display Mode selector */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Unità:</span>
-          <div className="flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800">
-            <button
-              onClick={() => setDisplayMode('futures')}
-              className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
-              style={{
-                backgroundColor: displayMode === 'futures' ? '#1e293b' : 'transparent',
-                color: displayMode === 'futures' ? '#e2e8f0' : '#64748b',
-              }}
-            >
-              Futures ({market === 'SP500' ? 'ES' : 'NQ'})
-            </button>
-            <button
-              onClick={() => setDisplayMode('index')}
-              className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
-              style={{
-                backgroundColor: displayMode === 'index' ? '#1e293b' : 'transparent',
-                color: displayMode === 'index' ? '#e2e8f0' : '#64748b',
-              }}
-              title="Scala indice (SPX/NDX) — coincide con i muri della dashboard Volumi"
-            >
-              Index ({market === 'SP500' ? 'SPX' : 'NDX'})
-            </button>
-            <button
-              onClick={() => setDisplayMode('etf')}
-              className="px-2.5 py-1.5 rounded text-[10px] font-semibold transition-all duration-150"
-              style={{
-                backgroundColor: displayMode === 'etf' ? '#1e293b' : 'transparent',
-                color: displayMode === 'etf' ? '#e2e8f0' : '#64748b',
-              }}
-            >
-              ETF ({market === 'SP500' ? 'SPY' : 'QQQ'})
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Refresh button */}
-      <button
-        onClick={handleRefresh}
-        disabled={refreshing}
-        className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-        title={timeSinceUpdate ? `Aggiornato: ${timeSinceUpdate}` : 'Aggiorna'}
-      >
-        <IconRefresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-        {timeSinceUpdate && (
-          <span className="text-[11px] text-gray-500">Aggiornato: {timeSinceUpdate}</span>
-        )}
-      </button>
-    </div>
+    <ControlBar
+      left={
+        <>
+          <Segmented
+            value={market}
+            onChange={(m) => setMarket(m)}
+            options={[
+              { value: 'SP500', label: '🇺🇸 S&P 500' },
+              { value: 'NASDAQ100', label: '💻 Nasdaq 100' },
+            ]}
+          />
+          <Labeled label="Orizzonte">
+            <Segmented
+              value={kronosTimeframe}
+              onChange={(tf) => setKronosTimeframe(tf)}
+              options={KRONOS_TIMEFRAMES.map((tf) => ({ value: tf.key, label: tf.label }))}
+            />
+          </Labeled>
+          <Labeled label="Unità">
+            <Segmented
+              value={displayMode}
+              onChange={(m) => setDisplayMode(m)}
+              options={[
+                { value: 'futures', label: `Futures (${market === 'SP500' ? 'ES' : 'NQ'})` },
+                { value: 'index', label: `Index (${market === 'SP500' ? 'SPX' : 'NDX'})`, title: 'Scala indice — coincide con i muri della dashboard Volumi' },
+                { value: 'etf', label: `ETF (${market === 'SP500' ? 'SPY' : 'QQQ'})` },
+              ]}
+            />
+          </Labeled>
+        </>
+      }
+      right={
+        <span className="text-[11px] text-gray-500 tnum">aggiornato {timeSinceUpdate}</span>
+      }
+    />
   );
 }
 
 // ===========================================================================
 // Sub-component: Summary cards
-// ===========================================================================
 
 interface KronosSummaryCardsProps {
   chartData: ChartData;
   kronosTimeframe: KronosTimeframe;
-  market: 'SP500' | 'NASDAQ100';
-  displayMode: DisplayMode;
   /** Coerenza direzionale tra i due orizzonti (4h vs 1d). Opzionale: i forecast
-   *  generati prima di questa feature non la contengono, in quel caso la card
-   *  non viene renderizzata. */
+   *  generati prima di questa feature non la contengono. */
   coherence?: KronosCoherence;
 }
 
-function KronosSummaryCards({ chartData, kronosTimeframe, market, displayMode, coherence }: KronosSummaryCardsProps) {
+function KronosSummaryCards({ chartData, kronosTimeframe, coherence }: KronosSummaryCardsProps) {
   const isBullish = chartData.trendBias === 'BULLISH';
   const isBearish = chartData.trendBias === 'BEARISH';
-  const biasBadgeColor = isBullish ? 'text-green-400 bg-green-500/10 border-green-500/20' : isBearish ? 'text-red-400 bg-red-500/10 border-red-500/20' : 'text-gray-400 bg-gray-500/10 border-gray-500/20';
-  const biasLabel = isBullish ? '🟢 RIALZISTA' : isBearish ? '🔴 RIBASSISTA' : '🟡 NEUTRALE';
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-      <div className="bg-[#161b22] border border-slate-800 rounded-xl p-4 flex flex-col justify-between min-h-[96px]">
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* 1. Bias + Coerenza (merged: the bias is only as solid as the agreement) */}
+      <Card className="flex flex-col justify-between min-h-[96px]">
         <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Bias Previsionale ({kronosTimeframe})</span>
-        <div className="flex items-center justify-between mt-2">
-          <span className={`px-2.5 py-1 text-xs font-bold rounded-lg border ${biasBadgeColor}`}>
-            {biasLabel}
-          </span>
-          <span className="text-[11px] text-gray-400 font-medium">
-            Forza: {chartData.strengthPct > 0 ? '+' : ''}{chartData.strengthPct.toFixed(2)}%
-          </span>
-        </div>
-      </div>
-
-      {/* Coerenza 4h/1d — dice se il bias sopra è solido (entrambi gli orizzonti
-          concordano) o fragile (i due orizzonti si contraddicono). Renderizzata
-          solo se il JSON contiene il campo coherence (forecast recenti). */}
-      <div className="bg-[#161b22] border border-slate-800 rounded-xl p-4 flex flex-col justify-between min-h-[96px]">
-        <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Coerenza 4h / 1d</span>
-        {coherence ? (
-          <>
-            <div className="flex items-center justify-between mt-2">
-              <span className={`px-2.5 py-1 text-xs font-bold rounded-lg border ${
-                coherence.label === 'CONCORDI' ? 'text-green-400 bg-green-500/10 border-green-500/20'
-                : coherence.label === 'DISCORDI' ? 'text-red-400 bg-red-500/10 border-red-500/20'
-                : 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20'
-              }`}>
-                {coherence.label === 'CONCORDI' ? '🟢' : coherence.label === 'DISCORDI' ? '🔴' : '🟡'} {coherence.label}
+        <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Badge tone={isBullish ? 'good' : isBearish ? 'bad' : 'neutral'} className="!text-xs !px-2.5 !py-1">
+              {isBullish ? '🟢 RIALZISTA' : isBearish ? '🔴 RIBASSISTA' : '🟡 NEUTRALE'}
+            </Badge>
+            <span className="text-[11px] text-gray-400 font-medium tnum">
+              Forza: {chartData.strengthPct > 0 ? '+' : ''}{chartData.strengthPct.toFixed(2)}%
+            </span>
+          </div>
+          {coherence && (
+            <div className="flex items-center gap-1.5" title={`Coerenza tra orizzonti — score ${coherence.score}`}>
+              <Badge tone={coherence.label === 'CONCORDI' ? 'good' : coherence.label === 'DISCORDI' ? 'bad' : 'warn'}>
+                {coherence.label} {coherence.score}
+              </Badge>
+              <span className={`text-[10px] tnum ${coherence.strength_4h_pct >= 0 ? 'text-green-500/80' : 'text-red-500/80'}`}>
+                4h {coherence.strength_4h_pct >= 0 ? '▲' : '▼'}{Math.abs(coherence.strength_4h_pct).toFixed(2)}%
               </span>
-              <span className="text-[11px] text-gray-400 font-medium">Score: {coherence.score}</span>
-            </div>
-            <div className="text-[10px] text-gray-500 mt-1.5 flex justify-between">
-              <span className={coherence.strength_4h_pct >= 0 ? 'text-green-500/80' : 'text-red-500/80'}>
-                4h: {coherence.strength_4h_pct >= 0 ? '▲' : '▼'} {Math.abs(coherence.strength_4h_pct).toFixed(2)}%
-              </span>
-              <span className={coherence.strength_1d_pct >= 0 ? 'text-green-500/80' : 'text-red-500/80'}>
-                1d: {coherence.strength_1d_pct >= 0 ? '▲' : '▼'} {Math.abs(coherence.strength_1d_pct).toFixed(2)}%
+              <span className={`text-[10px] tnum ${coherence.strength_1d_pct >= 0 ? 'text-green-500/80' : 'text-red-500/80'}`}>
+                1d {coherence.strength_1d_pct >= 0 ? '▲' : '▼'}{Math.abs(coherence.strength_1d_pct).toFixed(2)}%
               </span>
             </div>
-          </>
-        ) : (
-          <div className="mt-2 text-[11px] text-gray-600 italic">non disponibile</div>
-        )}
-      </div>
-
-      <div className="bg-[#161b22] border border-slate-800 rounded-xl p-4 flex flex-col justify-between min-h-[96px]">
-        <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Prezzo Spot Corrente</span>
-        <div className="mt-2">
-          <span className="text-xl font-bold text-slate-100">${chartData.liveSpot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          <span className="text-[10px] text-gray-500 block">Unità: {displayMode === 'futures' ? (market === 'SP500' ? 'ES' : 'NQ') : displayMode === 'index' ? (market === 'SP500' ? 'SPX' : 'NDX') : (market === 'SP500' ? 'SPY' : 'QQQ')}</span>
+          )}
         </div>
-      </div>
+      </Card>
 
-      <div className="bg-[#161b22] border border-slate-800 rounded-xl p-4 flex flex-col justify-between min-h-[96px]">
+      {/* 2. Range atteso */}
+      <Card className="flex flex-col justify-between min-h-[96px]">
         <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Range Atteso Previsto</span>
         <div className="mt-2">
-          <span className="text-sm font-semibold text-slate-200">
+          <span className="text-sm font-semibold text-slate-200 tnum">
             ${chartData.expectedLow.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} - ${chartData.expectedHigh.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
           </span>
           <span className="text-[10px] text-gray-500 block">
-            {chartData.hasConfidenceBand
-              ? 'Banda esterna (p10–p90, Monte Carlo)'
-              : 'Massima escursione attesa'}
+            {chartData.hasConfidenceBand ? 'Banda esterna (p10–p90, Monte Carlo)' : 'Massima escursione attesa'}
           </span>
           {chartData.expectedHighP50 != null && chartData.expectedLowP50 != null && (
-            <span className="text-[10px] text-blue-300/70 block mt-0.5">
+            <span className="text-[10px] text-blue-300/70 block mt-0.5 tnum">
               Più probabile: ${chartData.expectedLowP50.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} – ${chartData.expectedHighP50.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
             </span>
           )}
         </div>
-      </div>
+      </Card>
 
-      <div className="bg-[#161b22] border border-slate-800 rounded-xl p-4 flex flex-col justify-between min-h-[96px]">
+      {/* 3. Volatilità */}
+      <Card className="flex flex-col justify-between min-h-[96px]">
         <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Volatilità Prevista</span>
         <div className="flex items-center justify-between mt-2">
-          <span className="text-lg font-bold text-slate-200">
+          <span className="text-lg font-bold text-slate-200 tnum">
             {chartData.volatilityPct.toFixed(3)}%
           </span>
-          <span className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded ${chartData.volatilityPct > 0.4 ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-green-500/10 text-green-400 border border-green-500/20'}`}>
-            {chartData.volatilityPct > 0.4 ? 'Elevata' : 'Bassa'}
-          </span>
+          <Badge tone={chartData.volatilityPct > 0.4 ? 'bad' : 'good'} className="!text-[9px] !px-2 !py-0.5">
+            {chartData.volatilityPct > 0.4 ? 'ELEVATA' : 'BASSA'}
+          </Badge>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -735,88 +644,6 @@ function KronosForecastChart({ chartData, kronosTimeframe, hoveredIndex, setHove
 }
 
 // ===========================================================================
-// Sub-component: Detailed predictions table
-// ===========================================================================
-
-interface KronosDataTableProps {
-  chartData: ChartData;
-  hoveredIndex: number | null;
-  setHoveredIndex: (idx: number | null) => void;
-}
-
-function KronosDataTable({ chartData, hoveredIndex, setHoveredIndex }: KronosDataTableProps) {
-  return (
-    <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
-      <h3 className="text-sm font-bold text-slate-300">📊 Tabella Dati Previsionali Kronos AI</h3>
-      <div className="overflow-x-auto rounded-lg border border-slate-850">
-        <table className="min-w-full text-xs text-left text-gray-300">
-          <thead className="bg-[#0d1117] text-gray-400 uppercase tracking-wider text-[9px] font-bold border-b border-slate-850">
-            <tr>
-              <th className="px-4 py-3"># Candela</th>
-              <th className="px-4 py-3">Orizzonte</th>
-              <th className="px-4 py-3">Orario Previsto</th>
-              <th className="px-4 py-3">Apertura</th>
-              <th className="px-4 py-3">Massimo</th>
-              <th className="px-4 py-3">Minimo</th>
-              <th className="px-4 py-3">Chiusura</th>
-              <th className="px-4 py-3">Variazione Spot</th>
-              <th className="px-4 py-3">Oscillazione Max</th>
-              <th className="px-4 py-3 text-right">Volume Futures</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-850">
-            {/* Row for starting spot */}
-            <tr className="bg-slate-900/20 text-gray-400 font-semibold italic">
-              <td className="px-4 py-2.5">-</td>
-              <td className="px-4 py-2.5">Spot</td>
-              <td className="px-4 py-2.5">Inizio</td>
-              <td className="px-4 py-2.5">-</td>
-              <td className="px-4 py-2.5">-</td>
-              <td className="px-4 py-2.5">-</td>
-              <td className="px-4 py-2.5">${chartData.liveSpot.toFixed(2)}</td>
-              <td className="px-4 py-2.5">0.00%</td>
-              <td className="px-4 py-2.5">-</td>
-              <td className="px-4 py-2.5 text-right">-</td>
-            </tr>
-            {chartData.candles.map((c, idx) => {
-              const isBullishCandle = c.close >= c.open;
-              const swingPct = ((c.high - c.low) / c.open) * 100;
-
-              return (
-                <tr
-                  key={idx}
-                  className="hover:bg-slate-900/40 transition-colors"
-                  style={{
-                    backgroundColor: hoveredIndex === idx ? 'rgba(59, 130, 246, 0.05)' : 'transparent'
-                  }}
-                  onMouseEnter={() => setHoveredIndex(idx)}
-                  onMouseLeave={() => setHoveredIndex(null)}
-                >
-                  <td className="px-4 py-2.5 font-bold text-gray-500">#{idx + 1}</td>
-                  <td className="px-4 py-2.5 font-semibold text-slate-200">{c.label}</td>
-                  <td className="px-4 py-2.5 text-gray-400">{c.formattedTime}</td>
-                  <td className="px-4 py-2.5 font-mono">${c.open.toFixed(2)}</td>
-                  <td className="px-4 py-2.5 font-mono text-green-400/80">${c.high.toFixed(2)}</td>
-                  <td className="px-4 py-2.5 font-mono text-red-400/80">${c.low.toFixed(2)}</td>
-                  <td className="px-4 py-2.5 font-mono font-bold" style={{ color: isBullishCandle ? '#10b981' : '#ef4444' }}>
-                    ${c.close.toFixed(2)}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono font-bold" style={{ color: c.changePct >= 0 ? '#10b981' : '#ef4444' }}>
-                    {c.changePct >= 0 ? '+' : ''}{c.changePct.toFixed(2)}%
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-gray-400">{swingPct.toFixed(2)}%</td>
-                  <td className="px-4 py-2.5 font-mono text-right text-gray-450">{c.rawVolume.toLocaleString()}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ===========================================================================
 // Main component
 // ===========================================================================
 
@@ -909,18 +736,11 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
           <KronosSummaryCards
             chartData={chartData}
             kronosTimeframe={kronosTimeframe}
-            market={market}
-            displayMode={displayMode}
             coherence={biasItem?.coherence}
           />
           <KronosForecastChart
             chartData={chartData}
             kronosTimeframe={kronosTimeframe}
-            hoveredIndex={hoveredIndex}
-            setHoveredIndex={setHoveredIndex}
-          />
-          <KronosDataTable
-            chartData={chartData}
             hoveredIndex={hoveredIndex}
             setHoveredIndex={setHoveredIndex}
           />

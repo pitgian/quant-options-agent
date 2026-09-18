@@ -210,6 +210,27 @@ function groupKey(symbol: string, horizon: string): string {
 }
 
 /**
+ * Deduplicate snapshots: one evaluation row per (symbol, horizon, target_at),
+ * keeping the LAST-issued snapshot (the most informed forecast before
+ * maturity — the one a user following the system would have acted on).
+ *
+ * Without dedup the history over-counts by ~38x (a snapshot every pipeline run
+ * points at the SAME target), so all metrics are statistically meaningless and
+ * contradict the deduped skill report produced by scripts/skill_evaluator.py.
+ * Pending (unscored) snapshots are deduped on the same key so pending/target
+ * counting stays consistent.
+ */
+export function dedupByTarget(snaps: ForecastSnapshot[]): ForecastSnapshot[] {
+  const best = new Map<string, ForecastSnapshot>();
+  for (const s of snaps) {
+    const key = `${s.symbol}|${s.horizon}|${s.target_at ?? ''}`;
+    const cur = best.get(key);
+    if (!cur || (s.issued_at ?? '') >= (cur.issued_at ?? '')) best.set(key, s);
+  }
+  return [...best.values()];
+}
+
+/**
  * Compute the full track-record metrics for the selected window/filters.
  *
  * Pure function — exported for unit testing (see forecastScoreService.test.ts).
@@ -231,9 +252,14 @@ export function computeMetrics(
     return true;
   });
 
+  // DEDUP FIRST: one evaluation row per (symbol, horizon, target_at). Every
+  // metric below (cards, rolling, counts) is computed on distinct targets so
+  // the numbers here agree with the Alpha Lab / skill report on the same page.
+  const deduped = dedupByTarget(selected);
+
   // Per-group breakdown across ALL four (symbol, horizon) combinations present.
   const groups: Record<string, ForecastSnapshot[]> = {};
-  for (const s of selected) {
+  for (const s of deduped) {
     const k = groupKey(s.symbol, s.horizon);
     (groups[k] ??= []).push(s);
   }
@@ -242,11 +268,11 @@ export function computeMetrics(
     byGroup[k] = computeMetricSet(snaps);
   }
 
-  const overall = computeMetricSet(selected);
+  const overall = computeMetricSet(deduped);
 
   // Rolling daily directional accuracy, per horizon, merged+sorted by day.
   const buckets: Record<string, Record<Horizon, { hits: number; n: number }>> = {};
-  for (const s of selected) {
+  for (const s of deduped) {
     if (s.direction_correct === null) continue; // FLAT excluded from rolling dir
     const day = s.issued_at.slice(0, 10);
     (buckets[day] ??= { '4h': { hits: 0, n: 0 }, '1d': { hits: 0, n: 0 } });
@@ -270,7 +296,7 @@ export function computeMetrics(
   }
   rolling.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.horizon < b.horizon ? -1 : 1));
 
-  const pendingCount = selected.filter((s) => s.realized_price === null).length;
+  const pendingCount = deduped.filter((s) => s.realized_price === null).length;
 
   const issuedTimes = selected
     .map((s) => Date.parse(s.issued_at))
@@ -287,7 +313,8 @@ export function computeMetrics(
     overall,
     rolling,
     pendingCount,
-    totalCount: selected.length,
+    // Distinct targets after dedup — the honest sample size shown in the UI.
+    totalCount: deduped.length,
     windowStart,
     windowEnd,
   };
