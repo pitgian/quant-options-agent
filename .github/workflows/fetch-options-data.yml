@@ -239,6 +239,12 @@ jobs:
           # Pull the forecast-verification history so prior forecasts can be
           # scored against realized prices (and the new one appended).
           git checkout origin/data -- data/kronos_forecast_history.json || true
+          # Pull the self-improvement artifacts so run_kronos.py can APPLY the
+          # current alpha-lab champion to the fresh forecast (and bias/band
+          # layers see the same evidence). Without these, apply_alpha_lab finds
+          # no file and silently runs in passthrough mode.
+          git checkout origin/data -- data/skill_report.json || true
+          git checkout origin/data -- data/alpha_lab.json || true
 
       - name: Freshness guard — skip if Kronos forecast is recent
         # Anti-pile-up: triggers fire every 5 min but a full Kronos run takes
