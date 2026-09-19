@@ -12,6 +12,10 @@ foundation model fine-tuned with options-derived covariates.
 
 ## Features
 
+- **Track record dei livelli** — ogni giorno registra i livelli day-trading
+  (muri pin/trigger per SPY/QQQ) e li valuta sulle barre 5m reali dopo 24h:
+  bounce vs break per famiglia, con verdetto binomiale vs il caso. Dati in
+  `data/level_history.json` + `data/level_report.json`.
 - **Tre aree, zero ridondanza** — 📈 *Mercato* (profilo volumi 3-profilo + livelli
   intraday in toggle, ticker strip compatta), 🔮 *Proiezioni* (grafico Kronos con
   banda Monte Carlo), ✅ *Affidabilità* (Alpha Lab, metriche deduplicate per
