@@ -3,7 +3,7 @@ import { UseOptionsDataReturn } from '../hooks/useOptionsData';
 import type { ForecastSnapshot } from '../types';
 import { AlphaLabView } from './AlphaLabView';
 import {
-  ControlBar, Segmented, Labeled, Freshness, Collapsible, Card,
+  ControlBar, Segmented, Labeled, Freshness, Collapsible, Card, Skeleton, SkeletonStat,
 } from './ui';
 import {
   fetchTrackRecord,
@@ -521,9 +521,13 @@ export const TrustView: React.FC<TrustViewProps> = ({ sharedState }) => {
 
       <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6 w-full">
         {loading && !snapshots ? (
-          <div className="flex flex-col items-center justify-center min-h-[300px] bg-[#161b22] border border-slate-800 rounded-2xl">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-4" />
-            <span className="text-gray-400 text-sm">Caricamento affidabilità…</span>
+          <div role="status" aria-live="polite" className="flex flex-col gap-4">
+            <span className="sr-only">Caricamento affidabilità…</span>
+            <Skeleton className="h-40 w-full" />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <SkeletonStat /><SkeletonStat /><SkeletonStat />
+            </div>
+            <Skeleton className="h-64 w-full" />
           </div>
         ) : !metrics || metrics.totalCount === 0 ? (
           <div className="flex flex-col items-center justify-center min-h-[300px] bg-[#161b22] border border-slate-800 rounded-2xl p-6 text-center">

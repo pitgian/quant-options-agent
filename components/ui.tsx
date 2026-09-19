@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { IconRefresh } from './Icons';
 
 /**
@@ -39,20 +39,24 @@ export function Segmented<T extends string | number>({
   const pad = size === 'xs' ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs';
   return (
     <div className={`inline-flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800 ${className}`}>
-      {options.map((o) => (
-        <button
-          key={String(o.value)}
-          onClick={() => onChange(o.value)}
-          title={o.title}
-          className={`${pad} rounded-md font-semibold transition-all duration-150 whitespace-nowrap`}
-          style={{
-            backgroundColor: value === o.value ? '#1e293b' : 'transparent',
-            color: value === o.value ? '#e2e8f0' : '#64748b',
-          }}
-        >
-          {o.label}
-        </button>
-      ))}
+      {options.map((o) => {
+        const selected = value === o.value;
+        return (
+          <button
+            key={String(o.value)}
+            onClick={() => onChange(o.value)}
+            title={o.title}
+            aria-pressed={selected}
+            className={`${pad} rounded-md font-semibold transition-all duration-150 whitespace-nowrap`}
+            style={{
+              backgroundColor: selected ? '#1e293b' : 'transparent',
+              color: selected ? '#e2e8f0' : '#64748b',
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -97,6 +101,7 @@ export function Freshness({
       <button
         onClick={onRefresh}
         disabled={refreshing}
+        aria-label="Aggiorna dati"
         className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
         title={timeSinceUpdate ? `Aggiornato: ${timeSinceUpdate}` : 'Aggiorna'}
       >
@@ -123,8 +128,27 @@ export function ControlBar({
   /** Usually a <Freshness>. */
   right?: React.ReactNode;
 }) {
+  const barRef = useRef<HTMLDivElement>(null);
+
+  // Publish the bar height as a CSS var so SECONDARY sticky bars (e.g. the
+  // levels sub-bar in Mercato) can stick exactly below it at any viewport
+  // width — the bar wraps to multiple rows on mobile, so a hardcoded offset
+  // would overlap or leave gaps. Same pattern as --app-nav-h in App.tsx.
+  useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const update = () => {
+      document.documentElement.style.setProperty('--app-controlbar-h', `${el.offsetHeight}px`);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div
+      ref={barRef}
       className="sticky z-40 bg-[#161b22]/95 backdrop-blur border-b border-slate-800"
       style={{ top: 'var(--app-nav-h, 0px)' }}
     >
@@ -228,6 +252,25 @@ export function Collapsible({ title, icon, children, defaultOpen = false, hint }
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Skeleton — shimmering placeholder blocks (loading states)
+// ---------------------------------------------------------------------------
+
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <div className={`animate-pulse rounded-lg bg-slate-800/70 ${className}`} />;
+}
+
+/** Card-shaped skeleton row: label bar + big value bar. */
+export function SkeletonStat({ className = '' }: { className?: string }) {
+  return (
+    <div className={`bg-[#161b22] border border-slate-800 rounded-xl p-3 flex flex-col gap-2 ${className}`}>
+      <Skeleton className="h-2 w-1/3" />
+      <Skeleton className="h-5 w-2/3" />
+      <Skeleton className="h-2 w-1/2" />
     </div>
   );
 }

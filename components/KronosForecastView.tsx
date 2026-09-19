@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { UseOptionsDataReturn } from '../hooks/useOptionsData';
-import { ControlBar, Segmented, Labeled, Card, Badge, InfoHint } from './ui';
+import { ControlBar, Segmented, Labeled, Card, Badge, InfoHint, SkeletonStat, Skeleton } from './ui';
 import { KRONOS_TIMEFRAMES, getActiveKronosForecast, type KronosTimeframe, type ActiveKronosForecast } from '../lib/kronos';
 import type { KronosCoherence } from '../types';
 
@@ -722,9 +722,12 @@ export const KronosForecastView: React.FC<KronosForecastViewProps> = ({ sharedSt
       <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6 w-full">
 
       {!kronosForecast ? (
-        <div className="flex-1 flex flex-col items-center justify-center min-h-[400px] bg-[#161b22] border border-slate-800 rounded-2xl">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-4" />
-          <span className="text-gray-400 text-sm">Caricamento proiezioni Kronos AI...</span>
+        <div role="status" aria-live="polite" className="flex flex-col gap-4">
+          <span className="sr-only">Caricamento proiezioni Kronos AI…</span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <SkeletonStat /><SkeletonStat /><SkeletonStat />
+          </div>
+          <Skeleton className="h-80 w-full" />
         </div>
       ) : !chartData || chartData.candles.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[400px] bg-[#161b22] border border-slate-800 rounded-2xl p-6 text-center">

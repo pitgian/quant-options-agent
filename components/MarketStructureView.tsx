@@ -664,7 +664,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       {viewMode === 'levels' && (
         <div
           className="sticky z-40 border-b border-slate-800 bg-[#161b22]/95 backdrop-blur px-4 py-2 sm:px-6"
-          style={{ top: 'calc(var(--app-nav-h, 0px) + 49px)' }}
+          style={{ top: 'calc(var(--app-nav-h, 0px) + var(--app-controlbar-h, 49px))' }}
         >
           <div className="max-w-[1850px] mx-auto flex items-center gap-3 flex-wrap">
             <Labeled label="Scadenza">
