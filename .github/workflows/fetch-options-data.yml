@@ -245,6 +245,7 @@ jobs:
           # no file and silently runs in passthrough mode.
           git checkout origin/data -- data/skill_report.json || true
           git checkout origin/data -- data/alpha_lab.json || true
+          git checkout origin/data -- data/level_history.json || true
 
       - name: Freshness guard — skip if Kronos forecast is recent
         # Anti-pile-up: triggers fire every 5 min but a full Kronos run takes
@@ -397,6 +398,18 @@ jobs:
           python scripts/skill_evaluator.py || true
           python scripts/alpha_lab.py || true
 
+      - name: Level track record (snapshot + scoring)
+        if: steps.freshness.outputs.skip != 'true'
+        timeout-minutes: 4
+        # Registra i livelli day-trading (muri pin/trigger SPY/QQQ) e valuta
+        # le finestre matured: bounce vs break su barre 5m reali. Alimenta
+        # data/level_report.json per la tab Affidabilita' — stesso loop
+        # self-improving dei forecast, applicato ai livelli. `|| true`: non
+        # deve mai rompere il job del forecast.
+        run: |
+          source .venv/bin/activate
+          python scripts/level_tracker.py || true
+
       - name: Push to repository data branch
         if: steps.freshness.outputs.skip != 'true'
         # Safety net: this step once hung for >1h on a git push contention (the
@@ -411,6 +424,8 @@ jobs:
           cp data/kronos_forecast_history.json /tmp/generated_data/ || true
           cp data/skill_report.json /tmp/generated_data/ || true
           cp data/alpha_lab.json /tmp/generated_data/ || true
+          cp data/level_history.json /tmp/generated_data/ || true
+          cp data/level_report.json /tmp/generated_data/ || true
           cp scripts/model/covariate_adapter.pth /tmp/generated_data/ || true
           # Remove the locally-restored copies of every file this job will
           # re-place from /tmp/generated_data, PLUS options_data.json /
@@ -425,7 +440,7 @@ jobs:
           # a concurrent run pushed new commits to `data` in the meantime —
           # because `rm` removes the working-tree copy but NOT the staged/index
           # entry. `--force` discards the local tracked modifications cleanly.
-          rm -f data/kronos_forecast.json data/adapter_training_stats.json data/adapter_baselines_cache.json data/kronos_forecast_history.json data/skill_report.json data/alpha_lab.json scripts/model/covariate_adapter.pth data/options_data.json data/options_history.json
+          rm -f data/kronos_forecast.json data/adapter_training_stats.json data/adapter_baselines_cache.json data/kronos_forecast_history.json data/skill_report.json data/alpha_lab.json data/level_history.json data/level_report.json scripts/model/covariate_adapter.pth data/options_data.json data/options_history.json
           git fetch origin data
           git checkout --force -B data origin/data --
           mkdir -p data scripts/model
@@ -435,6 +450,8 @@ jobs:
           cp /tmp/generated_data/kronos_forecast_history.json data/ || true
           cp /tmp/generated_data/skill_report.json data/ || true
           cp /tmp/generated_data/alpha_lab.json data/ || true
+          cp /tmp/generated_data/level_history.json data/ || true
+          cp /tmp/generated_data/level_report.json data/ || true
           cp /tmp/generated_data/covariate_adapter.pth scripts/model/ || true
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -446,6 +463,8 @@ jobs:
           git add data/adapter_baselines_cache.json 2>/dev/null || true
           git add data/skill_report.json 2>/dev/null || true
           git add data/alpha_lab.json 2>/dev/null || true
+          git add data/level_history.json 2>/dev/null || true
+          git add data/level_report.json 2>/dev/null || true
           git add data/kronos_forecast_history.json 2>/dev/null || true
           git add scripts/model/covariate_adapter.pth 2>/dev/null || true
           if [ ! -f vercel.json ]; then

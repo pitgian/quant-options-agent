@@ -24,6 +24,7 @@ import {
   RunsHistoryChart,
   AdapterLiveTable,
 } from './AdapterStatusView';
+import { fetchLevelReport, type LevelReport, type LevelReportKind, type LevelVerdict } from '../services/levelReportService';
 
 interface TrustViewProps {
   sharedState: UseOptionsDataReturn;
@@ -298,6 +299,112 @@ function GroupTable({ metrics }: { metrics: TrackRecordMetrics }) {
 }
 
 // ---------------------------------------------------------------------------
+// Level scoreboard — which level families actually repel price
+// ---------------------------------------------------------------------------
+
+const LEVEL_KIND_ORDER = [
+  'SPY|support|pin', 'SPY|support|trigger', 'SPY|resistance|pin', 'SPY|resistance|trigger',
+  'QQQ|support|pin', 'QQQ|support|trigger', 'QQQ|resistance|pin', 'QQQ|resistance|trigger',
+];
+
+function verdictStyle(v: LevelVerdict): { badge: string; icon: string; label: string } {
+  if (v === 'BOUNCE_EDGE') return { badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400', icon: '🟢', label: 'Respinge' };
+  if (v === 'BREAK_EDGE') return { badge: 'border-red-500/30 bg-red-500/10 text-red-400', icon: '🔴', label: 'Viene violato' };
+  return { badge: 'border-slate-600/40 bg-slate-700/20 text-slate-400', icon: '⚪', label: 'Dati insufficienti' };
+}
+
+function fmtRate(r: number | null): string {
+  return r != null ? `${(r * 100).toFixed(0)}%` : '—';
+}
+
+const LevelScoreboard: React.FC<{ report: LevelReport | null }> = ({ report }) => {
+  if (!report || Object.keys(report.kinds).length === 0) {
+    return null; // cold start: niente ancora da mostrare
+  }
+
+  const kinds = LEVEL_KIND_ORDER
+    .filter((k) => report.kinds[k])
+    .map((k) => ({ key: k, ...report.kinds[k] }));
+  const anyTouched = kinds.some((k) => k.n_touched > 0);
+  const totalTouched = kinds.reduce((s, k) => s + k.n_touched, 0);
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <h3 className="text-sm font-bold text-slate-300">📐 Track record dei livelli</h3>
+        <span className="text-[10px] text-gray-500">
+          {report.total_scored} livelli valutati su {report.total_issued} registrati · aggiornato{' '}
+          {new Date(report.generated_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+        </span>
+      </div>
+
+      {anyTouched ? (
+        <div className="overflow-x-auto rounded-lg border border-slate-800">
+          <table className="min-w-full text-xs text-left text-gray-300">
+            <thead className="bg-[#0d1117] text-gray-400 uppercase tracking-wider text-[9px] font-bold border-b border-slate-800">
+              <tr>
+                <th className="px-4 py-2.5">Famiglia</th>
+                <th className="px-4 py-2.5" title="Livelli emessi (1 per strike/giorno)">Emessi</th>
+                <th className="px-4 py-2.5" title="Livelli toccati dal prezzo nella finestra 24h">Toccati</th>
+                <th className="px-4 py-2.5" title="Touch con rimbalzo (respinge) vs rottura">Bounce / Break</th>
+                <th className="px-4 py-2.5" title="Frazione di touch risolti con rimbalzo. 50% = nessun effetto">Bounce rate</th>
+                <th className="px-4 py-2.5">Verdetto</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {kinds.map((k) => {
+                const [symbol, ltype, sign] = k.key.split('|');
+                const vs = verdictStyle(k.verdict as LevelVerdict);
+                const rateTone = k.bounce_rate == null ? 'text-slate-400'
+                  : k.bounce_rate >= 0.6 ? 'text-emerald-400'
+                  : k.bounce_rate <= 0.4 ? 'text-red-400'
+                  : 'text-slate-300';
+                return (
+                  <tr key={k.key} className="hover:bg-slate-900/40">
+                    <td className="px-4 py-2.5">
+                      <span className="font-semibold text-slate-200">{symbol} {ltype === 'support' ? 'supporto' : 'resistenza'}</span>{' '}
+                      <span className={`text-[9px] font-extrabold uppercase px-1 py-0.5 rounded ${sign === 'pin' ? 'bg-indigo-500/15 text-indigo-300' : 'bg-slate-700/40 text-slate-400'}`}>
+                        {sign === 'pin' ? 'Pin' : 'Trg'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-gray-400">{k.n_issued}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-400">{k.n_touched}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-400 tnum">
+                      <span className="text-green-400/90">{k.bounces}</span> / <span className="text-red-400/90">{k.breaks}</span>
+                    </td>
+                    <td className={`px-4 py-2.5 font-mono font-bold tnum ${rateTone}`}>
+                      {fmtRate(k.bounce_rate)}
+                      {k.ci95 && <span className="text-[9px] text-gray-500 ml-1 font-normal">CI {fmtRate(k.ci95[0])}–{fmtRate(k.ci95[1])}</span>}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`px-2 py-0.5 text-[9px] font-bold rounded border ${vs.badge}`}>{vs.icon} {vs.label}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-xs text-gray-500">
+          Cold start: i livelli si stanno accumulando. La prima valutazione compare quando le
+          finestre 24h maturano e il prezzo reale li tocca (servono ≥{report.min_touched_for_verdict} touch
+          per famiglia per un verdetto).
+        </p>
+      )}
+
+      <p className="text-[11px] text-gray-500 leading-relaxed mt-3">
+        Ogni giorno viene registrato 1 livello per strike/simbolo (5 per lato, pin/trigger dal segno
+        gamma). Dopo 24h dal rilascio viene misurato sulle barre 5m reali: <b>touch</b> = prezzo entrato
+        nella banda (±0,1%); <b>bounce</b> = respinto di ≥0,2% senza rompere il buffer; <b>break</b> =
+        superato il buffer. <b>Bounce rate 50% = nessun effetto</b>: sopra → la famiglia respinge davvero,
+        sotto → viene violata più spesso del caso (binomiale esatta, p&lt;0.05, min {report.min_touched_for_verdict} touch).
+      </p>
+    </Card>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -305,6 +412,7 @@ export const TrustView: React.FC<TrustViewProps> = ({ sharedState }) => {
   const { kronosForecast, handleRefresh, refreshing, timeSinceUpdate, isBackgroundRefreshing, showUpdatedFlash } = sharedState;
   const [snapshots, setSnapshots] = useState<ForecastSnapshot[] | null>(null);
   const [stats, setStats] = useState<AdapterTrainingStats | null>(null);
+  const [levelReport, setLevelReport] = useState<LevelReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [windowDays, setWindowDays] = useState<WindowDays>(30);
   const [symbolFilter, setSymbolFilter] = useState<SymbolFilter>('ALL');
@@ -321,12 +429,14 @@ export const TrustView: React.FC<TrustViewProps> = ({ sharedState }) => {
 
   const load = useCallback(async () => {
     try {
-      const [data, s] = await Promise.all([
+      const [data, s, lr] = await Promise.all([
         fetchTrackRecord(),
         fetchAdapterStats().catch(() => null),
+        fetchLevelReport().catch(() => null),
       ]);
       setSnapshots(data?.snapshots ?? []);
       setStats(s);
+      setLevelReport(lr);
     } catch (err) {
       console.error('Failed to load track record:', err);
       setSnapshots([]);
@@ -442,6 +552,8 @@ export const TrustView: React.FC<TrustViewProps> = ({ sharedState }) => {
             <SummaryCards metrics={metrics} />
             <RollingChart metrics={metrics} />
             <GroupTable metrics={metrics} />
+
+            <LevelScoreboard report={levelReport} />
 
             {/* Diagnostica tecnica — ripiegata: utile, ma non è la prima cosa da leggere */}
             <Collapsible title="Dettagli tecnici — adapter & correzioni" icon="🔧" hint="stato training, miglioria vs Kronos, correzioni live">
