@@ -2003,7 +2003,10 @@ def fetch_symbol_data(
     futures_volume_profile_7d  = fetch_futures_volume_profile(symbol, spot, strikes, interval="30m", start=_session_start("weekly"),    row_size=2.0)
     futures_volume_profile_30d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1h",  start=_session_start("monthly"),   row_size=5.0)
     futures_volume_profile_90d = fetch_futures_volume_profile(symbol, spot, strikes, interval="1d",  start=_session_start("quarterly"), row_size=5.0)
-    futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="max",  interval="1d",                      row_size=5.0)
+    # 'max' is capped at 1y: the full history reached back to ES at ~1300 and
+    # made the cumulative POC/VAH/VAL meaningless for current trading (e.g.
+    # POC=1310 with spot at 7690 — verified in the Sep-2026 data audit).
+    futures_volume_profile_max = fetch_futures_volume_profile(symbol, spot, strikes, period="1y",  interval="1d",                      row_size=5.0)
 
     # Calculate covariates
     skew_value = calculate_volatility_skew_25d(all_options_by_expiry, spot)

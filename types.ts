@@ -44,6 +44,18 @@ export interface DayTradingLevel {
   totalVolume: number;
   distance: number;        // % from spot
   label: string;           // e.g. "Put Wall", "Call Wall"
+  /** Net GEX at this strike (call GEX − put GEX, aggregated across expiries).
+   *  Determines the expected MECHANISM, per dealer-gamma theory and the Sep-2026
+   *  empirical check (scratch/validate_levels.py):
+   *    netGEX > 0 → dealers LONG gamma → they trade AGAINST the move → the
+   *                 level tends to REPEL price ("pin").
+   *    netGEX < 0 → dealers SHORT gamma → they hedge WITH the move → the level
+   *                 tends to be BROKEN/accelerated through ("trigger").
+   *  The Aug-30 out-of-sample check: positive-gamma call peak rejected 80% of
+   *  touches vs 42% random; raw-OI put walls were broken MORE often than
+   *  random levels (42% vs 63%). Rank pins above raw-OI walls. */
+  netGEX?: number;
+  gammaSign?: 'pin' | 'trigger';
 
   // Cross-symbol confluence fields (present when isCrossSymbol is true)
   isCrossSymbol?: boolean;

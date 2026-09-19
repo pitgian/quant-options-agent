@@ -16,6 +16,15 @@ import { Wall, GexRegime, DayTradingLevel, DayTradingData, GexStrikeData, CrossS
 const DAY_TRADING_MAX_DISTANCE_PCT = 5; // Only show levels within 5% of spot for day trading
 const MIN_CROSS_SYMBOL_SCORE = 60;      // Minimum cross_score for meaningful confluence
 
+/** Strength bonus for LONG-gamma (pin) levels. Empirical basis (Sep-2026,
+ *  scratch/validate_levels.py, Aug-30 snapshot out-of-sample on 13 sessions):
+ *  the max-positive-GEX call strike rejected 80% of touches vs 42% random
+ *  control, while raw-OI put walls held only 42% (vs 63% random). Dealer
+ *  gamma sign, not OI size, is what makes a level repel. The bonus is modest
+ *  (+8, capped at 100) — it re-orders cluster competition without drowning
+ *  the Gamma Flip (95). */
+const PIN_GAMMA_STRENGTH_BONUS = 8;
+
 // ============================================================================
 // DAY TRADING DATA BUILDER
 // ============================================================================
@@ -67,14 +76,21 @@ export function buildDayTradingData(
     .map(w => {
       const isGammaPeak = w.strike === maxNegativeGexStrike;
       const isPrimaryWall = w.strike === primaryPutWallStrike;
+      // Gamma-mechanism classification: dealers' net exposure at the strike.
+      // netGEX >= 0 → long gamma → PIN (price repelled); < 0 → short gamma →
+      // TRIGGER (breaks accelerate). See DayTradingLevel docs.
+      const gammaSign: 'pin' | 'trigger' = w.netGEX >= 0 ? 'pin' : 'trigger';
+      const strength = Math.min(100, w.score + (gammaSign === 'pin' ? PIN_GAMMA_STRENGTH_BONUS : 0));
       return {
         strike: w.strike,
         type: 'support' as const,
-        strength: w.score,
+        strength,
         totalOI: w.totalOI,
         totalVolume: w.totalVolume,
         distance: w.distance,
         label: isGammaPeak ? 'Major Gamma Wall' : (isPrimaryWall ? 'Put Wall' : 'Supporto'),
+        netGEX: w.netGEX,
+        gammaSign,
       };
     })
     .sort((a, b) => a.distance - b.distance);
@@ -87,14 +103,18 @@ export function buildDayTradingData(
     .map(w => {
       const isGammaPeak = w.strike === maxPositiveGexStrike;
       const isPrimaryWall = w.strike === primaryCallWallStrike;
+      const gammaSign: 'pin' | 'trigger' = w.netGEX >= 0 ? 'pin' : 'trigger';
+      const strength = Math.min(100, w.score + (gammaSign === 'pin' ? PIN_GAMMA_STRENGTH_BONUS : 0));
       return {
         strike: w.strike,
         type: 'resistance' as const,
-        strength: w.score,
+        strength,
         totalOI: w.totalOI,
         totalVolume: w.totalVolume,
         distance: w.distance,
         label: isGammaPeak ? 'Major Gamma Wall' : (isPrimaryWall ? 'Call Wall' : 'Resistenza'),
+        netGEX: w.netGEX,
+        gammaSign,
       };
     })
     .sort((a, b) => a.distance - b.distance);

@@ -170,6 +170,22 @@ const LevelRow: React.FC<LevelRowProps> = ({
 
         {/* Label badges */}
         <div className="flex items-center gap-1 flex-wrap">
+          {/* Gamma mechanism badge: Pin (long gamma — price tends to be repelled)
+              vs Trigger (short gamma — breaks tend to accelerate). Evidence and
+              definitions in the guide and DayTradingLevel docs. */}
+          {level.gammaSign && (
+            <span
+              className="text-[8px] font-extrabold px-1 py-0.5 rounded uppercase tracking-wide"
+              style={level.gammaSign === 'pin'
+                ? { backgroundColor: 'rgba(99,102,241,0.15)', color: '#a5b4fc' }
+                : { backgroundColor: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}
+              title={level.gammaSign === 'pin'
+                ? 'Gamma lunga: i dealer fanno trading contro il movimento — livello che tende a respingere il prezzo'
+                : 'Gamma corta: le coperture dei dealer accelerano il movimento — rottura più probabile del muro'}
+            >
+              {level.gammaSign === 'pin' ? 'Pin' : 'Trg'}
+            </span>
+          )}
           {/* Always show the wall label (Put Wall / Call Wall). Previously
               suppressed on cross-only rows, which hid the server-classified
               put/call identity — now every level shows it for consistency. */}
@@ -338,6 +354,12 @@ export const TradingGuide: React.FC = () => {
               <h4 className="font-extrabold text-blue-400 mb-1.5 uppercase tracking-wider text-[11px]">🤖 Proiezioni Kronos AI</h4>
               <p className="leading-relaxed text-gray-300 text-[11px]">
                 Parentesi statistica generata dall'IA per il timeframe selezionato. I segnali <strong>🎯 Kr High</strong> e <strong>🎯 Kr Low</strong> apposti sui livelli evidenziano le barriere reali più prossime agli estremi previsionali calcolati.
+              </p>
+            </div>
+            <div className="md:col-span-3 bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
+              <h4 className="font-extrabold text-amber-400 mb-1.5 uppercase tracking-wider text-[11px]">📌 Cosa dicono i dati (validazione set 2026)</h4>
+              <p className="leading-relaxed text-gray-300 text-[11px]">
+                Test out-of-sample su 13 sedute (snapshot 30 ago → azione prezzo 1-18 set): i muri da <strong>puro Open Interest</strong> come supporti hanno retto <strong>meno del caso</strong> (42% vs 63% di livelli casuali) — l'OI misura dove c'è posizionamento, non dove il prezzo si ferma. Quello che ha funzionato è il <strong>segno della gamma</strong>: il picco di gamma lunga (call) sopra il prezzo ha respinto l'<strong>80%</strong> dei touch. Per questo i livelli ora sono etichettati con il meccanismo atteso: <strong>Pin</strong> (gamma lunga — il prezzo tende a respingersi) e <strong>Trigger</strong> (gamma corta — le rotture tendono ad accelerare). Nota: l'OI è quello di chiusura precedente, aggiornato dall'OCC una volta al giorno.
               </p>
             </div>
           </div>
