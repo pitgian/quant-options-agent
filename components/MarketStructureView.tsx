@@ -21,8 +21,14 @@ import { KRONOS_TIMEFRAMES, getActiveKronosForecast, type KronosTimeframe } from
 import { StructuralAnalysisCard, type StructuralAnalysis } from './MarketStructurePanels';
 import { ControlBar, Segmented, Labeled, Freshness, Card, Badge, InfoHint } from './ui';
 import { MarketLevelsColumn, TradingGuide } from './MarketLevelsPanel';
+import { detectNodes } from '../lib/volumeProfile';
 
 export type FuturesTimeframe = 'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max';
+
+export const FUTURES_TF_LABELS: Record<string, string> = {
+  '1d': 'Giornaliero', '2d': '2 Giorni', '5d': '5 Giorni', '7d': 'Settimanale',
+  '30d': 'Mensile', '90d': 'Trimestrale', 'max': '1 Anno',
+};
 
 export function MarketStructureView({ sharedState }: { sharedState: ReturnType<typeof useOptionsData> }) {
   const state = sharedState;
@@ -322,74 +328,24 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     return zoomedProfile.some(d => d.futuresVolume > 0);
   }, [zoomedProfile]);
 
-  // ---- Node detection (HVN & LVN) using Futures/Combined volume ----
+  // ---- Node detection (HVN & LVN) via lib/volumeProfile (prominence-based:
+  //      only peaks that DOMINATE their neighborhood survive — the old ±2
+  //      local-max heuristic flagged dozens of micro-wiggles) ----
   const nodes = useMemo(() => {
     if (zoomedProfile.length === 0) {
       return { hvnStrikes: new Set<number>(), lvnStrikes: new Set<number>(), lvnZones: new Map<number, { low: number; high: number }>() };
     }
-
-    const targetVolumes = zoomedProfile
-      .map(d => hasFuturesData ? d.futuresVolume : (d.etfVolume + d.indexVolume))
-      .filter(v => v > 0);
-    targetVolumes.sort((a, b) => a - b);
-    const medianVolume = targetVolumes.length > 0 ? targetVolumes[Math.floor(targetVolumes.length / 2)] : 0;
-
-    const hvnStrikes = new Set<number>();
-    const lvnStrikes = new Set<number>();
-    const lvnZones = new Map<number, { low: number; high: number }>();
-
-    for (let i = 2; i < zoomedProfile.length - 2; i++) {
-      const window = [
-        zoomedProfile[i - 2],
-        zoomedProfile[i - 1],
-        zoomedProfile[i],
-        zoomedProfile[i + 1],
-        zoomedProfile[i + 2],
-      ].map(d => hasFuturesData ? d.futuresVolume : (d.etfVolume + d.indexVolume));
-
-      const v_curr = window[2];
-      const max_val = Math.max(...window);
-      const min_val = Math.min(...window);
-      const max_surrounding = Math.max(window[0], window[1], window[3], window[4]);
-
-      // Peak (HVN)
-      if (v_curr === max_val && v_curr > medianVolume * 1.15) {
-        hvnStrikes.add(zoomedProfile[i].strike);
-      }
-
-      // Trough (LVN)
-      if (v_curr === min_val && max_surrounding > 0 && v_curr <= max_surrounding * 0.5 && v_curr < medianVolume * 0.8) {
-        lvnStrikes.add(zoomedProfile[i].strike);
-
-        let leftIdx = i;
-        while (leftIdx > 0) {
-          const v_left = hasFuturesData ? zoomedProfile[leftIdx - 1].futuresVolume : (zoomedProfile[leftIdx - 1].etfVolume + zoomedProfile[leftIdx - 1].indexVolume);
-          if (v_left <= v_curr * 1.5 && v_left < medianVolume * 0.7) {
-            leftIdx--;
-          } else {
-            break;
-          }
-        }
-
-        let rightIdx = i;
-        while (rightIdx < zoomedProfile.length - 1) {
-          const v_right = hasFuturesData ? zoomedProfile[rightIdx + 1].futuresVolume : (zoomedProfile[rightIdx + 1].etfVolume + zoomedProfile[rightIdx + 1].indexVolume);
-          if (v_right <= v_curr * 1.5 && v_right < medianVolume * 0.7) {
-            rightIdx++;
-          } else {
-            break;
-          }
-        }
-
-        lvnZones.set(zoomedProfile[i].strike, {
-          low: zoomedProfile[leftIdx].strike,
-          high: zoomedProfile[rightIdx].strike,
-        });
-      }
+    const volumes = zoomedProfile.map(d => hasFuturesData ? d.futuresVolume : (d.etfVolume + d.indexVolume));
+    const strikes = zoomedProfile.map(d => d.strike);
+    const { hvnIndices, lvnIndices, lvnZones } = detectNodes(volumes);
+    const hvnStrikes = new Set(hvnIndices.map(i => strikes[i]));
+    const lvnStrikes = new Set(lvnIndices.map(i => strikes[i]));
+    const zoneMap = new Map<number, { low: number; high: number }>();
+    for (const z of lvnZones) {
+      zoneMap.set(strikes[z.from], { low: strikes[z.from], high: strikes[z.to] });
     }
-
-    return { hvnStrikes, lvnStrikes, lvnZones };
-  }, [zoomedProfile]);
+    return { hvnStrikes, lvnStrikes, lvnZones: zoneMap };
+  }, [zoomedProfile, hasFuturesData]);
 
   // ---- Merge overlapping LVN zones ----
   const mergedZones = useMemo(() => {
@@ -425,6 +381,8 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
       high: number;
       poc: number;
       maxVolume: number;
+      totalVolume: number;
+      volumeShare?: number;
       status: 'current' | 'above' | 'below';
     }[] = [];
 
@@ -453,14 +411,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
 
     ranges.forEach((range, idx) => {
       const strikesInArea = zoomedProfile.filter(d => d.strike >= range.low && d.strike <= range.high);
-      if (strikesInArea.length === 0) return;
+      // Sliver filter: an "area" needs at least 2 price rows to be a zone.
+      if (strikesInArea.length < 2) return;
 
       let poc = strikesInArea[0].strike;
       let maxVol = -1;
       const hasFutures = strikesInArea.some(d => d.futuresVolume > 0);
+      let totalVol = 0;
 
       for (const d of strikesInArea) {
         const vol = hasFutures ? d.futuresVolume : (d.etfVolume + d.indexVolume);
+        totalVol += vol;
         if (vol > maxVol) {
           maxVol = vol;
           poc = d.strike;
@@ -482,9 +443,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
         high: range.high,
         poc,
         maxVolume: maxVol,
+        totalVolume: totalVol,
         status,
       });
     });
+
+    // Volume share per area: quota dei volumi totali delle aree (aiuta a
+    // capire quale value area domina — la primary — e quali sono marginali).
+    const grandTotal = areas.reduce((s, a) => s + a.totalVolume, 0);
+    for (const a of areas) {
+      a.volumeShare = grandTotal > 0 ? a.totalVolume / grandTotal : 0;
+    }
 
     return areas;
   }, [mergedZones, zoomedProfile, indexData, liveSpot, market]);
@@ -803,8 +772,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
           <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5 flex flex-col w-full">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className="text-lg font-bold text-gray-100 flex items-center gap-2">
+                <h2 className="text-lg font-bold text-gray-100 flex items-center gap-2 flex-wrap">
                   📊 Profilo Volumi Unificato (3-Profile Chart)
+                  {/* Timeframe SEMPRE visibile: era sepolto nella legenda e
+                      l'utente non poteva sapere quale profilo stesse guardando */}
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-sky-300 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20"
+                        title={selectedFuturesTf === 'auto' ? 'Timeframe automatico, allineato alla scadenza selezionata' : 'Timeframe selezionato manualmente'}>
+                    Futures: {FUTURES_TF_LABELS[resolvedFuturesProfile.tf] ?? resolvedFuturesProfile.tf}
+                    <span className="text-[10px] text-sky-400/60">
+                      ({selectedFuturesTf === 'auto' ? `auto · scadenza ${expiryFilter}` : 'manuale'})
+                    </span>
+                  </span>
                   {!hasFuturesData && (
                     <span className="text-xs font-normal text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
                       Fallback Opzioni
@@ -839,7 +817,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                   <span className="text-right">Opzioni ETF (OI+Vol)</span>
                   <span className="text-center">Prezzo Livello (F | E)</span>
                   <span className="text-left">Opzioni Indice (OI+Vol)</span>
-                  <span className="text-left">Volumi Futures</span>
+                  <span className="text-left">Volumi Futures · {FUTURES_TF_LABELS[resolvedFuturesProfile.tf] ?? resolvedFuturesProfile.tf}</span>
                 </div>
 
                 {/* Chart rows */}
@@ -1214,6 +1192,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                         ${area.poc.toFixed(0)}
                       </span>
                     </div>
+                    {area.volumeShare != null && area.volumeShare > 0 && (
+                      <div className="mt-1.5">
+                        <div className="flex items-center justify-between text-[9px] text-gray-500 mb-0.5">
+                          <span>Quota volumi</span>
+                          <span className="font-mono font-bold">{(area.volumeShare * 100).toFixed(0)}%</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                          <div className="h-full rounded-full bg-indigo-500/60" style={{ width: `${Math.min(100, area.volumeShare * 100)}%` }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
