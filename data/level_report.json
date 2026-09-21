@@ -1,9 +1,122 @@
 {
   "version": 1,
-  "generated_at": "2026-09-21T15:04:51.242340+00:00",
+  "generated_at": "2026-09-26T19:18:25.124207+00:00",
   "min_touched_for_verdict": 20,
-  "total_issued": 85,
-  "total_scored": 0,
+  "total_issued": 289,
+  "total_scored": 246,
   "note": "bounce_rate = frazione di touch in cui il prezzo ha respinto il livello senza romperlo (finestra 24h, touch 1/sessione). Verdetto vs ipotesi nulla 50% (nessun effetto), binomiale esatta p<0.05, n>=20 touch.",
-  "kinds": {}
+  "kinds": {
+    "QQQ|resistance|pin": {
+      "n_issued": 55,
+      "n_scored": 55,
+      "n_touched": 22,
+      "bounces": 9,
+      "breaks": 11,
+      "bounce_rate": 0.45,
+      "ci95": [
+        0.2582,
+        0.6579
+      ],
+      "p_value": 0.8238,
+      "verdict": "NO_DATA"
+    },
+    "QQQ|resistance|trigger": {
+      "n_issued": 12,
+      "n_scored": 12,
+      "n_touched": 10,
+      "bounces": 8,
+      "breaks": 2,
+      "bounce_rate": 0.8,
+      "ci95": [
+        0.4902,
+        0.9433
+      ],
+      "p_value": 0.10938,
+      "verdict": "NO_DATA"
+    },
+    "QQQ|support|pin": {
+      "n_issued": 34,
+      "n_scored": 34,
+      "n_touched": 12,
+      "bounces": 8,
+      "breaks": 4,
+      "bounce_rate": 0.6667,
+      "ci95": [
+        0.3906,
+        0.8619
+      ],
+      "p_value": 0.3877,
+      "verdict": "NO_DATA"
+    },
+    "QQQ|support|trigger": {
+      "n_issued": 23,
+      "n_scored": 23,
+      "n_touched": 8,
+      "bounces": 4,
+      "breaks": 4,
+      "bounce_rate": 0.5,
+      "ci95": [
+        0.2152,
+        0.7848
+      ],
+      "p_value": 1.0,
+      "verdict": "NO_DATA"
+    },
+    "SPY|resistance|pin": {
+      "n_issued": 51,
+      "n_scored": 51,
+      "n_touched": 15,
+      "bounces": 7,
+      "breaks": 4,
+      "bounce_rate": 0.6364,
+      "ci95": [
+        0.3538,
+        0.8483
+      ],
+      "p_value": 0.54883,
+      "verdict": "NO_DATA"
+    },
+    "SPY|resistance|trigger": {
+      "n_issued": 4,
+      "n_scored": 4,
+      "n_touched": 3,
+      "bounces": 1,
+      "breaks": 2,
+      "bounce_rate": 0.3333,
+      "ci95": [
+        0.0615,
+        0.7923
+      ],
+      "p_value": 1.0,
+      "verdict": "NO_DATA"
+    },
+    "SPY|support|pin": {
+      "n_issued": 19,
+      "n_scored": 19,
+      "n_touched": 10,
+      "bounces": 3,
+      "breaks": 5,
+      "bounce_rate": 0.375,
+      "ci95": [
+        0.1368,
+        0.6943
+      ],
+      "p_value": 0.72656,
+      "verdict": "NO_DATA"
+    },
+    "SPY|support|trigger": {
+      "n_issued": 48,
+      "n_scored": 48,
+      "n_touched": 15,
+      "bounces": 7,
+      "breaks": 6,
+      "bounce_rate": 0.5385,
+      "ci95": [
+        0.2914,
+        0.7679
+      ],
+      "p_value": 1.0,
+      "verdict": "NO_DATA"
+    }
+  }
 }
