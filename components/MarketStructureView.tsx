@@ -618,6 +618,74 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 { value: 'levels', label: '🎯 Livelli Intraday' },
               ]}
             />
+            <Labeled label="Range">
+              <Segmented
+                value={zoomPct}
+                onChange={(z) => setZoomPct(z)}
+                size="xs"
+                options={[
+                  { value: 1.5, label: '±1.5%' },
+                  { value: 3.0, label: '±3.0%' },
+                  { value: 5.0, label: '±5.0%' },
+                ]}
+              />
+            </Labeled>
+            <Labeled label="Zoom" title="Altezza righe del profilo">
+              <div className="flex items-center gap-1 bg-[#0d1117] rounded-lg px-2 py-1 border border-slate-800">
+                <button
+                  onClick={() => setRowHeight(h => Math.max(14, h - 2))}
+                  disabled={rowHeight <= 14}
+                  className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#1e293b] disabled:opacity-30 font-bold text-xs"
+                  title="Stringi righe (più livelli visibili)"
+                >−</button>
+                <input
+                  type="range" min={14} max={36} step={2} value={rowHeight}
+                  onChange={(e) => setRowHeight(Number(e.target.value))}
+                  className="w-14 accent-blue-500 cursor-pointer h-1 bg-gray-800 rounded-lg appearance-none"
+                  title={`Altezza righe: ${rowHeight}px`}
+                />
+                <button
+                  onClick={() => setRowHeight(h => Math.min(36, h + 2))}
+                  disabled={rowHeight >= 36}
+                  className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-[#1e293b] disabled:opacity-30 font-bold text-xs"
+                  title="Allarga righe (maggior dettaglio)"
+                >+</button>
+              </div>
+            </Labeled>
+            <Labeled label="Scadenza">
+              <select
+                value={expiryFilter}
+                onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
+                className="bg-[#0d1117] border border-slate-800 text-gray-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
+              >
+                {EXPIRY_OPTIONS.map((opt) => (
+                  <option key={opt.key} value={opt.key}>{opt.label}</option>
+                ))}
+              </select>
+            </Labeled>
+            <Labeled label="Futures" title="Timeframe del profilo volumi futures">
+              <select
+                value={selectedFuturesTf}
+                onChange={(e) => setSelectedFuturesTf(e.target.value as FuturesTimeframe)}
+                className="bg-[#0d1117] border border-slate-800 text-gray-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
+              >
+                <option value="auto">Auto (scadenza)</option>
+                <option value="1d">Giornaliero</option>
+                <option value="2d">2 Giorni</option>
+                <option value="7d">Settimanale</option>
+                <option value="30d">Mensile</option>
+                <option value="90d">Trimestrale</option>
+                <option value="max">1 Anno</option>
+              </select>
+            </Labeled>
+            <Labeled label="Kronos">
+              <Segmented
+                value={kronosTimeframe}
+                onChange={(tf) => setKronosTimeframe(tf)}
+                size="xs"
+                options={KRONOS_TIMEFRAMES.map((tf) => ({ value: tf.key, label: tf.label }))}
+              />
+            </Labeled>
           </>
         }
         right={
@@ -636,17 +704,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
           style={{ top: 'calc(var(--app-nav-h, 0px) + var(--app-controlbar-h, 49px))' }}
         >
           <div className="max-w-[1850px] mx-auto flex items-center gap-3 flex-wrap">
-            <Labeled label="Scadenza">
-              <select
-                value={expiryFilter}
-                onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
-                className="bg-[#0d1117] border border-slate-800 text-gray-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 font-semibold"
-              >
-                {EXPIRY_OPTIONS.map((opt) => (
-                  <option key={opt.key} value={opt.key}>{opt.label}</option>
-                ))}
-              </select>
-            </Labeled>
             <button
               onClick={() => setShowCrossSymbol(!showCrossSymbol)}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-all duration-150"
@@ -762,6 +819,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 kronosForecast={kronosForecast}
                 kronosTimeframe={kronosTimeframe}
                 showCrossSymbol={showCrossSymbol}
+                intradayLevels={etfData.intradayLevels}  // playbook calcolato per SPY/QQQ
               />
             </>
           ) : (

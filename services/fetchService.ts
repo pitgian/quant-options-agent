@@ -47,6 +47,8 @@ export interface RawSymbolData {
   futures_volume_profiles?: Record<string, Record<string, number>>;
   volatility_skew_25d?: number;
   put_call_oi_ratio?: number;
+  /** Playbook intraday del desk (PDH/ONH/VWAP/POC/naked — scala ES/NQ). */
+  intraday_levels?: import('../types').IntradayLevels;
 }
 
 export interface RawExpiry {

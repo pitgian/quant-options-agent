@@ -15,7 +15,7 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { DayTradingLevel, DayTradingData, KronosForecast } from '../types';
+import { DayTradingLevel, DayTradingData, IntradayLevels, IntradayLevel, KronosForecast } from '../types';
 import { formatCompact, formatStrike, formatDistance, formatGEX } from '../utils/formatting';
 import { getActiveKronosForecast as computeKronosForecast, type KronosTimeframe } from '../lib/kronos';
 
@@ -370,6 +370,80 @@ export const TradingGuide: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
+// Intraday Playbook — livelli di prezzo del desk (PDH/ONH/VWAP/POC/naked)
+// ---------------------------------------------------------------------------
+
+const LEVEL_LABELS_IT: Record<string, string> = {
+  PDH: 'Massimo ieri (RTH)', PDL: 'Minimo ieri (RTH)',
+  ONH: 'Massimo overnight', ONL: 'Minimo overnight',
+  VWAP: 'VWAP seduta', 'VWAP+1σ': 'VWAP +1σ', 'VWAP-1σ': 'VWAP −1σ',
+  OPEN: 'Apertura RTH oggi', 'W-OPEN': 'Apertura settimana',
+  PWH: 'Massimo settimana scorsa', PWL: 'Minimo settimana scorsa',
+  'VAH-1d': 'Value Area High ieri', 'POC-1d': 'POC ieri (magnete)', 'VAL-1d': 'Value Area Low ieri',
+  'POC-dev': 'POC di oggi (developing)', 'NAKED POC': 'POC Naked (mai rivisitato)',
+};
+
+const IntradayPlaybook: React.FC<{
+  levels: IntradayLevels;
+  wallFutPrices: number[];
+  spotFutures: number;
+}> = ({ levels, wallFutPrices, spotFutures }) => {
+  const all = (levels.levels ?? []) as IntradayLevel[];
+  if (all.length === 0) return null;
+
+  const withMeta = all.map(l => {
+    // Confluenza con i muri da opzioni (stesso prezzo in scala futures ±0.07%)
+    const nearWall = wallFutPrices.length > 0 &&
+      Math.min(...wallFutPrices.map(p => Math.abs(p - l.price) / l.price)) < 0.0007;
+    return { ...l, nearWall };
+  });
+  const above = withMeta.filter(l => l.side === 'above').sort((a, b) => a.dist_pct - b.dist_pct);
+  const below = withMeta.filter(l => l.side === 'below').sort((a, b) => b.dist_pct - a.dist_pct);
+
+  const Row = ({ l }: { l: typeof withMeta[number] }) => (
+    <div className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-900/40 transition-colors"
+         title={`${LEVEL_LABELS_IT[l.label] ?? l.label} — livello di prezzo puro derivato dai futures ${levels.futures_symbol ?? ''}`}>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className="text-[9px] font-extrabold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 whitespace-nowrap">
+          {l.label}
+        </span>
+        {l.nearWall && (
+          <span className="text-[8px] font-extrabold uppercase text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1 py-0.5 rounded whitespace-nowrap"
+                title="Confluenza con un muro da opzioni: zona ad alta opportunità">
+            ★ Opz.
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="text-[10px] font-mono text-gray-500 tnum">{l.dist_pct > 0 ? '+' : ''}{l.dist_pct.toFixed(2)}%</span>
+        <span className="text-xs font-mono font-bold text-slate-200 tnum">${l.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="bg-[#161b22] border border-blue-500/20 rounded-2xl p-3.5 flex flex-col gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-1">
+        <span className="text-[9px] text-blue-400 font-bold uppercase tracking-wider">🎯 Playbook Intraday · {levels.futures_symbol ?? 'FUT'}</span>
+        <span className="text-[9px] text-gray-600">livelli prezzo del desk · ★ = confluenza opzioni</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[8px] font-bold tracking-widest text-red-400/80 uppercase px-1">Sopra il prezzo</span>
+          {above.map(l => <Row key={l.label + l.price} l={l} />)}
+          {above.length === 0 && <span className="text-[10px] text-gray-600 italic px-1">nessuno</span>}
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[8px] font-bold tracking-widest text-green-400/80 uppercase px-1">Sotto il prezzo</span>
+          {below.map(l => <Row key={l.label + l.price} l={l} />)}
+          {below.length === 0 && <span className="text-[10px] text-gray-600 italic px-1">nessuno</span>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Market Levels Column Component
 // ---------------------------------------------------------------------------
 
@@ -385,6 +459,7 @@ interface MarketLevelsColumnProps {
   kronosForecast: KronosForecast | null;
   kronosTimeframe: KronosTimeframe;
   showCrossSymbol: boolean;
+  intradayLevels?: IntradayLevels;
 }
 
 export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
@@ -399,6 +474,7 @@ export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
   kronosForecast,
   kronosTimeframe,
   showCrossSymbol,
+  intradayLevels,
 }) => {
   const [activeSymbol, setActiveSymbol] = useState<'SPY' | 'SPX' | 'QQQ' | 'NDX'>(defaultSymbol);
   const [highlightedStrike, setHighlightedStrike] = useState<number | null>(null);
@@ -582,6 +658,17 @@ export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
           the shared ticker strip in the Mercato tab already shows ES price +
           basis, GEX regime, skew/PCR and the Kronos bias/range. The 🎯 Kr
           High/Low markers below still reference the active Kronos forecast.) */}
+
+      {/* 🎯 PLAYBOOK INTRADAY — livelli prezzo del desk (PDH/ONH/VWAP/POC/naked).
+          Confluenza: un livello playbook entro 0.07% di un muro da opzioni
+          (già convertito in scala futures) = zona ad alta opportunità. */}
+      {intradayLevels && (() => {
+        const wallFutPrices = [...sortedResistance, ...sortedSupport]
+          .map(l => calculateFuturesEquivalent(l.strike))
+          .filter((p): p is number => p != null && p > 0);
+        const spotF = liveSpot[futuresSymbol] || 0;
+        return <IntradayPlaybook levels={intradayLevels} wallFutPrices={wallFutPrices} spotFutures={spotF} />;
+      })()}
 
       {/* Levels list layout */}
       <div className="flex flex-col gap-1.5">

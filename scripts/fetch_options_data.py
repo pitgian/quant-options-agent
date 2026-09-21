@@ -29,6 +29,7 @@ except Exception:
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
@@ -1177,6 +1178,280 @@ def fetch_futures_volume_profile(
         return {}
 
 
+def fetch_intraday_playbook(symbol: str) -> Dict[str, Any]:
+    """
+    Playbook intraday da desk: livelli di PREZZO derivati dai futures (ES/NQ),
+    indipendenti dalle opzioni — la spina dorsale del trading intraday.
+
+    Convenzioni professionali:
+      RTH      regular trading hours 09:30-16:00 ET (la seduta "vera")
+      ON       overnight = tutte le barre dopo la chiusura RTH precedente
+               fino all'apertura RTH di oggi (Globex)
+      PDH/PDL  previous day high/low (seduta RTH completata)
+      ONH/ONL  overnight high/low
+      OPEN_RTH primo prezzo della seduta RTH corrente
+      VWAP     volume-weighted average price della seduta RTH corrente
+               (reset giornaliero) con bande sigma1/sigma2
+      POC/VAH/VAL prev-day: profilo volumi della seduta RTH di ieri
+               (distribuzione volume su griglia 1pt, value area 70%)
+      POC developing: POC provvisorio della seduta in corso
+      NAKED POC: POC delle ultime 5 sedute non ancora attraversati dal prezzo
+               (magneti — il prezzo tende a tornarci)
+      PWH/PWL  previous week high/low; WEEK_OPEN apertura della settimana in corso
+
+    Tutto in scala NATIVA futures. Robusto ai buchi: se una finestra non ha
+    barre (weekend/festivi) il livello viene omesso, mai inventato.
+    """
+    futures_symbol = "ES=F" if symbol in ["SPY", "SPX"] else "NQ=F"
+    logger.info(f"🕐 [{symbol}] Intraday playbook da {futures_symbol}...")
+    try:
+        t = yf.Ticker(futures_symbol)
+        hist = t.history(period="7d", interval="5m", prepost=False)
+        if hist.empty or len(hist) < 20:
+            logger.warning(f"⚠️ Playbook: nessuna barra 5m per {futures_symbol}")
+            return {}
+
+        idx = hist.index
+        if idx.tz is None:
+            idx = idx.tz_localize("UTC")
+        idx_et = idx.tz_convert(_ET)
+        return compute_intraday_playbook(
+            idx_et, hist["Open"].values, hist["High"].values,
+            hist["Low"].values, hist["Close"].values,
+            hist["Volume"].values.astype(float),
+            futures_ticker=futures_symbol.replace("=F", ""),
+        )
+    except Exception as e:
+        logger.error(f"❌ Errore playbook intraday {symbol}: {e}")
+        return {}
+
+
+def compute_intraday_playbook(idx_et, o, h, l, c, v, futures_ticker: str = "ES") -> Dict[str, Any]:
+    """Core puro del playbook (nessun I/O): vedi fetch_intraday_playbook."""
+    try:
+        import numpy as _np
+        o = _np.asarray(o, dtype=float)
+        h = _np.asarray(h, dtype=float)
+        l = _np.asarray(l, dtype=float)
+        c = _np.asarray(c, dtype=float)
+        v = _np.asarray(v, dtype=float)
+        futures_symbol = futures_ticker
+
+        # --- sessioni RTH per data ET ---
+        hours = np.array([t.hour for t in idx_et])
+        minutes = np.array([t.minute for t in idx_et])
+        rth_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
+        rth_mask &= hours < 16
+        dates = [d.date() for d in idx_et]
+        rth_dates = sorted({d for d, m in zip(dates, rth_mask) if m})
+        if not rth_dates:
+            return {}
+
+        def session_stats(date_val):
+            mask = np.array([d == date_val and m for d, m in zip(dates, rth_mask)])
+            if mask.sum() == 0:
+                return None
+            return {
+                "high": float(np.max(h[mask])),
+                "low": float(np.min(l[mask])),
+                "open": float(o[mask][0]),
+                "close": float(c[mask][-1]),
+                "mask": mask,
+            }
+
+        today = rth_dates[-1]
+        today_s = session_stats(today)
+        prev_completed = [d for d in rth_dates if d < today]
+        prev_s = session_stats(prev_completed[-1]) if prev_completed else None
+
+        out: Dict[str, Any] = {"futures_symbol": futures_symbol.replace("=F", ""), "as_of": datetime.now(timezone.utc).isoformat()}
+
+        # --- PDH/PDL ---
+        if prev_s:
+            out["pdh"] = round(prev_s["high"], 2)
+            out["pdl"] = round(prev_s["low"], 2)
+
+        # --- ONH/ONL: barre tra chiusura RTH di ieri (16:00 ET) e apertura RTH
+        #     di oggi (09:30 ET) — include la sessione Globex delle 18:00 ---
+        if prev_s and prev_completed:
+            prev_date = prev_completed[-1]
+            tz = idx_et[0].tzinfo
+            prev_close_dt = datetime.combine(prev_date, datetime.min.time(), tzinfo=tz) + timedelta(hours=16)
+            today_open_dt = datetime.combine(today, datetime.min.time(), tzinfo=tz) + timedelta(hours=9, minutes=30)
+            on_mask = np.array([
+                (not m) and (t >= prev_close_dt) and (t < today_open_dt)
+                for t, m in zip(idx_et, rth_mask)
+            ])
+            if on_mask.sum() > 0:
+                out["onh"] = round(float(np.max(h[on_mask])), 2)
+                out["onl"] = round(float(np.min(l[on_mask])), 2)
+
+        # --- OPEN RTH di oggi ---
+        if today_s:
+            out["open_rth"] = round(today_s["open"], 2)
+
+        # --- VWAP seduta corrente + bande sigma ---
+        if today_s:
+            mask = today_s["mask"]
+            tp = (h[mask] + l[mask] + c[mask]) / 3.0
+            vol = v[mask]
+            if vol.sum() > 0:
+                vwap = float((tp * vol).sum() / vol.sum())
+                variance = float((vol * (tp - vwap) ** 2).sum() / vol.sum())
+                sigma = math.sqrt(max(variance, 0.0))
+                out["vwap"] = round(vwap, 2)
+                out["vwap_sigma"] = round(sigma, 2)
+                out["vwap_bands"] = {
+                    "s1_up": round(vwap + sigma, 2), "s1_dn": round(vwap - sigma, 2),
+                    "s2_up": round(vwap + 2 * sigma, 2), "s2_dn": round(vwap - 2 * sigma, 2),
+                }
+
+        # --- POC/VAH/VAL: profilo 1pt di una seduta (distribuzione overlap) ---
+        def profile_of(date_val, mask_override=None):
+            mask = mask_override if mask_override is not None else np.array(
+                [d == date_val and m for d, m in zip(dates, rth_mask)])
+            grid: Dict[float, float] = {}
+            for k in np.where(mask)[0]:
+                hi, lo, vol = h[k], l[k], v[k]
+                if vol <= 0 or pd.isna(vol):
+                    continue
+                R = hi - lo
+                if R < 1e-5:
+                    key = round(round(mid_grid(lo, hi) ), 1)
+                    grid[key] = grid.get(key, 0.0) + vol
+                    continue
+                lo_row = math.floor(lo)
+                hi_row = math.ceil(hi)
+                r = float(lo_row)
+                while r <= hi_row:
+                    cell_hi = r + 1.0
+                    overlap = max(0.0, min(hi, cell_hi) - max(lo, r))
+                    if overlap > 0:
+                        grid[r] = grid.get(r, 0.0) + (vol / R) * overlap
+                    r += 1.0
+            if not grid:
+                return None
+            prices = sorted(grid)
+            vols = np.array([grid[p] for p in prices])
+            poc_i = int(np.argmax(vols))
+            total = vols.sum()
+            target = total * 0.70
+            lo_i = hi_i = poc_i
+            acc = vols[poc_i]
+            while acc < target and (lo_i > 0 or hi_i < len(prices) - 1):
+                up = vols[hi_i + 1] if hi_i < len(prices) - 1 else -1
+                dn = vols[lo_i - 1] if lo_i > 0 else -1
+                if up >= dn and up >= 0:
+                    hi_i += 1; acc += vols[hi_i]
+                elif dn >= 0:
+                    lo_i -= 1; acc += vols[lo_i]
+                else:
+                    break
+            return {"poc": round(prices[poc_i], 1), "vah": round(prices[hi_i], 1), "val": round(prices[lo_i], 1)}
+
+        def mid_grid(lo, hi):
+            return (lo + hi) / 2.0
+
+        if prev_s and prev_completed:
+            p = profile_of(prev_completed[-1])
+            if p:
+                out["prev_day_profile"] = p
+
+        if today_s:
+            p = profile_of(today)
+            if p:
+                out["developing_profile"] = p
+
+        # --- NAKED POC: POC delle ultime 5 sedute mai rivalutati dopo ---
+        naked = []
+        for k, dval in enumerate(rth_dates[-6:]):
+            s = session_stats(dval)
+            if not s:
+                continue
+            p = profile_of(dval)
+            if not p:
+                continue
+            poc = p["poc"]
+            later = np.array([(d > dval) for d in dates])
+            if later.sum() > 0:
+                touched = ((l[later] <= poc) & (h[later] >= poc)).any()
+            else:
+                touched = False
+            if not touched:
+                naked.append({"price": poc, "session": dval.isoformat()})
+        if naked:
+            out["naked_pocs"] = naked
+
+        # --- PWH/PWL + open settimana (da barre giornaliere) ---
+        d_daily = yf.Ticker(f"{futures_symbol}=F").history(period="1mo", interval="1d", prepost=False)
+        if not d_daily.empty:
+            didx = d_daily.index
+            if didx.tz is None:
+                didx = didx.tz_localize("UTC")
+            det = didx.tz_convert(_ET)
+            weeks: Dict[Any, list] = {}
+            for k, ts in enumerate(det):
+                iso = ts.date().isocalendar()
+                weeks.setdefault((iso[0], iso[1]), []).append(k)
+            wkeys = sorted(weeks.keys())
+            if len(wkeys) >= 1:
+                cur = wkeys[-1]
+                cur_rows = weeks[cur]
+                out["week_open"] = round(float(d_daily["Open"].values[cur_rows[0]]), 2)
+                if len(wkeys) >= 2:
+                    prev_rows = weeks[wkeys[-2]]
+                    out["pwh"] = round(float(d_daily["High"].values[prev_rows].max()), 2)
+                    out["pwl"] = round(float(d_daily["Low"].values[prev_rows].min()), 2)
+
+        # --- lista piatta pronta per la UI, raggruppata vs ultimo prezzo ---
+        last = float(c[-1])
+        named: List[Tuple[str, float]] = []
+        # 1) riferimenti day/session
+        for key in ("pdh", "pdl", "onh", "onl"):
+            if key in out: named.append((key.upper(), float(out[key])))
+        # 2) VWAP e bande (riferimento istituzionale primario intraday)
+        if "vwap" in out: named.append(("VWAP", float(out["vwap"])))
+        if "vwap_bands" in out:
+            named.append(("VWAP+1σ", float(out["vwap_bands"]["s1_up"])))
+            named.append(("VWAP-1σ", float(out["vwap_bands"]["s1_dn"])))
+        # 3) aperture
+        if "open_rth" in out: named.append(("OPEN", float(out["open_rth"])))
+        if "week_open" in out: named.append(("W-OPEN", float(out["week_open"])))
+        # 4) profilo giorno prima (value area)
+        if "prev_day_profile" in out:
+            named.append(("VAH-1d", float(out["prev_day_profile"]["vah"])))
+            named.append(("POC-1d", float(out["prev_day_profile"]["poc"])))
+            named.append(("VAL-1d", float(out["prev_day_profile"]["val"])))
+        if "developing_profile" in out: named.append(("POC-dev", float(out["developing_profile"]["poc"])))
+        # 5) settimana
+        for key in ("pwh", "pwl"):
+            if key in out: named.append((key.upper(), float(out[key])))
+        # 6) magneti (POC naked non rivalutati)
+        for n in out.get("naked_pocs", []):
+            named.append(("NAKED POC", float(n["price"])))
+
+        seen_prices: List[float] = []
+        levels = []
+        for label, price in named:
+            if any(abs(price - p) < 0.75 for p in seen_prices):
+                continue  # livelli sovrapposti (es. PDH=VAH-1d): uno solo
+            seen_prices.append(price)
+            levels.append({
+                "label": label,
+                "price": round(price, 2),
+                "side": "above" if price > last else ("below" if price < last else "at"),
+                "dist_pct": round((price - last) / last * 100, 2) if last else 0,
+            })
+        out["last_price"] = round(last, 2)
+        out["levels"] = levels
+
+        logger.info(f"   ✅ playbook intraday: {len(levels)} livelli (PDH/ONH/VWAP/POC/naked)")
+        return out
+    except Exception as e:
+        logger.error(f"❌ Errore compute playbook: {e}")
+        return {}
+
+
 def calculate_volatility_skew_25d(all_options_by_expiry: List[Dict[str, Any]], spot: float) -> float:
     """
     Calculate the 25-Delta volatility skew: IV(Put 25D) - IV(Call 25D)
@@ -2039,6 +2314,7 @@ def fetch_symbol_data(
             "call_walls": call_walls,
             "confluence_levels": confluence_levels,
         },
+        "intraday_levels": fetch_intraday_playbook(symbol),
     }
 
     logger.info(

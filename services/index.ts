@@ -125,6 +125,10 @@ export async function fetchOptionsData(
   if (symbolData.futures_volume_profiles) {
     dayTradingData.futuresVolumeProfiles = symbolData.futures_volume_profiles;
   }
+  // Playbook intraday (PDH/ONH/VWAP/POC/naked — calcolato dal backend su ES/NQ)
+  if (symbolData.intraday_levels && symbolData.intraday_levels.levels?.length) {
+    dayTradingData.intradayLevels = symbolData.intraday_levels;
+  }
 
   return dayTradingData;
 }

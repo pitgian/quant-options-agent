@@ -78,10 +78,37 @@ export interface DayTradingLevel {
 /**
  * Display data for the UI.
  */
+/** Livello del playbook intraday (derivato dai futures ES/NQ, scala nativa). */
+export interface IntradayLevel {
+  label: string;
+  price: number;
+  side: 'above' | 'below' | 'at';
+  dist_pct: number;
+}
+
+/** Playbook intraday del desk: PDH/PDL, ONH/ONL, VWAP±σ, POC prev/dev, naked. */
+export interface IntradayLevels {
+  futures_symbol?: string;
+  as_of?: string;
+  last_price?: number;
+  pdh?: number; pdl?: number;
+  onh?: number; onl?: number;
+  open_rth?: number;
+  week_open?: number; pwh?: number; pwl?: number;
+  vwap?: number; vwap_sigma?: number;
+  vwap_bands?: { s1_up: number; s1_dn: number; s2_up: number; s2_dn: number };
+  prev_day_profile?: { poc: number; vah: number; val: number };
+  developing_profile?: { poc: number; vah: number; val: number };
+  naked_pocs?: Array<{ price: number; session: string }>;
+  levels?: IntradayLevel[];
+}
+
 export interface DayTradingData {
   symbol: string;
   spot: number;
   timestamp: string;
+  /** Playbook intraday del desk (livelli prezzo da ES/NQ, scala nativa). */
+  intradayLevels?: IntradayLevels;
   gexRegime: GexRegime;
   resistance: DayTradingLevel[];  // above spot, sorted by proximity
   support: DayTradingLevel[];     // below spot, sorted by proximity
