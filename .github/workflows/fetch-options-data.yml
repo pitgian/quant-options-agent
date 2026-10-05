@@ -1,20 +1,11 @@
 name: Fetch Options Data
 
-# =============================================================================
-# Pipeline dati — livelli operativi intraday.
-#
-# 1) Scarica le catene opzioni (SPY/SPX/QQQ/NDX), calcola muri/GEX/profili
-#    futures e il PLAYBOOK INTRADAY (PDH/PDL/ONH/ONL/VWAP±σ/POC/naked).
-# 2) Registra i livelli nel track record (level_tracker) e valuta le finestre
-#    matured: bounce vs break su barre 5m reali.
-# 3) Pubblica tutto sul branch `data` (force-amend: 1 commit sempre).
-#
-# Niente Kronos, niente addestramento, niente torch: il job dura ~2 minuti.
-# =============================================================================
+# Pipeline dati: catene opzioni + piano dei livelli del giorno + track record.
+# Niente Kronos, niente torch: ~3 minuti per giro.
 
 on:
   schedule:
-    - cron: '*/5 13-21 * * 1-5'   # ogni 5 min in seduta USA (Tue-Fri + Lun til 21 UTC)
+    - cron: '*/5 13-21 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +18,7 @@ concurrency:
 jobs:
   fetch-options:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -55,9 +46,10 @@ jobs:
         run: |
           git fetch origin data || true
           git checkout origin/data -- data/options_history.json || true
-          git checkout origin/data -- data/level_history.json || true
+          git checkout origin/data -- data/day_plan.json || true
+          git checkout origin/data -- data/level_stats.json || true
 
-      - name: Fetch options data + playbook intraday
+      - name: Fetch options data
         timeout-minutes: 10
         run: |
           python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
@@ -66,37 +58,35 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
 
-      - name: Level track record (snapshot + scoring)
+      - name: Day plan (livelli del giorno + track record)
         timeout-minutes: 4
         run: |
-          python scripts/level_tracker.py || true
+          python scripts/day_plan.py || true
 
       - name: Push to repository data branch
         timeout-minutes: 5
         run: |
           mkdir -p /tmp/generated_data
-          cp data/options_data.json /tmp/generated_data/
-          cp data/options_history.json /tmp/generated_data/ || true
-          cp data/level_history.json /tmp/generated_data/ || true
-          cp data/level_report.json /tmp/generated_data/ || true
-          rm -f data/options_data.json data/options_history.json data/level_history.json data/level_report.json
+          for f in options_data.json options_history.json day_plan.json level_stats.json; do
+            cp data/$f /tmp/generated_data/ 2>/dev/null || true
+          done
+          rm -f data/options_data.json data/options_history.json data/day_plan.json data/level_stats.json
           git fetch origin data
           git checkout --force -B data origin/data --
           mkdir -p data
-          cp /tmp/generated_data/options_data.json data/
-          cp /tmp/generated_data/options_history.json data/ || true
-          cp /tmp/generated_data/level_history.json data/ || true
-          cp /tmp/generated_data/level_report.json data/ || true
+          cp /tmp/generated_data/* data/
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           if [ ! -f vercel.json ]; then
             echo '{"git": {"deploymentEnabled": {"data": false}}, "ignoreCommand": "exit 0"}' > vercel.json
             git add vercel.json
           fi
-          git add data/options_data.json data/options_history.json data/level_history.json data/level_report.json 2>/dev/null || true
+          for f in options_data.json options_history.json day_plan.json level_stats.json; do
+            git add data/$f 2>/dev/null || true
+          done
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes to commit on data branch."
             exit 0
           fi
-          git commit --amend -m "chore: data snapshot (options + livelli) [skip ci]"
+          git commit --amend -m "chore: day plan + dati opzioni [skip ci]"
           git push --force-with-lease origin data

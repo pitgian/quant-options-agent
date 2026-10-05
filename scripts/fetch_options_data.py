@@ -2783,7 +2783,7 @@ def main() -> None:
     # the 'expiries' array (see services/index.ts), so shipping 'walls'
     # would be ~30% dead payload (1.3 MB on a typical run).
     # 'total_net_gex' is KEPT because run_kronos.py consumes it as a covariate.
-    INTERNAL_FIELDS_TO_STRIP = ("walls",)
+    INTERNAL_FIELDS_TO_STRIP = ()  # le walls servono al day plan (pin/trigger)
     output_symbols = {
         sym: {k: v for k, v in sd.items() if k not in INTERNAL_FIELDS_TO_STRIP}
         for sym, sd in symbols_data.items()
