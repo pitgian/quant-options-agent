@@ -98,6 +98,13 @@ def main():
         b = out.get("vwap_bands", {})
         check("bande coerenti", b.get("s1_up", 0) > b.get("s1_dn", 0) > 0 and b.get("s2_up", 0) > b.get("s1_up", 0), b)
 
+    print("\n[2b] Initial Balance e tipo di apertura")
+    check("ib_high presente", "ib_high" in out, out.get("ib_high"))
+    check("ib_low presente", "ib_low" in out, out.get("ib_low"))
+    check("ib_high >= ib_low", out.get("ib_high", 0) >= out.get("ib_low", 0), "")
+    check("open_type valido", out.get("open_type") in ("above_vah", "inside_va", "below_val"), out.get("open_type"))
+    check("open_note presente", bool(out.get("open_note")), "")
+
     print("\n[3] Profilo giorno precedente (POC/VAH/VAL)")
     p = out.get("prev_day_profile", {})
     check("poc/vah/val presenti", all(k in p for k in ("poc", "vah", "val")), p)

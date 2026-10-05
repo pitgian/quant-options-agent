@@ -20,6 +20,7 @@ import { EXPIRY_OPTIONS } from '../lib/expiry';
 import { StructuralAnalysisCard, type StructuralAnalysis } from './MarketStructurePanels';
 import { ControlBar, Segmented, Labeled, Freshness, Card, Badge, InfoHint } from './ui';
 import { MarketLevelsColumn, TradingGuide } from './MarketLevelsPanel';
+import { LevelSheet } from './LevelSheet';
 import { detectNodes } from '../lib/volumeProfile';
 
 export type FuturesTimeframe = 'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max';
@@ -724,6 +725,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
             </div>
           </Card>
 
+          {/* 🎯 FOGLIO OPERATIVO: le zone fondate di oggi (AMT + prezzo + opzioni) */}
+          <LevelSheet
+            playbook={etfData.intradayLevels}
+            walls={[...(etfData.support ?? []), ...(etfData.resistance ?? [])]}
+            gexFlipEtf={indexData.gexRegime.flipPoint}
+            spotFut={futuresSpot}
+            etfToFut={futuresSpot / etfCashSpot}
+            indexToFut={basisMultiplier}
+            futuresSymbol={futuresSymbol}
+          />
+
           {viewMode === 'levels' ? (
             <>
               <TradingGuide />
@@ -737,7 +749,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 indexData={indexData}
                 liveSpot={liveSpot}
                 showCrossSymbol={showCrossSymbol}
-                intradayLevels={etfData.intradayLevels}  // playbook calcolato per SPY/QQQ
               />
             </>
           ) : (

@@ -1290,6 +1290,15 @@ def compute_intraday_playbook(idx_et, o, h, l, c, v, futures_ticker: str = "ES")
         if today_s:
             out["open_rth"] = round(today_s["open"], 2)
 
+        # --- INITIAL BALANCE: range dei primi 60 minuti RTH (rotture IB = segnale trend day) ---
+        if today_s:
+            mask = today_s["mask"]
+            ib_idx = np.where(mask)[0][:12]  # 12 barre da 5m = 1 ora
+            if len(ib_idx) > 0:
+                out["ib_high"] = round(float(np.max(h[ib_idx])), 2)
+                out["ib_low"] = round(float(np.min(l[ib_idx])), 2)
+
+
         # --- VWAP seduta corrente + bande sigma ---
         if today_s:
             mask = today_s["mask"]
@@ -1357,6 +1366,26 @@ def compute_intraday_playbook(idx_et, o, h, l, c, v, futures_ticker: str = "ES")
             if p:
                 out["prev_day_profile"] = p
 
+        # --- TIPO DI APERTURA (AMT): open vs value area di ieri ---
+        if today_s and out.get("prev_day_profile"):
+            open_p = today_s["open"]
+            va = out["prev_day_profile"]
+            if open_p > va["vah"]:
+                out["open_type"] = "above_vah"
+                out["open_note"] = ("Apertura SOPRA la value di ieri: il mercato cerca nuovi prezzi. "
+                                    "Se il prezzo resta accettato sopra la VAH → trend day al rialzo; "
+                                    "se rientra velocemente dentro la value → failed breakout, ritorno rapido verso il POC.")
+            elif open_p < va["val"]:
+                out["open_type"] = "below_val"
+                out["open_note"] = ("Apertura SOTTO la value di ieri: il mercato cerca acquirenti. "
+                                    "Accettazione sotto la VAL → trend day al ribasso; "
+                                    "rientro dentro la value → short covering verso il POC.")
+            else:
+                out["open_type"] = "inside_va"
+                out["open_note"] = ("Apertura DENTRO la value di ieri: giornata rotazionale. "
+                                    "Scenario base: il prezzo oscilla tra VAH (vendere) e VAL (comprare) "
+                                    "fino a prova contraria (breakout dell'IB o della value).")
+
         if today_s:
             p = profile_of(today)
             if p:
@@ -1416,6 +1445,8 @@ def compute_intraday_playbook(idx_et, o, h, l, c, v, futures_ticker: str = "ES")
             named.append(("VWAP-1σ", float(out["vwap_bands"]["s1_dn"])))
         # 3) aperture
         if "open_rth" in out: named.append(("OPEN", float(out["open_rth"])))
+        if "ib_high" in out: named.append(("IB-HIGH", float(out["ib_high"])))
+        if "ib_low" in out: named.append(("IB-LOW", float(out["ib_low"])))
         if "week_open" in out: named.append(("W-OPEN", float(out["week_open"])))
         # 4) profilo giorno prima (value area)
         if "prev_day_profile" in out:

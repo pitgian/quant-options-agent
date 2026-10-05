@@ -99,6 +99,10 @@ export interface IntradayLevels {
   vwap_bands?: { s1_up: number; s1_dn: number; s2_up: number; s2_dn: number };
   prev_day_profile?: { poc: number; vah: number; val: number };
   developing_profile?: { poc: number; vah: number; val: number };
+  ib_high?: number; ib_low?: number;
+  /** Classificazione AMT dell'apertura vs value di ieri. */
+  open_type?: 'above_vah' | 'inside_va' | 'below_val';
+  open_note?: string;
   naked_pocs?: Array<{ price: number; session: string }>;
   levels?: IntradayLevel[];
 }
