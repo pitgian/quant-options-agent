@@ -20,7 +20,9 @@ import { EXPIRY_OPTIONS } from '../lib/expiry';
 import { StructuralAnalysisCard, type StructuralAnalysis } from './MarketStructurePanels';
 import { ControlBar, Segmented, Labeled, Freshness, Card, Badge, InfoHint } from './ui';
 import { MarketLevelsColumn, TradingGuide } from './MarketLevelsPanel';
-import { LevelSheet } from './LevelSheet';
+import { AuctionState } from './AuctionState';
+import { LevelLadder } from './LevelLadder';
+import { SessionProfileChart } from './SessionProfileChart';
 import { detectNodes } from '../lib/volumeProfile';
 
 export type FuturesTimeframe = 'auto' | '1d' | '2d' | '5d' | '7d' | '30d' | '90d' | 'max';
@@ -54,7 +56,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   const [zoomPct, setZoomPct] = useState(3.0);
   const [rowHeight, setRowHeight] = useState(22);
   const [flashVisible, setFlashVisible] = useState(false);
-  const [selectedFuturesTf, setSelectedFuturesTf] = useState<FuturesTimeframe>('auto');
+  const [selectedFuturesTf, setSelectedFuturesTf] = useState<FuturesTimeframe>('2d');
   // Mercato tab layout toggle: volume profile (hero) vs intraday key levels.
   const [viewMode, setViewMode] = useState<'profile' | 'levels'>('profile');
   // Confluence toggle for the embedded levels panel.
@@ -626,13 +628,13 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 onChange={(e) => setSelectedFuturesTf(e.target.value as FuturesTimeframe)}
                 className="bg-[#0d1117] border border-slate-800 text-gray-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
               >
-                <option value="auto">Auto (scadenza)</option>
-                <option value="1d">Giornaliero</option>
-                <option value="2d">2 Giorni</option>
-                <option value="7d">Settimanale</option>
-                <option value="30d">Mensile</option>
-                <option value="90d">Trimestrale</option>
-                <option value="max">1 Anno</option>
+                <option value="1d">Oggi</option>
+                <option value="2d">2 giorni</option>
+                <option value="7d">Settimana</option>
+                <option value="30d">Mese</option>
+                <option value="90d">Trimestre</option>
+                <option value="max">1 anno</option>
+                <option value="auto">Auto</option>
               </select>
             </Labeled>
           </>
@@ -725,14 +727,31 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
             </div>
           </Card>
 
-          {/* 🎯 FOGLIO OPERATIVO: le zone fondate di oggi (AMT + prezzo + opzioni) */}
-          <LevelSheet
+          {/* 🔔 STATO DELL'ASTA: la lettura AMT in 5 secondi */}
+          <AuctionState
+            playbook={etfData.intradayLevels}
+            spotFut={futuresSpot}
+            futuresSymbol={futuresSymbol}
+          />
+
+          {/* 🎯 LA SCALA: i livelli di oggi, fusi e ordinati per importanza */}
+          <LevelLadder
             playbook={etfData.intradayLevels}
             walls={[...(etfData.support ?? []), ...(etfData.resistance ?? [])]}
             gexFlipEtf={indexData.gexRegime.flipPoint}
             spotFut={futuresSpot}
             etfToFut={futuresSpot / etfCashSpot}
             indexToFut={basisMultiplier}
+            futuresSymbol={futuresSymbol}
+          />
+
+          {/* 📊 PROFILO DI OGGI: la seduta in corso, un profilo pulito */}
+          <SessionProfileChart
+            profile={indexData.futuresVolumeProfiles?.['1d']}
+            spotFut={futuresSpot}
+            vwap={etfData.intradayLevels?.vwap}
+            ibHigh={etfData.intradayLevels?.ib_high}
+            ibLow={etfData.intradayLevels?.ib_low}
             futuresSymbol={futuresSymbol}
           />
 
