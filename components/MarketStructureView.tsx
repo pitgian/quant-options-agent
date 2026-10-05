@@ -17,7 +17,6 @@ import { formatCompact } from '../utils/formatting';
 import { LoadingState } from './LoadingState';
 import { ErrorState } from './ErrorState';
 import { EXPIRY_OPTIONS } from '../lib/expiry';
-import { KRONOS_TIMEFRAMES, getActiveKronosForecast, type KronosTimeframe } from '../lib/kronos';
 import { StructuralAnalysisCard, type StructuralAnalysis } from './MarketStructurePanels';
 import { ControlBar, Segmented, Labeled, Freshness, Card, Badge, InfoHint } from './ui';
 import { MarketLevelsColumn, TradingGuide } from './MarketLevelsPanel';
@@ -48,7 +47,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     setExpiryFilter,
     handleRefresh,
     lastRefreshed,
-    kronosForecast,
     liveSpot,
   } = state;
 
@@ -60,8 +58,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   const [viewMode, setViewMode] = useState<'profile' | 'levels'>('profile');
   // Confluence toggle for the embedded levels panel.
   const [showCrossSymbol, setShowCrossSymbol] = useState(true);
-  const [showKronosDetails, setShowKronosDetails] = useState(false);
-  const [kronosTimeframe, setKronosTimeframe] = useState<KronosTimeframe>('1d');
 
   useEffect(() => {
     if (showUpdatedFlash) {
@@ -177,7 +173,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
     // see all three flows at the SAME distance from spot.
     //
     // Field names are preserved (strike, futuresStrike, etfStrike) so the
-    // downstream HVN/LVN, Kronos-boundary, and Fair-Value-Area logic — which
+    // downstream HVN/LVN and Fair-Value-Area logic — which
     // keys off `strike` as a unique row id — keeps working unchanged.
     const etfByStrike = new Map(etfData.gexStrikeData.map(d => [d.strike, d]));
     const indexByStrike = new Map(indexData.gexStrikeData.map(d => [d.strike, d]));
@@ -241,7 +237,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
 
       rows.push({
         strike: idxStrike,          // unique row id (real Index strike)
-        futuresStrike: idxStrike,   // alias — Kronos boundary / isClosest logic
+        futuresStrike: idxStrike,   // alias — isClosest logic
         etfStrike: nearestEtfStrike,
         indexStrike: idxStrike,
         etfPrice: nearestEtfStrike, // real ETF strike aligned to this Index level (for label)
@@ -283,46 +279,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
   const zoomedProfile = useMemo(() => {
     return profileData.filter(d => Math.abs(d.distancePct) <= zoomPct);
   }, [profileData, zoomPct]);
-
-  // ---- Active Kronos Forecast based on timeframe selection ----
-  // ---- Active Kronos Forecast based on timeframe selection ----
-  // (timeframe→resolution mapping + candle scaling now lives in lib/kronos.ts)
-  const activeKronosForecast = useMemo(() => {
-    if (!kronosForecast || !etfData || !etfData.spot) return null;
-    const biasItem = market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
-    return getActiveKronosForecast(biasItem, etfData.spot, kronosTimeframe);
-  }, [kronosForecast, market, kronosTimeframe, etfData]);
-
-  // ---- Kronos expected price range in Futures terms ----
-  const kronosRange = useMemo(() => {
-    if (!activeKronosForecast || !indexData || !etfData) return null;
-
-    const futuresSymbol = market === 'SP500' ? 'ES' : 'NQ';
-    const futuresSpot = liveSpot[futuresSymbol as keyof typeof liveSpot] || indexData.spot;
-    
-    if (futuresSpot && activeKronosForecast.lastPrice > 0) {
-      const etfToFuturesRatio = futuresSpot / activeKronosForecast.lastPrice;
-      return {
-        low: activeKronosForecast.expectedLow * etfToFuturesRatio,
-        high: activeKronosForecast.expectedHigh * etfToFuturesRatio,
-        etfToFuturesRatio
-      };
-    }
-    return null;
-  }, [activeKronosForecast, indexData, etfData, liveSpot, market]);
-
-  // ---- Calculate visual boundaries for Kronos expected range ----
-  // Boundaries are kept in PRICE space (dollar low/high) so the rendered band
-  // stays identical regardless of how dense the strike grid is — i.e. the
-  // visual range does NOT depend on the selected expiry filter. Each row is
-  // shaded/labelled by checking whether its price falls inside [low, high].
-  const kronosBoundaries = useMemo(() => {
-    if (!kronosRange || zoomedProfile.length === 0) return null;
-    return {
-      min: kronosRange.low,
-      max: kronosRange.high,
-    };
-  }, [kronosRange, zoomedProfile]);
 
   const hasFuturesData = useMemo(() => {
     return zoomedProfile.some(d => d.futuresVolume > 0);
@@ -678,14 +634,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 <option value="max">1 Anno</option>
               </select>
             </Labeled>
-            <Labeled label="Kronos">
-              <Segmented
-                value={kronosTimeframe}
-                onChange={(tf) => setKronosTimeframe(tf)}
-                size="xs"
-                options={KRONOS_TIMEFRAMES.map((tf) => ({ value: tf.key, label: tf.label }))}
-              />
-            </Labeled>
           </>
         }
         right={
@@ -773,34 +721,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                   </span>
                 </div>
               </div>
-              <div className="w-px h-8 bg-slate-800 hidden sm:block" />
-              <div className="flex items-center gap-2">
-                <div className="flex flex-col">
-                  <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">
-                    Kronos ({kronosTimeframe})
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    {activeKronosForecast ? (
-                      <>
-                        <Badge tone={activeKronosForecast.trendBias === 'BULLISH' ? 'good' : activeKronosForecast.trendBias === 'BEARISH' ? 'bad' : 'neutral'}>
-                          {activeKronosForecast.trendBias === 'BULLISH' ? '▲ Rialzista' : activeKronosForecast.trendBias === 'BEARISH' ? '▼ Ribassista' : '◆ Neutrale'}
-                        </Badge>
-                        <span className="text-[11px] font-mono font-bold text-blue-400 tnum" title="Range atteso (scala futures)">
-                          {kronosRange ? `$${kronosRange.low.toFixed(0)}–$${kronosRange.high.toFixed(0)}` : '—'}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-[11px] text-gray-500">in attesa…</span>
-                    )}
-                  </div>
-                </div>
-                {activeKronosForecast && (
-                  <Badge tone={activeKronosForecast.volatilityPct >= 0.5 ? 'bad' : activeKronosForecast.volatilityPct < 0.2 ? 'good' : 'warn'}
-                         title={`Volatilità stimata sul range: ${activeKronosForecast.volatilityPct.toFixed(3)}%`}>
-                    {activeKronosForecast.volatilityPct.toFixed(2)}% {activeKronosForecast.volatilityPct >= 0.5 ? 'ELEV' : activeKronosForecast.volatilityPct < 0.2 ? 'BASSA' : 'MOD'}
-                  </Badge>
-                )}
-              </div>
             </div>
           </Card>
 
@@ -816,8 +736,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                 etfData={etfData}
                 indexData={indexData}
                 liveSpot={liveSpot}
-                kronosForecast={kronosForecast}
-                kronosTimeframe={kronosTimeframe}
                 showCrossSymbol={showCrossSymbol}
                 intradayLevels={etfData.intradayLevels}  // playbook calcolato per SPY/QQQ
               />
@@ -859,7 +777,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                       <li><b>POC</b> — Point of Control del timeframe futures selezionato (prezzo a maggior volume).</li>
                       <li><b>VAH · VAL</b> — Value Area High/Low: range col 70% del volume del timeframe selezionato.</li>
                       <li><b>Volumi Futures:</b> storico {selectedFuturesTf === 'auto' ? 'allineato alla scadenza selezionata' : 'su timeframe personalizzato'}.</li>
-                      <li><b>Rettangolo blu:</b> range atteso Kronos sull'orizzonte selezionato.</li>
                     </ul>
                   </InfoHint>
                   <span className="text-[10px] text-gray-500">Legenda e significato dei colori</span>
@@ -896,23 +813,10 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     const lvnZone = mergedZones.find(z => d.strike >= z.low && d.strike <= z.high);
                     const isLVN = !!lvnZone;
                     const isTrough = nodes.lvnStrikes.has(d.strike);
-                    // Kronos range is in PRICE space (dollar low/high), independent of
-                    // the strike grid density, so the rendered band does NOT change
-                    // when the expiry filter changes the strike spacing.
-                    const isInKronosRange = !!(kronosBoundaries && d.levelPrice >= kronosBoundaries.min && d.levelPrice <= kronosBoundaries.max);
                     const flipPoint = indexData?.gexRegime?.flipPoint;
                     const isFlipRow = flipPoint
                       ? Math.abs(d.strike - flipPoint * basisMultiplier) === Math.min(...zoomedProfile.map(x => Math.abs(x.strike - flipPoint * basisMultiplier)))
                       : false;
-
-                    // Kronos boundary rows: the grid rows whose PRICE is closest to
-                    // the (continuous) low/high of the Kronos range. Used to draw the
-                    // dashed border + the High/Low labels. Computed in price space so
-                    // they don't depend on strike spacing.
-                    const isKronosHighRow = !!(kronosBoundaries && zoomedProfile.length > 0 &&
-                      Math.abs(d.levelPrice - kronosBoundaries.max) === Math.min(...zoomedProfile.map(x => Math.abs(x.levelPrice - kronosBoundaries.max))));
-                    const isKronosLowRow = !!(kronosBoundaries && zoomedProfile.length > 0 &&
-                      Math.abs(d.levelPrice - kronosBoundaries.min) === Math.min(...zoomedProfile.map(x => Math.abs(x.levelPrice - kronosBoundaries.min))));
 
                     const futBarWidth = ((hasFuturesData ? d.futuresVolume : d.indexVolume) / (hasFuturesData ? maxFuturesVolume : maxIndexVolume)) * 100;
 
@@ -963,14 +867,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                       rowBg = 'rgba(249,115,22,0.08)'; // Orange highlight for GEX Flip row
                     } else if (isConfluence) {
                       rowBg = 'rgba(245,158,11,0.12)'; // Amber highlight for cross-symbol confluence
-                    } else if (isInKronosRange) {
-                      if (isHVN) {
-                        rowBg = 'rgba(59,130,246,0.12)'; // Soft blue base + indigo HVN blend
-                      } else if (isLVN) {
-                        rowBg = 'rgba(244,63,94,0.12)'; // Rose blend
-                      } else {
-                        rowBg = 'rgba(59,130,246,0.08)'; // Soft blue fill for general Kronos range
-                      }
                     } else if (isHVN) {
                       rowBg = 'rgba(99,102,241,0.03)';
                     } else if (isLVN) {
@@ -989,27 +885,17 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                     } else if (isConfluence) {
                       borderTopStyle = '1px dashed rgba(245,158,11,0.55)';
                       borderBottomStyle = '1px dashed rgba(245,158,11,0.55)';
-                    } else {
-                      if (isKronosHighRow) {
-                        borderTopStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
-                      }
-                      if (isKronosLowRow) {
-                        borderBottomStyle = '1.5px dashed rgba(59, 130, 246, 0.85)';
-                      }
                     }
 
                     return (
                       <div
                         key={d.strike}
                         className="relative grid grid-cols-[1fr_150px_1fr_1fr] gap-2 items-center transition-colors duration-150 rounded"
-                        title={isInKronosRange ? `All'interno del Range Atteso di Kronos AI (${kronosTimeframe})` : undefined}
                         style={{
                           height: `${rowHeight}px`,
                           backgroundColor: rowBg,
                           borderTop: borderTopStyle,
                           borderBottom: borderBottomStyle,
-                          borderLeft: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
-                          borderRight: isInKronosRange ? '3px solid rgba(59, 130, 246, 0.75)' : 'none',
                         }}
                       >
                         {/* GEX-Flip badge (structural volatility-regime marker). Wall badges
@@ -1028,17 +914,6 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             ★ Confl. {confluenceType === 'support' ? 'Put' : 'Call'} {futuresSymbol} ${(d.levelPrice * basisMultiplier).toFixed(0)}
                           </span>
                         )}
-                        {isKronosHighRow && rowHeight >= 18 && (
-                          <span className="absolute left-2 -top-2.5 text-[8px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                            🎯 Kronos High: ${kronosRange.high.toFixed(0)}
-                          </span>
-                        )}
-                        {isKronosLowRow && rowHeight >= 18 && (
-                          <span className="absolute left-2 -bottom-2.5 text-[8px] font-extrabold uppercase tracking-wider bg-blue-600 text-white px-1.5 py-0.5 rounded border border-blue-400 whitespace-nowrap z-25 shadow-md">
-                            🎯 Kronos Low: ${kronosRange.low.toFixed(0)}
-                          </span>
-                        )}
-
                         {/* Column 1: ETF Options — OI bar (put/call split, rounded-l) + volume strip.
                             Bottom layer = OI (structural, defines walls), split put(red)/call(green).
                             Top strip (amber) = today's volume (independent scale, intraday flow).
@@ -1150,9 +1025,7 @@ export function MarketStructureView({ sharedState }: { sharedState: ReturnType<t
                             className="h-full rounded-r flex items-center justify-start pl-1.5 overflow-hidden"
                             style={{
                               width: `${Math.max(2, futBarWidth)}%`,
-                              backgroundColor: isInKronosRange
-                                ? (isHVN ? 'rgba(129,140,248,0.55)' : isLVN ? 'rgba(244,63,94,0.15)' : 'rgba(34,197,94,0.45)')
-                                : (isHVN ? 'rgba(129,140,248,0.35)' : isLVN ? 'rgba(244,63,94,0.06)' : 'rgba(34,197,94,0.22)'),
+                              backgroundColor: isHVN ? 'rgba(129,140,248,0.45)' : isLVN ? 'rgba(244,63,94,0.10)' : 'rgba(34,197,94,0.30)',
                               borderLeft: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                               borderRight: isLVN ? '1px dashed rgba(244,63,94,0.4)' : 'none',
                             }}

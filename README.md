@@ -7,33 +7,32 @@
 An interactive quantitative options-analysis web app for US equity-index markets
 (SPY / QQQ / SPX / NDX). It surfaces dealer gamma exposure (GEX), put/call walls,
 cross-symbol confluence, futures volume profile, volatility skew and put/call OI
-ratio, alongside multi-timeframe AI price forecasts produced by the Kronos
+ratio.
 foundation model fine-tuned with options-derived covariates.
 
 ## Features
 
-- **Track record dei livelli** — ogni giorno registra i livelli day-trading
-  (muri pin/trigger per SPY/QQQ) e li valuta sulle barre 5m reali dopo 24h:
-  bounce vs break per famiglia, con verdetto binomiale vs il caso. Dati in
-  `data/level_history.json` + `data/level_report.json`.
-- **Tre aree, zero ridondanza** — 📈 *Mercato* (profilo volumi 3-profilo + livelli
-  intraday in toggle, ticker strip compatta), 🔮 *Proiezioni* (grafico Kronos con
-  banda Monte Carlo), ✅ *Affidabilità* (Alpha Lab, metriche deduplicate per
-  target, diagnostica adapter ripiegata). Un solo kit di componenti condivisi
-  (`components/ui.tsx`): ControlBar, Segmented, Badge, Freshness, InfoHint.
-- **Gamma Exposure (GEX)** — per-strike GEX, total net GEX, gamma flip point and
-  volatility regime (positive / negative / neutral).
-- **Put / Call Walls** — DTE-aware scoring with cross-side penalty and Gaussian
-  proximity decay, normalized to 0–100.
-- **Cross-symbol confluence** — matches walls between ETF ↔ index pairs
-  (SPY↔SPX, QQQ↔NDX) within tolerance and ranks them by a combined score.
-- **Futures volume profile** — distributes futures volume across option strikes
-  on 7 timeframes (1d / 2d / 5d / 7d / 30d / 90d / max).
-- **Skew & PCR** — 25-delta volatility skew (Black-Scholes) and put/call OI ratio,
-  persisted to a rolling history used by the forecast model.
-- **Kronos AI forecast** — multi-resolution (5m / 15m / 1h / 4h / 1d) price
-  projection from a transformer foundation model with a trained covariate adapter
-  that injects live skew / PCR / net-GEX.
+**QuantFlow AI è uno strumento operativo per il day trading su indici (ES/NQ):
+tutto ruota attorno ai LIVELLI dove è più opportuno operare, e ogni livello è
+misurato nel tempo.**
+
+- **📈 Livelli** — profilo volumi unificato (opzioni ETF + indice + futures
+  su 7 finestre), playbook intraday del desk (PDH/PDL, ONH/ONL, VWAP±σ,
+  aperture, value area di ieri, POC naked), muri da opzioni classificati per
+  **meccanismo gamma** (Pin = respingono, Trigger = accelerano le rotture),
+  GEX flip e confluenze cross-symbol.
+- **📐 Track Record** — ogni livello viene registrato ogni giorno e valutato
+  dopo 24h sulle barre 5m reali: bounce vs break per famiglia, con verdetto
+  binomiale vs il caso. Il sistema impara dai fatti, non dalla teoria.
+- **Validazione empirica** — test out-of-sample del set 2026: i muri da puro
+  Open Interest come supporti hanno retto MENO del caso (42% vs 63%); i picchi
+  di gamma lunga hanno respinto l'80% dei touch. Per questo il ranking usa il
+  segno della gamma, non la dimensione dell'OI.
+
+> Il motore predittivo (Kronos + addestramento) è stato rimosso da questo
+> progetto: non batteva il baseline ingenuo dopo 6 settimane di track record.
+> Rimane come progetto separato per il futuro, quando modelli decisionali
+> più maturi saranno disponibili.
 
 ## Architecture
 
@@ -50,7 +49,7 @@ foundation model fine-tuned with options-derived covariates.
                                                        │ (raw JSON, served via GitHub CDN)│
                                                        └──────────────┬──────────────────┘
                                                                       │ raw JSON URL
-┌────────────────────────┐   fetch options JSON + Kronos          │
+┌────────────────────────┐   fetch options JSON                   │
 │  React 19 + Vite SPA   │ ◀──────────────────────────────────────┘
 │  (this repo, on Vercel)│
 │                        │ ──▶ /api-spot  (Vercel serverless, Yahoo chart)
@@ -59,111 +58,27 @@ foundation model fine-tuned with options-derived covariates.
 ```
 
 **Why this split?** The heavy quantitative work (option-chain scanning, GEX,
-walls, Kronos inference) runs on free GitHub Actions compute and is cached as
+walls, level tracking) runs on free GitHub Actions compute and is cached as
 static JSON. Only the cheap, latency-sensitive spot-price lookup lives in a
 Vercel serverless function, keeping the bill near zero.
 
-### Self-improvement loop (skill → alpha)
+### Self-improvement loop dei livelli
 
-Every Kronos run closes the loop `forecast → registered → matured → scored →
-next correction` through three evidence-gated layers, in this order:
+Ogni run del pipeline (ogni 5 min in seduta) chiude il cerchio:
 
-1. **Bias corrector** (`scripts/bias_corrector.py`) — median/MA-dev offset
-   from the last 14d of scored records.
-2. **Alpha lab** (`scripts/alpha_lab.py`) — replays the WHOLE track record
-   walk-forward (one target ahead, deduped per target, recency-weighted)
-   across an arena of correction models (naive / issued / linear
-   recalibration / ridge on context features). A champion is promoted only if
-   it beats the naive "price does not move" baseline significantly (paired
-   sign test p<0.05, skill ≥3%, ≥20 test targets); otherwise the forecast move
-   is heavily dampened (×0.15) or left untouched. Champions + coefficients +
-   progress timeline land in `data/alpha_lab.json`.
-3. **Band calibrator** (`scripts/band_calibrator.py`) — conformal widening of
-   the p10–p90 band to its empirically measured coverage.
+    livelli emessi → maturati (24h) → valutati su barre 5m reali
+        → bounce/break per famiglia → data/level_report.json → UI
 
-Two CI steps (`Skill report + alpha lab`) publish `data/skill_report.json`
-(deduped skill vs naive + ALPHA/NO_ALPHA/ANTI verdicts, surfaced in the UI
-Track Record page) and `data/alpha_lab.json`. Context features
-(momentum, MA-dev, RSI, realized vol, skew/PCR/GEX) are stored with every
-snapshot (tracker schema v3), so the feature-based champion accumulates
-training material over time. The adapter trainer (`scripts/train_adapter.py`)
-uses a time-ordered validation split and an anti-naive gate: a horizon is
-marked deployable only if the adapter beats BOTH the Kronos baseline and the
-naive forecast in price space.
-
-## Project Structure
-
-```
-├── api/                     # Vercel serverless function (live spot prices)
-│   └── index.ts
-├── components/              # React views (MarketStructure, DayTrading, Kronos)
-├── services/                # Frontend pipeline: fetch → filter → walls → gex → keyLevel
-├── hooks/                   # useOptionsData (data + refresh orchestration)
-├── types.ts                 # Shared TypeScript types
-├── data/                    # Static JSON consumed by the SPA (gitignored on master,
-│                            #   generated by CI; served from the `data` branch)
-├── scripts/                 # Python pipeline
-│   ├── fetch_options_data.py    # options chain → walls / GEX / confluence / covariates
-│   ├── run_kronos.py            # Kronos foundation-model forecasts
-│   ├── train_adapter.py         # trains the skew/PCR/GEX → price adapter
-│   ├── auto_updater.py          # optional local daemon
-│   └── model/                   # kronos model code + trained adapter weights
-├── docs/                    # cron-job setup notes
-├── plans/                   # design / refactoring notes
-├── vercel.json              # routing + serverless config
-└── vite.config.ts           # dev server (mirrors /api-spot via middleware)
-```
-
-## Prerequisites
-
-- **Node.js** 18+
-- **Python** 3.11+ (only needed to run the data pipeline locally)
-
-## Installation
-
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd agente-quant-interattivo-per-opzioni
-   ```
-
-2. Install Node.js dependencies:
-   ```bash
-   npm install
-   ```
-
-3. (Optional) Set up a Python environment to run the data pipeline locally:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate    # on Windows: venv\Scripts\activate
-   pip install torch --index-url https://download.pytorch.org/whl/cpu
-   pip install -r scripts/requirements.txt
-   ```
-
-## Development
-
-Start the SPA with hot reload:
-
-```bash
-npm run dev
-```
-
-Vite runs on port 5173 and exposes two dev-only middlewares:
-
-- `/data/<file>.json` — serves files from the local `data/` folder.
-- `/api-spot` — mirrors the production serverless function (fetches live spot
-  prices from Yahoo Finance).
-
-The SPA fetches the static JSON from the `data` branch (raw GitHub URL with a
-cache-busting `?t=` query so the CDN always serves the latest commit), with a
-local-bundle fallback, and keeps the newest version it finds.
+Nessun livello è "vero" per assunzione: ogni famiglia (simbolo × lato ×
+meccanismo gamma) deve guadagnarsi il verdetto BOUNCE_EDGE con una binomiale
+esatta (p<0.05, ≥20 touch) prima di essere considerata affidabile.
 
 ### Running the data pipeline locally
 
 ```bash
 source venv/bin/activate
 python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
-python scripts/run_kronos.py
+# (il forecast Kronos è stato rimosso — vedi nota su)
 ```
 
 ### Tests

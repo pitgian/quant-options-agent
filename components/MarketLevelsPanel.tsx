@@ -1,6 +1,6 @@
 /**
  * MarketLevelsPanel — intraday key-levels panel (support/resistance with OI+Vol
- * bars, GEX regime, futures hero price, Kronos boundary markers).
+ * bars, GEX regime, futures hero price).
  *
  * Exports:
  *   MarketLevelsColumn — the full panel for ONE market (SP500 | NASDAQ100).
@@ -15,35 +15,18 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { DayTradingLevel, DayTradingData, IntradayLevels, IntradayLevel, KronosForecast } from '../types';
+import { DayTradingLevel, DayTradingData, IntradayLevels, IntradayLevel } from '../types';
 import { formatCompact, formatStrike, formatDistance, formatGEX } from '../utils/formatting';
-import { getActiveKronosForecast as computeKronosForecast, type KronosTimeframe } from '../lib/kronos';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-// EXPIRY_OPTIONS and KRONOS_TIMEFRAMES now live in lib/expiry.ts and lib/kronos.ts.
+// EXPIRY_OPTIONS live in lib/expiry.ts.
 
 // ---------------------------------------------------------------------------
 // Helper Functions
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Kronos forecast extraction/scaling now lives in lib/kronos.ts
-// (getActiveKronosForecast). Previously this file carried a local copy of
-// the same ~90-line timeframe→resolution + candle-scaling logic. The thin
-// wrapper below preserves the original (biasItem, etfData, timeframe)
-// call signature used by the JSX in this component.
-// ---------------------------------------------------------------------------
-function getActiveKronosForecast(
-  biasItem: KronosForecast['SP500_bias'] | null | undefined,
-  etfData: DayTradingData | null,
-  timeframe: KronosTimeframe
-) {
-  if (!etfData) return null;
-  return computeKronosForecast(biasItem, etfData.spot, timeframe);
-}
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -215,23 +198,6 @@ const LevelRow: React.FC<LevelRowProps> = ({
             </span>
           )}
 
-          {isKrHigh && (
-            <span
-              className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20"
-              title="Massimo previsto da Kronos AI"
-            >
-              🎯 Kr High
-            </span>
-          )}
-
-          {isKrLow && (
-            <span
-              className="text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20"
-              title="Minimo previsto da Kronos AI"
-            >
-              🎯 Kr Low
-            </span>
-          )}
         </div>
 
         {/* Distance */}
@@ -353,12 +319,6 @@ export const TradingGuide: React.FC = () => {
                 Evidenziata con la dicitura <strong>★ Confl.</strong> dorata. Indica allineamento geometrico tra il prezzo dell'ETF (SPY/QQQ) e del rispettivo Indice Cash (SPX/NDX). I livelli in confluenza rappresentano barriere volumetriche molto resistenti.
               </p>
             </div>
-            <div>
-              <h4 className="font-extrabold text-blue-400 mb-1.5 uppercase tracking-wider text-[11px]">🤖 Proiezioni Kronos AI</h4>
-              <p className="leading-relaxed text-gray-300 text-[11px]">
-                Parentesi statistica generata dall'IA per il timeframe selezionato. I segnali <strong>🎯 Kr High</strong> e <strong>🎯 Kr Low</strong> apposti sui livelli evidenziano le barriere reali più prossime agli estremi previsionali calcolati.
-              </p>
-            </div>
             <div className="md:col-span-3 bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
               <h4 className="font-extrabold text-amber-400 mb-1.5 uppercase tracking-wider text-[11px]">📌 Cosa dicono i dati (validazione set 2026)</h4>
               <p className="leading-relaxed text-gray-300 text-[11px]">
@@ -459,8 +419,6 @@ interface MarketLevelsColumnProps {
   etfData: DayTradingData | null;
   indexData: DayTradingData | null;
   liveSpot: any;
-  kronosForecast: KronosForecast | null;
-  kronosTimeframe: KronosTimeframe;
   showCrossSymbol: boolean;
   intradayLevels?: IntradayLevels;
 }
@@ -474,8 +432,6 @@ export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
   etfData,
   indexData,
   liveSpot,
-  kronosForecast,
-  kronosTimeframe,
   showCrossSymbol,
   intradayLevels,
 }) => {
@@ -594,35 +550,7 @@ export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
     return { maxOI, maxVol };
   }, [data]);
 
-  // Kronos expectations extraction
-  const biasItem = useMemo(() => {
-    if (!kronosForecast) return null;
-    return market === 'SP500' ? kronosForecast.SP500_bias : kronosForecast.NASDAQ_bias;
-  }, [kronosForecast, market]);
-
-  const activeForecast = useMemo(() => {
-    if (!biasItem || !etfData) return null;
-    return getActiveKronosForecast(biasItem, etfData, kronosTimeframe);
-  }, [biasItem, etfData, kronosTimeframe]);
-
   const indexToEtfMultiplier = activeSymbol === indexSymbol ? indexToEtfRatio : 1;
-
-  // Closest key levels to Kronos High/Low boundaries
-  const closestToKrHigh = useMemo(() => {
-    if (!activeForecast || sortedResistance.length === 0) return null;
-    const krHigh = activeForecast.expectedHigh * indexToEtfMultiplier;
-    return sortedResistance.reduce((prev, curr) => 
-      Math.abs(curr.strike - krHigh) < Math.abs(prev.strike - krHigh) ? curr : prev
-    );
-  }, [activeForecast, sortedResistance, indexToEtfMultiplier]);
-
-  const closestToKrLow = useMemo(() => {
-    if (!activeForecast || sortedSupport.length === 0) return null;
-    const krLow = activeForecast.expectedLow * indexToEtfMultiplier;
-    return sortedSupport.reduce((prev, curr) => 
-      Math.abs(curr.strike - krLow) < Math.abs(prev.strike - krLow) ? curr : prev
-    );
-  }, [activeForecast, sortedSupport, indexToEtfMultiplier]);
 
   if (!data) {
     return (
@@ -659,8 +587,7 @@ export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
 
       {/* (Futures hero bar, cash/GEX summary and the Kronos card were removed:
           the shared ticker strip in the Mercato tab already shows ES price +
-          basis, GEX regime, skew/PCR and the Kronos bias/range. The 🎯 Kr
-          High/Low markers below still reference the active Kronos forecast.) */}
+          basis, GEX regime, skew/PCR and the market state.) */}
 
       {/* 🎯 PLAYBOOK INTRADAY — livelli prezzo del desk (PDH/ONH/VWAP/POC/naked).
           Confluenza: un livello playbook entro 0.07% di un muro da opzioni
@@ -697,8 +624,6 @@ export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
                     futuresEquivalent={calculateFuturesEquivalent(level.strike)}
                     futuresSymbol={futuresSymbol}
                     activeSymbol={activeSymbol}
-                    isKrHigh={closestToKrHigh?.strike === level.strike}
-                    isKrLow={closestToKrLow?.strike === level.strike}
                     pairedFuturesEquivalent={
                       level.isCrossSymbol && level.pairedStrike != null
                         ? calculatePairedFuturesEquivalent(level.pairedStrike, level.pairedSymbol)
@@ -745,8 +670,6 @@ export const MarketLevelsColumn: React.FC<MarketLevelsColumnProps> = ({
                     futuresEquivalent={calculateFuturesEquivalent(level.strike)}
                     futuresSymbol={futuresSymbol}
                     activeSymbol={activeSymbol}
-                    isKrHigh={closestToKrHigh?.strike === level.strike}
-                    isKrLow={closestToKrLow?.strike === level.strike}
                     pairedFuturesEquivalent={
                       level.isCrossSymbol && level.pairedStrike != null
                         ? calculatePairedFuturesEquivalent(level.pairedStrike, level.pairedSymbol)

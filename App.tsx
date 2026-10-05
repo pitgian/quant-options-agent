@@ -1,23 +1,21 @@
 import React, { useState, useRef, useLayoutEffect } from 'react';
 import { MarketStructureView } from './components/MarketStructureView';
-import { KronosForecastView } from './components/KronosForecastView';
-import { TrustView } from './components/TrustView';
+import { LevelTrackView } from './components/LevelTrackView';
 import { useOptionsData } from './hooks/useOptionsData';
 
-type Tab = 'market' | 'forecast' | 'trust';
+type Tab = 'levels' | 'track';
 
 const TABS: { key: Tab; label: string; short: string; icon: string }[] = [
-  { key: 'market', label: 'Mercato', short: 'Mercato', icon: '📈' },
-  { key: 'forecast', label: 'Proiezioni', short: 'Proiezioni', icon: '🔮' },
-  { key: 'trust', label: 'Affidabilità', short: 'Affidab.', icon: '✅' },
+  { key: 'levels', label: 'Livelli', short: 'Livelli', icon: '📈' },
+  { key: 'track', label: 'Track Record', short: 'Track', icon: '📐' },
 ];
 
 export default function App() {
   const sharedState = useOptionsData();
-  const [activeTab, setActiveTab] = useState<Tab>('market');
+  const [activeTab, setActiveTab] = useState<Tab>('levels');
   const navRef = useRef<HTMLElement>(null);
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({
-    market: null, forecast: null, trust: null,
+    levels: null, track: null,
   });
 
   // Publish the nav height as a CSS variable so each view's control bar can
@@ -52,7 +50,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col text-slate-100" style={{ backgroundColor: '#0d1117' }}>
-      {/* Sticky nav: brand + the three sections. One freshness indicator lives
+      {/* Sticky nav: brand + the two sections. One freshness indicator lives
           in each view's ControlBar — never duplicated here. */}
       <nav ref={navRef} className="sticky top-0 z-50 border-b border-gray-800 bg-[#161b22]/95 backdrop-blur px-4 py-2.5 sm:px-6">
         <div className="max-w-[1850px] mx-auto flex items-center justify-between gap-3 flex-wrap">
@@ -101,9 +99,8 @@ export default function App() {
         aria-labelledby={`tab-${activeTab}`}
         className="flex flex-col flex-1 animate-fadeIn"
       >
-        {activeTab === 'market' && <MarketStructureView sharedState={sharedState} />}
-        {activeTab === 'forecast' && <KronosForecastView sharedState={sharedState} />}
-        {activeTab === 'trust' && <TrustView sharedState={sharedState} />}
+        {activeTab === 'levels' && <MarketStructureView sharedState={sharedState} />}
+        {activeTab === 'track' && <LevelTrackView sharedState={sharedState} />}
       </div>
     </div>
   );

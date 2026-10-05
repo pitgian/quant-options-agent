@@ -61,8 +61,7 @@ jobs:
           # the options snapshot's `generated` field. Both are written by the
           # pipeline at generation time, so they are immune to the branch's
           # amend-based commit dates.
-          ts = read_ts('data/kronos_forecast.json', 'updated_at') \
-              or read_ts('data/options_data.json', 'generated')
+          ts = read_ts('data/options_data.json', 'generated')
 
           now = datetime.datetime.now(datetime.timezone.utc)
           if not ts:
