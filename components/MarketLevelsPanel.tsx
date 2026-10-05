@@ -153,8 +153,11 @@ const LevelRow: React.FC<LevelRowProps> = ({
             ETF/Index strike is the secondary context line below it. */}
         <div className="flex flex-col">
           {futuresEquivalent != null && futuresSymbol ? (
-            <span className="font-mono text-xs sm:text-sm font-extrabold text-blue-300 whitespace-nowrap">
-              {futuresSymbol} ${futuresEquivalent.toFixed(0)}
+            <span
+              className="font-mono text-xs sm:text-sm font-extrabold text-blue-300 whitespace-nowrap"
+              title={`Zona muro ~${futuresSymbol} ${futuresEquivalent.toFixed(0)} (strike ${activeSymbol} ${level.strike} convertito; il livello operativo è arrotondato a 5 punti)`}
+            >
+              {futuresSymbol} ${(Math.round(futuresEquivalent / 5) * 5).toFixed(0)}
             </span>
           ) : (
             <span className="font-mono text-xs sm:text-sm font-bold" style={{ color }}>
@@ -261,7 +264,7 @@ const LevelRow: React.FC<LevelRowProps> = ({
           <span className="text-[9px] sm:text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
             {pairedFuturesEquivalent != null && futuresSymbol ? (
               <span className="font-mono text-amber-300/90 font-bold">
-                {futuresSymbol} ${pairedFuturesEquivalent.toFixed(0)}
+                {futuresSymbol} ${(Math.round(pairedFuturesEquivalent / 5) * 5).toFixed(0)}
               </span>
             ) : null}
             <span className="text-gray-600">
