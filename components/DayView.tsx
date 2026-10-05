@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { fetchDayPlan, fetchLevelStats, fetchLiveSpot, type DayPlan, type LiveSpot } from '../services/dayPlanService';
 import { Ladder } from './Ladder';
 import { Card } from './ui';
+import { SessionProfileChart } from './SessionProfileChart';
 
 /**
  * DayView — la pagina operativa: lettura AMT, scala dei livelli, profilo
@@ -83,20 +84,37 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
       </Card>
 
 
-      {/* Profilo di oggi */}
+      {/* Profilo di oggi con i livelli operativi sovrapposti alla loro
+          altezza di prezzo: e' la VISTA ESPERTA — un solo grafico che mostra
+          volumi + ogni livello al suo posto. */}
+      {/* 🗺️ Profilo di oggi + mappa dei livelli: un solo grafico con volumi,
+          Value Area e ogni livello operativo alla sua altezza di prezzo. */}
       <Card>
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-200">📊 Profilo di oggi (seduta in corso)</h3>
-          <div className="flex items-center gap-3 text-[10px] text-gray-400">
-            <span className="flex items-center gap-1"><span className="inline-block w-3 h-2 rounded-sm bg-indigo-500/60" /> Value Area (70%)</span>
-            {stats['POC-1d'] && <span className="text-indigo-300 font-bold">POC di ieri</span>}
-          </div>
+          <h3 className="text-sm font-bold text-slate-200">🗺️ Profilo di oggi + mappa dei livelli</h3>
+          <span className="text-[10px] text-gray-500">volumi della seduta · Value Area · livelli alla loro altezza</span>
         </div>
-        <p className="text-xs text-gray-500">
-          {plan.profile_today && Object.keys(plan.profile_today).length > 0
-            ? 'Il profilo della seduta è disponibile nella vista esperta del grafico. Qui sotto i riferimenti chiave della giornata.'
-            : 'Si popola con le transazioni reali: compare con l\'apertura o al prossimo aggiornamento.'}
-        </p>
+        <SessionProfileChart
+          profile={plan.profile_today}
+          spotFut={spot}
+          vwap={plan.vwap}
+          ibHigh={plan.ib?.high ?? undefined}
+          ibLow={plan.ib?.low ?? undefined}
+          overlays={plan.levels
+            .filter(l =>
+              l.kind === 'magnet' || l.kind === 'barrier' ||
+              ['PDH', 'PDL', 'ONH', 'ONL'].includes(l.name))
+            .slice(0, 10)
+            .map(l => ({
+              price: l.price,
+              label: `${l.nome_it} ${Math.round(l.price)}`,
+              color: l.gamma === 'pin' ? '#34d399'
+                   : l.gamma === 'trigger' ? '#fbbf24'
+                   : l.kind === 'magnet' ? '#c084fc'
+                   : '#60a5fa',
+            }))}
+          futuresSymbol={futures}
+        />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
           {[
             ['VAH oggi', plan.developing_va_h],

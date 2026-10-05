@@ -268,6 +268,9 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
     p_today = value_area(profile_from_bars(today_bars))
     if p_today:
         add("POC-dev", "POC di oggi", p_today["poc"], "magnet", "amt")
+        out["developing_poc"] = p_today["poc"]
+        out["developing_va_h"] = p_today["vah"]
+        out["developing_va_l"] = p_today["val"]
 
     # --- naked POC: POC delle ultime 5 sedute mai rivisitati ---
     for dval in dates[-6:]:
