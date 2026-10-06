@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useMemo } from 'react';
+import { buildLadder, type LadderLevel } from '../lib/auction';
 import type { DayPlanLevel } from '../services/dayPlanService';
 
 /**
@@ -19,6 +20,7 @@ interface Row {
   source: string;
   distPts: number;
   gamma?: string;
+  merged?: number;
   held?: number;
   n?: number;
 }
@@ -38,23 +40,47 @@ export const Ladder: React.FC<{
   stats: Record<string, { n: number; held: number; rate: number }>;
   maxPerSide?: number;
 }> = ({ levels, spot, futures, stats, maxPerSide = 6 }) => {
-  const sorted = [...levels].sort((a, b) => b.price - a.price);
-  const above: Row[] = [];
-  const below: Row[] = [];
-  let spotRow: Row | null = null;
+  // Clustering: livelli che cadono nella stessa zona a 5 punti si fondono
+  // (merged = quante fonti), rank = confluenza + magneti + flip + prossimità.
+  const { above: zonesAbove, below: zonesBelow } = useMemo(
+    () => buildLadder(
+      levels.map(l => ({
+        name: l.name,
+        label: l.name,
+        nome_it: l.nome_it,
+        price: l.price,
+        family: l.source === 'options' ? 'options' as const
+              : l.source === 'amt' ? 'amt' as const
+              : 'price' as const,
+        kind: l.kind,
+        gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
+        isFlip: l.name === 'GEX-FLIP',
+        isNaked: l.name.startsWith('NAKED'),
+      })),
+      spot, 5, maxPerSide,
+    ),
+    [levels, spot, maxPerSide],
+  );
 
-  for (const l of sorted) {
-    const distPts = Math.round(l.price - spot);
-    const row: Row = {
-      name: l.name, nome_it: l.nome_it, price: Math.round(l.price),
-      kind: l.kind, source: l.source, distPts, gamma: l.gamma,
-      held: stats[l.name]?.held, n: stats[l.name]?.n,
-    };
-    if (Math.abs(l.price - spot) < 2.5) { spotRow = row; continue; }
-    (l.price > spot ? above : below).push(row);
-  }
-  const aboveShown = above.slice(0, maxPerSide);
-  const belowShown = below.slice(-maxPerSide);
+  const mkRow = (z: LadderLevel): Row => ({
+    name: z.statsKey,
+    nome_it: z.label,
+    price: z.price,
+    kind: z.kind ?? 'pivot',
+    source: z.family,
+    distPts: Math.round(z.price - spot),
+    gamma: z.gammaSign,
+    held: stats[z.statsKey]?.held,
+    n: stats[z.statsKey]?.n,
+    merged: z.merged,
+  });
+
+  const spotRow: Row | null = spot ? {
+    name: 'SPOT', nome_it: 'Spot', price: Math.round(spot), kind: 'reference',
+    source: 'price', distPts: 0,
+  } : null;
+  const aboveShown = zonesAbove.map(mkRow);
+  const belowShown = zonesBelow.map(mkRow);
 
   const RowView: React.FC<{ r: Row; isSpot?: boolean }> = ({ r, isSpot }) => {
     const meta = KIND_META[r.kind] ?? KIND_META.pivot;
@@ -72,6 +98,12 @@ export const Ladder: React.FC<{
             {futures} {r.price.toLocaleString()}
           </span>
           {isSpot && <span className="text-[9px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>}
+          {!isSpot && (r.merged ?? 0) > 1 && (
+            <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 whitespace-nowrap"
+                  title={`${r.merged} livelli distinti confluiscono su questa zona: confluenza alta`}>
+              ★ {r.merged} in confluenza
+            </span>
+          )}
           <span className="text-[11px] text-gray-400 truncate">{r.nome_it}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">

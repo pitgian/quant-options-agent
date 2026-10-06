@@ -55,7 +55,7 @@ export interface LiveSpot {
 const BASE = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data';
 const TTL = 60 * 1000;
 
-let planCache: { ts: number; data: DayPlan } | null = null;
+const planCache = new Map<string, { ts: number; data: DayPlan }>();
 let statsCache: { ts: number; data: Record<string, LevelStat> } | null = null;
 
 async function fetchJson<T>(url: string): Promise<T | null> {
@@ -73,11 +73,12 @@ interface DayPlanFile { version: number; generated_at: string; plans: Record<str
 
 export async function fetchDayPlan(futures: 'ES' | 'NQ', force = false): Promise<DayPlan | null> {
   const now = Date.now();
-  if (!force && planCache && now - planCache.ts < TTL) return planCache.data;
+  const cached = planCache.get(futures);
+  if (!force && cached && now - cached.ts < TTL) return cached.data;
   const data = await fetchJson<DayPlanFile>(`${BASE}/day_plan.json`);
   const plan = data?.plans?.[futures] ?? null;
   if (!plan || !plan.levels) return null;
-  planCache = { ts: now, data: plan };
+  planCache.set(futures, { ts: now, data: plan });
   return plan;
 }
 
@@ -102,6 +103,6 @@ export async function fetchLiveSpot(): Promise<LiveSpot | null> {
 }
 
 export function clearDayPlanCache(): void {
-  planCache = null;
+  planCache.clear();
   statsCache = null;
 }

@@ -78,11 +78,15 @@ export type Family = 'amt' | 'price' | 'options';
 export interface LadderLevel {
   /** Prezzo arrotondato a 5 punti (la griglia operativa di ES/NQ). */
   price: number;
-  /** Etichetta breve per la UI ("Max di ieri", "VWAP", "Muro Call 0DTE"…). */
+  /** Etichetta in italiano della fonte più autorevole della zona. */
   label: string;
+  nome_it: string;
+  /** Chiave tecnica per le statistiche del livello dominante ('PDH', 'PIN'…). */
+  statsKey: string;
   /** Etichetta tecnica originale (PDH, VWAP+1σ, NAKED POC…). */
   rawLabel: string;
   family: Family;
+  kind?: string;
   gammaSign?: 'pin' | 'trigger';
   isFlip?: boolean;
   isNaked?: boolean;
@@ -91,7 +95,11 @@ export interface LadderLevel {
 }
 
 export interface LadderInput {
+  /** Chiave tecnica (per le statistiche: 'PDH', 'PIN', 'NAKED-2026-09-18'…). */
+  name?: string;
   label: string;
+  nome_it?: string;
+  kind?: string;
   price: number;
   family: Family;
   gammaSign?: 'pin' | 'trigger';
@@ -157,7 +165,9 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
     )[0];
     zones.push({
       price,
-      label: LADDER_LABEL_IT[best.label] ?? best.label,
+      label: LADDER_LABEL_IT[best.label] ?? best.nome_it ?? best.label,
+      nome_it: best.nome_it ?? LADDER_LABEL_IT[best.label] ?? best.label,
+      statsKey: best.name ?? best.label,
       rawLabel: best.label,
       family: best.family,
       gammaSign: members.find(m => m.gammaSign)?.gammaSign,
