@@ -27,6 +27,9 @@ export interface DayPlan {
   levels: DayPlanLevel[];
   profile_today?: Record<string, number>;
   developing_poc?: number; developing_va_h?: number; developing_va_l?: number;
+  max_pain_nearest?: number;
+  max_pain_all?: number;
+  top_gamma?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
   vwap?: number;
   vwap_sigma?: number;
   ib?: { high: number | null; low: number | null };

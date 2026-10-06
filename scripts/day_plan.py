@@ -136,7 +136,7 @@ def vwap_of(bars):
 # Opzioni: muri (calculate_walls) + GEX flip dalle catene
 # ---------------------------------------------------------------------------
 
-def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None]:
+def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, list]:
     """Restituisce (walls, gex_flip).
 
     walls: [{strike(INDICE), type, net_gex}] — top per |net_gex|
@@ -176,7 +176,67 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
                 best = (d, strikes[i] + (strikes[i + 1] - strikes[i]) * abs(a) / (abs(a) + abs(b)))
     if best:
         flip = round(best[1], 1)
-    return walls, flip
+
+    top = sorted(net.items(), key=lambda kv: -abs(kv[1]))[:10]
+    top_strikes = [{"strike": round(k, 1), "net_gex": round(vv, 0),
+                    "sign": "long" if vv >= 0 else "short"} for k, vv in top]
+
+    return walls, flip, top_strikes
+
+
+def max_pain(expiries: list) -> dict:
+    """Max Pain: lo strike dove il payout TOTALE agli acquirenti di opzioni
+    è MINIMO (dolore massimo per chi le ha comprate). Vicino alla scadenza il
+    prezzo tende a gravitare lì. Calcolato (a) sull'ultima scadenza — il pin
+    di oggi — e (b) aggregato su tutte le scadenze."""
+    if not expiries:
+        return {}
+    # aggrega OI call/put per strike per scadenza
+    today_d = datetime.now(ET).date()
+    per_exp: dict = defaultdict(lambda: defaultdict(lambda: {"c": 0.0, "p": 0.0}))
+    for e in expiries:
+        try:
+            if datetime.fromisoformat(e["date"]).date() < today_d:
+                continue  # scadenza già passata: il suo OI non è più un livello
+        except Exception:
+            pass
+        for o in e.get("options", []):
+            cell = per_exp[e["date"]][o["strike"]]
+            if o["side"] == "CALL":
+                cell["c"] += o["oi"]
+            else:
+                cell["p"] += o["oi"]
+
+    def pain_of(strikes_set, oi_by_strike, S):
+        tot = 0.0
+        for K, d in oi_by_strike.items():
+            tot += d["c"] * max(0.0, S - K)
+            tot += d["p"] * max(0.0, K - S)
+        return tot
+
+    def max_pain_of(oi_by_strike):
+        strikes = sorted(oi_by_strike)
+        if len(strikes) < 2:
+            return None
+        pains = [(pain_of(strikes, oi_by_strike, S), S) for S in strikes]
+        return min(pains)[1]
+
+    out = {}
+    if per_exp:
+        nearest_date = min(per_exp)
+        nearest_oi = per_exp[nearest_date]
+        mp_n = max_pain_of(nearest_oi)
+        if mp_n:
+            out["nearest"] = {"strike": round(mp_n, 1), "expiry": nearest_date}
+        all_oi: dict = defaultdict(lambda: {"c": 0.0, "p": 0.0})
+        for d in per_exp:
+            for K, dd in per_exp[d].items():
+                all_oi[K]["c"] += dd["c"]
+                all_oi[K]["p"] += dd["p"]
+        mp_a = max_pain_of(all_oi)
+        if mp_a:
+            out["all"] = {"strike": round(mp_a, 1)}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +581,8 @@ def main() -> None:
         es_spot = float(hist["Close"].iloc[-1])
         ratio = es_spot / spot_etf if spot_etf else 10.0
 
-        walls, flip = compute_option_levels(sd.get("expiries", []), spot_etf)
+        walls, flip, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
+        mp = max_pain(sd.get("expiries", []))
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
@@ -533,6 +594,14 @@ def main() -> None:
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
                           index_to_fut=index_to_fut)
         plan["spot_etf"] = spot_etf
+        # max pain + top gamma in scala futures
+        if mp.get("nearest", {}).get("strike"):
+            plan["max_pain_nearest"] = round(mp["nearest"]["strike"] * ratio, 1)
+        if mp.get("all", {}).get("strike"):
+            plan["max_pain_all"] = round(mp["all"]["strike"] * ratio, 1)
+        plan["top_gamma"] = [
+            {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in top_gamma
+        ]
         plans[fut] = plan
 
         # --- TRACK RECORD: il piano di IERI giudicato sulle barre di oggi ---

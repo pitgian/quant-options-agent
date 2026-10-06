@@ -1,21 +1,22 @@
-import React, { useEffect, useState } from 'react';
-import { fetchDayPlan, fetchLevelStats, fetchLiveSpot, type DayPlan, type LiveSpot } from '../services/dayPlanService';
+import React, { useEffect, useMemo, useState } from 'react';
+import { fetchDayPlan, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
+import { buildLadder, type LadderLevel } from '../lib/auction';
 import { Ladder } from './Ladder';
-import { Card } from './ui';
-import { SessionProfileChart } from './SessionProfileChart';
+import { GexByStrike } from './GexByStrike';
+import { Card, Badge } from './ui';
 
 /**
- * DayView — la pagina operativa: lettura AMT, scala dei livelli, profilo
- * della seduta. Tutto ció che serve durante la giornata, nient'altro.
+ * DayView — i livelli OPERATIVI DA OPZIONI del giorno.
+ *
+ * Solo fonti opzioni: GEX flip, muri gamma (pin/barriera/trigger), max pain,
+ * top strike per gamma assoluta. Ogni livello porta l'affidabilità storica
+ * dal track record.
  */
 export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   const [plan, setPlan] = useState<DayPlan | null>(null);
   const [stats, setStats] = useState<Record<string, { n: number; held: number; rate: number }>>({});
   const [live, setLive] = useState<LiveSpot | null>(null);
 
-  // Piano + stats: ricaricati ogni 60 secondi (il backend li rigenera ogni
-  // ~5 min in seduta; il fetch del service ha TTL 60s quindi ogni poll
-  // effettivo va a rete solo se il TTL è scaduto).
   useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -29,7 +30,6 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
     return () => { alive = false; clearInterval(id); };
   }, [futures]);
 
-  // prezzo live ogni 15s (fallback: chiusura del piano)
   useEffect(() => {
     let alive = true;
     const tick = async () => {
@@ -43,99 +43,102 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
 
   const spot = (futures === 'ES' ? live?.ES : live?.NQ) ?? plan?.last_price ?? 0;
 
+  // SOLO livelli da opzioni + max pain (i livelli di prezzo — VWAP, max/min,
+  // value — non fanno parte di questo strumento)
+  const optLevels: DayPlanLevel[] = useMemo(() => {
+    if (!plan) return [];
+    const out: DayPlanLevel[] = plan.levels.filter(l => l.source === 'options');
+    if (plan.max_pain_nearest) {
+      out.push({
+        name: 'MAXPAIN-0DTE',
+        nome_it: 'Max Pain scadenza vicina',
+        price: plan.max_pain_nearest,
+        kind: 'magnet',
+        source: 'options',
+        dist_pts: Math.round(plan.max_pain_nearest - spot),
+      } as DayPlanLevel);
+    }
+    if (plan.max_pain_all) {
+      out.push({
+        name: 'MAXPAIN-ALL',
+        nome_it: 'Max Pain (tutte le scadenze)',
+        price: plan.max_pain_all,
+        kind: 'magnet',
+        source: 'options',
+        dist_pts: Math.round(plan.max_pain_all - spot),
+      } as DayPlanLevel);
+    }
+    return out;
+  }, [plan, spot]);
+
+  const gexFlip = plan?.levels.find(l => l.name === 'GEX-FLIP');
+  const regime = plan?.levels.find(l => l.name === 'GEX-FLIP');
+
   if (!plan) {
     return (
       <Card className="flex flex-col items-center justify-center min-h-[280px] text-center">
-        <span className="text-3xl mb-3">📈</span>
-        <span className="text-gray-300 text-sm font-semibold mb-1">Piano del giorno non ancora generato</span>
+        <span className="text-3xl mb-3">⚙️</span>
+        <span className="text-gray-300 text-sm font-semibold mb-1">Piano opzioni non ancora generato</span>
         <span className="text-gray-500 text-xs max-w-md">
-          Il pipeline lo pubblica automaticamente al primo giro di mercato.
-          Torna tra poco o lancia il workflow dal repository.
+          Il pipeline lo pubblica al primo giro di mercato (ogni 5 minuti in seduta).
         </span>
       </Card>
     );
   }
 
-  const dayChange = spot && plan.last_price ? spot - plan.last_price : 0;
-
   return (
     <div className="flex flex-col gap-5">
-      {/* Lettura del giorno */}
-      <Card>
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-          <h3 className="text-sm font-bold text-slate-200">📰 Lettura del giorno — Auction Market Theory</h3>
+      {/* Regime gamma */}
+      <Card className="!p-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">Regime gamma</span>
+            {gexFlip ? (
+              <Badge tone={spot > gexFlip.price ? 'good' : 'bad'}
+                     title={spot > gexFlip.price
+                       ? 'Sopra il flip: dealer long gamma — volatilità contenuta, i livelli respingono (pin)'
+                       : 'Sotto il flip: dealer short gamma — i movimenti si amplificano (trend)'}>
+                {spot > gexFlip.price ? '▲ Long gamma (mean reversion)' : '▼ Short gamma (trend/amplificazione)'}
+              </Badge>
+            ) : '—'}
+            {gexFlip && (
+              <span className="text-[11px] font-mono text-gray-400 tnum">
+                Flip {futures} {gexFlip.price.toLocaleString()}
+              </span>
+            )}
+          </div>
           <span className="text-[10px] text-gray-500">
             piano delle {new Date(plan.generated_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
-        <ul className="text-xs text-gray-300 space-y-1.5">
-          {plan.read.map((s, i) => (
-            <li key={i} className="flex gap-2 leading-relaxed">
-              <span className="text-blue-400 font-bold">{i + 1}.</span>
-              <span>{s}</span>
-            </li>
-          ))}
-        </ul>
       </Card>
 
-      {/* LA SCALA */}
+      {/* LA SCALA — solo opzioni */}
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-200">🎯 La scala — livelli di oggi</h3>
-          <span className="text-[10px] text-gray-500">distanza in punti dal prezzo live · 🧲 magnete · 🛡 barriera · ⚡ trigger · raggio ±3%</span>
+          <h3 className="text-sm font-bold text-slate-200">🎯 La scala — livelli opzioni</h3>
+          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger · raggio ±5%</span>
         </div>
-        <Ladder levels={plan.levels} spot={spot} futures={futures} stats={stats} />
+        <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} />
+        <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
+          Solo livelli derivati da opzioni: GEX flip, muri gamma, max pain.
+          Pin = gamma lunga (respinge) · Trg = gamma corta (accelera) · Magnete = il prezzo tende a tornarci.
+        </p>
       </Card>
 
-
-      {/* Profilo di oggi con i livelli operativi sovrapposti alla loro
-          altezza di prezzo: e' la VISTA ESPERTA — un solo grafico che mostra
-          volumi + ogni livello al suo posto. */}
-      {/* 🗺️ Profilo di oggi + mappa dei livelli: un solo grafico con volumi,
-          Value Area e ogni livello operativo alla sua altezza di prezzo. */}
-      <Card>
+      {/* Profilo gamma per strike */}
+      <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-200">🗺️ Profilo di oggi + mappa dei livelli</h3>
-          <span className="text-[10px] text-gray-500">volumi della seduta · Value Area · livelli alla loro altezza</span>
+          <h3 className="text-sm font-bold text-slate-200">📊 Gamma per strike (dealer positioning)</h3>
+          <span className="text-[10px] text-gray-500">barre verdi = gamma lunga (pin) · rosse = gamma corta (trigger)</span>
         </div>
-        <SessionProfileChart
-          profile={plan.profile_today}
-          spotFut={spot}
-          vwap={plan.vwap}
-          ibHigh={plan.ib?.high ?? undefined}
-          ibLow={plan.ib?.low ?? undefined}
-          overlays={plan.levels
-            .filter(l =>
-              l.kind === 'magnet' || l.kind === 'barrier' ||
-              ['PDH', 'PDL', 'ONH', 'ONL'].includes(l.name))
-            .slice(0, 10)
-            .map(l => ({
-              price: l.price,
-              label: `${l.nome_it} ${Math.round(l.price)}`,
-              color: l.gamma === 'pin' ? '#34d399'
-                   : l.gamma === 'trigger' ? '#fbbf24'
-                   : l.kind === 'magnet' ? '#c084fc'
-                   : '#60a5fa',
-            }))}
-          futuresSymbol={futures}
+        <GexByStrike
+          strikes={(plan.top_gamma ?? []).map(t => ({ ...t, strike_fut: t.strike_fut }))}
+          spot={spot}
+          flip={gexFlip?.price}
+          futures={futures}
         />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-          {[
-            ['VAH oggi', plan.developing_va_h],
-            ['POC oggi', plan.developing_poc],
-            ['VAL oggi', plan.developing_va_l],
-            ['VWAP', plan.vwap],
-          ].map(([label, v]) => (
-            <div key={String(label)} className="bg-[#0d1117] border border-slate-800 rounded-xl p-2.5">
-              <span className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">{String(label)}</span>
-              <div className="text-sm font-mono font-bold text-slate-100 tnum mt-0.5">
-                {v ? futures + ' ' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'}
-              </div>
-            </div>
-          ))}
-        </div>
       </Card>
-
     </div>
   );
 };

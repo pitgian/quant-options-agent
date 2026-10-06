@@ -75,6 +75,13 @@ export function valuePosition(price: number, prev: ProfileStats): OpenType {
 
 export type Family = 'amt' | 'price' | 'options';
 
+export interface LadderMember {
+  nome_it: string;
+  label: string;
+  family: Family;
+  gammaSign?: 'pin' | 'trigger';
+}
+
 export interface LadderLevel {
   /** Prezzo arrotondato a 5 punti (la griglia operativa di ES/NQ). */
   price: number;
@@ -92,6 +99,8 @@ export interface LadderLevel {
   isNaked?: boolean;
   /** Quanti livelli distinti confluiscono nella stessa zona. */
   merged: number;
+  /** I livelli che compongono la zona (per dire DI QUALE confluenza si tratta). */
+  members: LadderMember[];
 }
 
 export interface LadderInput {
@@ -135,7 +144,7 @@ export function ladderFamily(label: string): Family {
  * Restituisce le zone ordinate per importanza; il chiamante le divide
  * sopra/sotto lo spot.
  */
-export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5, maxPerSide = 6): {
+export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5, maxPerSide = 6, maxRadiusPct = 0.03): {
   above: LadderLevel[];
   below: LadderLevel[];
 } {
@@ -172,6 +181,12 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
       rawLabel: best.label,
       family: best.family,
       kind: best.kind,
+      members: members.map(m => ({
+        nome_it: m.nome_it ?? LADDER_LABEL_IT[m.label] ?? m.label,
+        label: m.label,
+        family: m.family,
+        gammaSign: m.gammaSign,
+      })),
       gammaSign: members.find(m => m.gammaSign)?.gammaSign,
       isFlip: members.some(m => m.isFlip),
       isNaked: hasNaked,
@@ -182,7 +197,7 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
 
   // Raggio operativo: oltre il 3% dal prezzo non è day trading (quei livelli
   // restano nella mappa sul profilo e nella lettura, non nella scala).
-  const operational = zones.filter(z => Math.abs(z.price - spot) / spot <= 0.03);
+  const operational = zones.filter(z => Math.abs(z.price - spot) / spot <= maxRadiusPct);
 
   const rank = (a: LadderLevel & { score: number }, b: LadderLevel & { score: number }) =>
     b.score - a.score || Math.abs(a.price - spot) - Math.abs(b.price - spot);

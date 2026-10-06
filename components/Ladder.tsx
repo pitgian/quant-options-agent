@@ -57,7 +57,7 @@ export const Ladder: React.FC<{
         isFlip: l.name === 'GEX-FLIP',
         isNaked: l.name.startsWith('NAKED'),
       })),
-      spot, 5, maxPerSide,
+      spot, 5, maxPerSide, 0.05,
     ),
     [levels, spot, maxPerSide],
   );

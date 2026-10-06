@@ -1,44 +1,44 @@
 {
  "version": 1,
- "generated_at": "2026-10-06T06:58:12.950937+00:00",
+ "generated_at": "2026-10-06T07:27:27.660496+00:00",
  "plans": {
   "ES": {
    "version": 1,
-   "generated_at": "2026-10-06T06:58:12.606038+00:00",
+   "generated_at": "2026-10-06T07:27:27.256904+00:00",
    "futures": "ES",
    "last_price": 7831.2,
    "read": [
     "Apertura dentro la value di ieri: giornata rotazionale \u2014 il prezzo dovrebbe oscillare tra VAL 7764 e VAH 7789 fino a prova contraria.",
     "Prezzo sopra VWAP (7817) \u2192 bias intraday long: si comprano i pullback verso il VWAP.",
-    "Gamma: Pin sopra: 7884, 7935 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
+    "Gamma: Pin sopra: 7886, 7936 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
    ],
    "levels": [
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 7955.3,
+     "price": 7956.3,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 124.1
+     "dist_pts": 125.1
     },
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 7935.1,
+     "price": 7936.1,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 103.9
+     "dist_pts": 104.9
     },
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 7884.5,
+     "price": 7885.6,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 53.2
+     "dist_pts": 54.4
     },
     {
      "name": "W-HIGH",
@@ -51,18 +51,18 @@
     {
      "name": "ONH",
      "nome_it": "Max overnight",
-     "price": 7843.2,
+     "price": 7844.2,
      "kind": "pivot",
      "source": "price",
-     "dist_pts": 11.9
+     "dist_pts": 12.9
     },
     {
      "name": "GVWAP",
      "nome_it": "VWAP Globex (18:00)",
-     "price": 7834.7,
+     "price": 7835.5,
      "kind": "pivot",
      "source": "price",
-     "dist_pts": 3.4
+     "dist_pts": 4.2
     },
     {
      "name": "POC-dev",
@@ -113,12 +113,12 @@
      "dist_pts": -52.8
     },
     {
-     "name": "GEX-FLIP",
-     "nome_it": "GEX flip (cambio regime gamma)",
-     "price": 7775.4,
-     "kind": "pivot",
-     "source": "options",
-     "dist_pts": -55.9
+     "name": "POC-1d",
+     "nome_it": "POC di ieri (magnete)",
+     "price": 7774.0,
+     "kind": "magnet",
+     "source": "amt",
+     "dist_pts": -57.2
     },
     {
      "name": "VAL-1d",
@@ -155,20 +155,20 @@
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 7581.3,
+     "price": 7582.3,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -249.9
+     "dist_pts": -248.9
     },
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 7530.8,
+     "price": 7531.7,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -300.4
+     "dist_pts": -299.6
     }
    ],
    "developing_poc": 7824.0,
@@ -252,36 +252,100 @@
     "high": 7811.0,
     "low": 7778.2
    },
-   "spot_etf": 775.864990234375
+   "spot_etf": 775.864990234375,
+   "max_pain_nearest": 7764.2,
+   "max_pain_all": 7683.4,
+   "top_gamma": [
+    {
+     "strike": 787.0,
+     "net_gex": 316384034759.0,
+     "sign": "long",
+     "strike_fut": 7956.3
+    },
+    {
+     "strike": 785.0,
+     "net_gex": 287496904872.0,
+     "sign": "long",
+     "strike_fut": 7936.1
+    },
+    {
+     "strike": 780.0,
+     "net_gex": 196705632026.0,
+     "sign": "long",
+     "strike_fut": 7885.6
+    },
+    {
+     "strike": 775.0,
+     "net_gex": 167581964847.0,
+     "sign": "long",
+     "strike_fut": 7835.0
+    },
+    {
+     "strike": 800.0,
+     "net_gex": 120028700074.0,
+     "sign": "long",
+     "strike_fut": 8087.7
+    },
+    {
+     "strike": 790.0,
+     "net_gex": 90825658271.0,
+     "sign": "long",
+     "strike_fut": 7986.7
+    },
+    {
+     "strike": 777.0,
+     "net_gex": 84122244802.0,
+     "sign": "long",
+     "strike_fut": 7855.2
+    },
+    {
+     "strike": 776.0,
+     "net_gex": 77772720546.0,
+     "sign": "long",
+     "strike_fut": 7845.1
+    },
+    {
+     "strike": 774.0,
+     "net_gex": 77585131641.0,
+     "sign": "long",
+     "strike_fut": 7824.9
+    },
+    {
+     "strike": 755.0,
+     "net_gex": -76989172012.0,
+     "sign": "short",
+     "strike_fut": 7632.8
+    }
+   ]
   },
   "NQ": {
    "version": 1,
-   "generated_at": "2026-10-06T06:58:12.946947+00:00",
+   "generated_at": "2026-10-06T07:27:27.656177+00:00",
    "futures": "NQ",
    "last_price": 31338.5,
    "read": [
     "Apertura dentro la value di ieri: giornata rotazionale \u2014 il prezzo dovrebbe oscillare tra VAL 31011 e VAH 31162 fino a prova contraria.",
     "Prezzo sopra VWAP (31243) \u2192 bias intraday long: si comprano i pullback verso il VWAP.",
-    "Gamma: Pin sopra: 31536, 32158 \u00b7 Pin sotto: 31328 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
+    "Gamma: Pin sopra: 31528, 32150 \u00b7 Pin sotto: 31320 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
    ],
    "levels": [
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 32158.3,
+     "price": 32150.1,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 819.8
+     "dist_pts": 811.6
     },
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 31535.9,
+     "price": 31527.9,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 197.4
+     "dist_pts": 189.4
     },
     {
      "name": "W-HIGH",
@@ -302,19 +366,19 @@
     {
      "name": "GVWAP",
      "nome_it": "VWAP Globex (18:00)",
-     "price": 31359.2,
+     "price": 31359.9,
      "kind": "pivot",
      "source": "price",
-     "dist_pts": 20.7
+     "dist_pts": 21.4
     },
     {
      "name": "PIN",
      "nome_it": "Muro put in pin (sotto)",
-     "price": 31328.4,
+     "price": 31320.5,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": -10.1
+     "dist_pts": -18.0
     },
     {
      "name": "VWAP+1s",
@@ -375,10 +439,10 @@
     {
      "name": "GEX-FLIP",
      "nome_it": "GEX flip (cambio regime gamma)",
-     "price": 31083.6,
+     "price": 31075.7,
      "kind": "pivot",
      "source": "options",
-     "dist_pts": -254.9
+     "dist_pts": -262.8
     },
     {
      "name": "OPEN",
@@ -431,20 +495,20 @@
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 30083.6,
+     "price": 30075.9,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -1254.9
+     "dist_pts": -1262.6
     },
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 29046.2,
+     "price": 29038.8,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -2292.3
+     "dist_pts": -2299.7
     }
    ],
    "developing_poc": 31219.0,
@@ -785,7 +849,71 @@
     "high": 31247.8,
     "low": 31044.2
    },
-   "spot_etf": 756.6099243164062
+   "spot_etf": 756.6099243164062,
+   "max_pain_nearest": 30905.6,
+   "max_pain_all": 30075.9,
+   "top_gamma": [
+    {
+     "strike": 760.0,
+     "net_gex": 193122439303.0,
+     "sign": "long",
+     "strike_fut": 31527.9
+    },
+    {
+     "strike": 755.0,
+     "net_gex": 126344425346.0,
+     "sign": "long",
+     "strike_fut": 31320.5
+    },
+    {
+     "strike": 775.0,
+     "net_gex": 74273128583.0,
+     "sign": "long",
+     "strike_fut": 32150.1
+    },
+    {
+     "strike": 750.0,
+     "net_gex": 61453637430.0,
+     "sign": "long",
+     "strike_fut": 31113.0
+    },
+    {
+     "strike": 770.0,
+     "net_gex": 59960500904.0,
+     "sign": "long",
+     "strike_fut": 31942.7
+    },
+    {
+     "strike": 754.0,
+     "net_gex": 49246644244.0,
+     "sign": "long",
+     "strike_fut": 31279.0
+    },
+    {
+     "strike": 757.0,
+     "net_gex": 47437316618.0,
+     "sign": "long",
+     "strike_fut": 31403.4
+    },
+    {
+     "strike": 765.0,
+     "net_gex": 46959856186.0,
+     "sign": "long",
+     "strike_fut": 31735.3
+    },
+    {
+     "strike": 780.0,
+     "net_gex": 41935433353.0,
+     "sign": "long",
+     "strike_fut": 32357.6
+    },
+    {
+     "strike": 800.0,
+     "net_gex": 41667458796.0,
+     "sign": "long",
+     "strike_fut": 33187.2
+    }
+   ]
   }
  }
 }
