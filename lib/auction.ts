@@ -99,6 +99,9 @@ export interface LadderLevel {
   isNaked?: boolean;
   /** Quanti livelli distinti confluiscono nella stessa zona. */
   merged: number;
+  /** Punteggio di importanza (confluenza, magneti, flip, pin, prossimità). */
+  score: number;
+  importance: 'alta' | 'media' | 'bassa';
   /** I livelli che compongono la zona (per dire DI QUALE confluenza si tratta). */
   members: LadderMember[];
 }
@@ -187,11 +190,12 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
         family: m.family,
         gammaSign: m.gammaSign,
       })),
+      score,
+      importance: (score >= 8 ? 'alta' : score >= 5 ? 'media' : 'bassa') as 'alta' | 'media' | 'bassa',
       gammaSign: members.find(m => m.gammaSign)?.gammaSign,
       isFlip: members.some(m => m.isFlip),
       isNaked: hasNaked,
       merged: members.length,
-      score,
     });
   }
 

@@ -21,6 +21,9 @@ interface Row {
   distPts: number;
   gamma?: string;
   merged?: number;
+  members?: Array<{ nome_it: string; gammaSign?: string }>;
+  importance?: 'alta' | 'media' | 'bassa';
+  score?: number;
   held?: number;
   n?: number;
 }
@@ -70,10 +73,18 @@ export const Ladder: React.FC<{
     source: z.family,
     distPts: Math.round(z.price - spot),
     gamma: z.gammaSign,
+    merged: z.merged,
+    members: z.members,
+    importance: z.importance,
+    score: z.score,
     held: stats[z.statsKey]?.held,
     n: stats[z.statsKey]?.n,
-    merged: z.merged,
   });
+
+  // Ordine a scala: sopra lo spot il PIÙ LONTANO in alto (prezzi decrescenti
+  // scendendo verso lo spot), sotto lo spot il più vicino prima.
+  const aboveRows = [...zonesAbove].sort((a, b) => b.price - a.price).map(mkRow);
+  const belowRows = zonesBelow.map(mkRow);
 
   const spotRow: Row | null = spot ? {
     name: 'SPOT', nome_it: 'Spot', price: Math.round(spot), kind: 'reference',
@@ -105,6 +116,16 @@ export const Ladder: React.FC<{
             </span>
           )}
           <span className="text-[11px] text-gray-400 truncate">{r.nome_it}</span>
+          {r.importance && (
+            <span className={`text-[8px] font-extrabold uppercase px-1 py-0.5 rounded whitespace-nowrap ${
+              r.importance === 'alta' ? 'bg-emerald-500/15 text-emerald-400'
+              : r.importance === 'media' ? 'bg-sky-500/15 text-sky-400'
+              : 'bg-slate-700/40 text-slate-500'
+            }`}
+            title={`Importanza (punteggio ${r.score ?? '—'}): confluenza di fonti, magneti, flip, pin e prossimità allo spot`}>
+              {r.importance === 'alta' ? '★★★' : r.importance === 'media' ? '★★' : '★'}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {conf && (
@@ -129,7 +150,7 @@ export const Ladder: React.FC<{
 
   return (
     <div className="flex flex-col gap-0.5">
-      {aboveShown.map(r => <RowView key={r.name + r.price} r={r} />)}
+      {aboveRows.map(r => <RowView key={r.price} r={r} />)}
       {spotRow && <RowView r={spotRow} isSpot />}
       {!spotRow && (
         <div className="flex items-center gap-3 px-3 py-3">
@@ -140,7 +161,7 @@ export const Ladder: React.FC<{
           <div className="h-px flex-1 bg-gradient-to-r from-amber-500/40 via-transparent to-transparent" />
         </div>
       )}
-      {belowShown.map(r => <RowView key={r.name + r.price} r={r} />)}
+      {belowRows.map(r => <RowView key={r.price} r={r} />)}
     </div>
   );
 };
