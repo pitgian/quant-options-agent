@@ -104,4 +104,23 @@ describe('buildLadder', () => {
     // La zona 7760 (naked + muro fusi) deve essere tra le scelte
     expect(below.some(z => z.price === 7760)).toBe(true);
   });
+
+  it('rewards member confluence and GEX size in the score', () => {
+    // zona 7830: 0.38% dallo spot → near
+    const single = buildLadder([
+      { label: 'W', price: 7830, family: 'options' as const, gammaSign: 'pin' as const },
+    ], SPOT);
+    const z1 = single.above.find(z => z.price === 7830)!;
+    expect(z1.score).toBe(5);                       // fonte 3 + pin 1 + vicino 1
+    expect(z1.importance).toBe('media');
+
+    // stessa zona con un secondo membro e GEX al massimo
+    const merged = buildLadder([
+      { label: 'W', price: 7830, family: 'options' as const, gammaSign: 'pin' as const },
+      { label: 'GAMMA-7830', price: 7830, family: 'options' as const, gexWeight: 1 },
+    ], SPOT);
+    const z2 = merged.above.find(z => z.price === 7830)!;
+    expect(z2.score).toBe(9);                       // 5 + 1 confluenza + 3 gex
+    expect(z2.importance).toBe('alta');
+  });
 });

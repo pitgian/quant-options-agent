@@ -97,7 +97,16 @@ rimossi dalla scala su richiesta esplicita; restano calcolati nel backend):
 Scala operativa = raggio **±5%** dal prezzo, zone arrotondate a **5 punti**,
 max 10 per lato, ordinata: sopra lo spot dal più lontano in alto al più
 vicino; sotto lo spot dal più vicino in giù. Badge importanza ★/★★/★★★ dal
-punteggio (confluenza fonti×3, naked ×2, flip ×1, pin ×1, prossimità ×1).
+punteggio — ricalibrato il 06/10 sera perché nella vista solo-opzioni ★★★ era
+matematicamente irraggiungibile (soglia 8, max 6):
+
+    score = fonti×3 + naked×2 + flip×1 + pin×1 + prossimità(<0.5%)×1
+            + confluenza membri×1 (max 2) + dimensione GEX 0..3 (round(peso×3))
+    ★★★ ≥ 7 · ★★ ≥ 5 · ★ sotto
+
+Il peso GEX (|netto zona| / muro massimo del giorno) arriva da Ladder tramite
+`LadderInput.gexWeight`: il muro più grosso vale 3 punti e ogni fonte extra
+che conferma la zona vale 1. ★★★ ora significa "muro grande, confermato, pin".
 
 ---
 
@@ -181,7 +190,7 @@ e verificata il 06/10 — prima era staccata da 42 giorni).
 
 ## 8. Igiene
 
-- Test: 24 JS (vitest) + 26 Python (playbook) + 6 (test_day_plan) + 12 (lib/auction) verdi.
+- Test: 25 JS (vitest) + 26 Python (playbook) + 6 (test_day_plan) + 12 (lib/auction) verdi.
 - Il data branch porta ancora file Kronos stantii (kronos_forecast.json ecc.)
   — innocui, l'alert di staleness legge options_data.json.
 - `scripts/fetch_options_data.py` contiene `fetch_intraday_playbook` (legacy,

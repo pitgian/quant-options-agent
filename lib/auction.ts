@@ -117,6 +117,9 @@ export interface LadderInput {
   gammaSign?: 'pin' | 'trigger';
   isFlip?: boolean;
   isNaked?: boolean;
+  /** Peso del GEX netto della zona (0..1, frazione del muro massimo del giorno):
+   *  alimenta il punteggio d'importanza — il muro più grosso vale 3 punti. */
+  gexWeight?: number;
 }
 
 export const LADDER_LABEL_IT: Record<string, string> = {
@@ -143,6 +146,10 @@ export function ladderFamily(label: string): Family {
  *
  *   score = fonti_indipendenti*3 + magnete(naked)*2 + flip*1 + pin*1
  *           + vicinanza_al_prezzo ( entro lo 0.5% )
+ *           + confluenza_di_membri*1 ( max 2: ogni fonte extra conferma )
+ *           + dimensione_gex ( 0..3: round(peso*3), il muro massimo = 3 )
+ *
+ *   ★★★ alta ≥ 7 · ★★ media ≥ 5 · ★ bassa
  *
  * Restituisce le zone ordinate per importanza; il chiamante le divide
  * sopra/sotto lo spot.
@@ -165,11 +172,16 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
     const hasFlip = members.some(m => m.isFlip);
     const hasPin = members.some(m => m.gammaSign === 'pin');
     const near = Math.abs(price - spot) / spot < 0.005;
+    const gexW = Math.max(0, ...members.map(m => m.gexWeight ?? 0));
     const score = families.size * 3
       + (hasNaked ? 2 : 0)
       + (hasFlip ? 1 : 0)
       + (hasPin ? 1 : 0)
-      + (near ? 1 : 0);
+      + (near ? 1 : 0)
+      // confluenza: ogni membro EXTRA conferma la zona (max 2)
+      + Math.min(Math.max(members.length - 1, 0), 2)
+      // dimensione del muro: il GEX più grosso del giorno vale 3 punti
+      + Math.round(Math.min(1, Math.max(0, gexW)) * 3);
     // etichetta: il membro più autorevole (AMT > opzioni > prezzo) e, tra i
     // muri, il pin batte il trigger.
     const order = { amt: 0, options: 1, price: 2 };
@@ -191,7 +203,7 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
         gammaSign: m.gammaSign,
       })),
       score,
-      importance: (score >= 8 ? 'alta' : score >= 5 ? 'media' : 'bassa') as 'alta' | 'media' | 'bassa',
+      importance: (score >= 7 ? 'alta' : score >= 5 ? 'media' : 'bassa') as 'alta' | 'media' | 'bassa',
       gammaSign: members.find(m => m.gammaSign)?.gammaSign,
       isFlip: members.some(m => m.isFlip),
       isNaked: hasNaked,

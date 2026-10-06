@@ -140,7 +140,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h3 className="text-sm font-bold text-slate-200">🎯 La scala — livelli opzioni</h3>
-          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger · barra GEX 🟢 pin / 🔴 trigger</span>
+          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger · barra GEX 🟢 pin / 🔴 trigger · ★★★ zona grossa, confermata e vicina</span>
         </div>
         <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={plan.top_gamma} />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
