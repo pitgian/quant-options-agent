@@ -13,16 +13,20 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   const [stats, setStats] = useState<Record<string, { n: number; held: number; rate: number }>>({});
   const [live, setLive] = useState<LiveSpot | null>(null);
 
+  // Piano + stats: ricaricati ogni 60 secondi (il backend li rigenera ogni
+  // ~5 min in seduta; il fetch del service ha TTL 60s quindi ogni poll
+  // effettivo va a rete solo se il TTL è scaduto).
   useEffect(() => {
     let alive = true;
-    (async () => {
-      const p = await fetchDayPlan(futures);
-      const s = await fetchLevelStats();
+    const load = async () => {
+      const [p, s] = await Promise.all([fetchDayPlan(futures), fetchLevelStats()]);
       if (!alive) return;
       setPlan(p);
       setStats(s ?? {});
-    })();
-    return () => { alive = false; };
+    };
+    load();
+    const id = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(id); };
   }, [futures]);
 
   // prezzo live ogni 15s (fallback: chiusura del piano)

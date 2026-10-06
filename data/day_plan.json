@@ -1,44 +1,44 @@
 {
  "version": 1,
- "generated_at": "2026-10-06T06:55:26.413821+00:00",
+ "generated_at": "2026-10-06T06:58:12.950937+00:00",
  "plans": {
   "ES": {
    "version": 1,
-   "generated_at": "2026-10-06T06:55:26.190668+00:00",
+   "generated_at": "2026-10-06T06:58:12.606038+00:00",
    "futures": "ES",
    "last_price": 7831.2,
    "read": [
     "Apertura dentro la value di ieri: giornata rotazionale \u2014 il prezzo dovrebbe oscillare tra VAL 7764 e VAH 7789 fino a prova contraria.",
     "Prezzo sopra VWAP (7817) \u2192 bias intraday long: si comprano i pullback verso il VWAP.",
-    "Gamma: Pin sopra: 7884, 7934 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
+    "Gamma: Pin sopra: 7884, 7935 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
    ],
    "levels": [
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 7954.3,
+     "price": 7955.3,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 123.1
+     "dist_pts": 124.1
     },
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 7934.1,
+     "price": 7935.1,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 102.9
+     "dist_pts": 103.9
     },
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 7883.5,
+     "price": 7884.5,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 52.2
+     "dist_pts": 53.2
     },
     {
      "name": "W-HIGH",
@@ -51,15 +51,15 @@
     {
      "name": "ONH",
      "nome_it": "Max overnight",
-     "price": 7842.5,
+     "price": 7843.2,
      "kind": "pivot",
      "source": "price",
-     "dist_pts": 11.2
+     "dist_pts": 11.9
     },
     {
      "name": "GVWAP",
      "nome_it": "VWAP Globex (18:00)",
-     "price": 7834.6,
+     "price": 7834.7,
      "kind": "pivot",
      "source": "price",
      "dist_pts": 3.4
@@ -115,10 +115,10 @@
     {
      "name": "GEX-FLIP",
      "nome_it": "GEX flip (cambio regime gamma)",
-     "price": 7774.4,
+     "price": 7775.4,
      "kind": "pivot",
      "source": "options",
-     "dist_pts": -56.9
+     "dist_pts": -55.9
     },
     {
      "name": "VAL-1d",
@@ -155,20 +155,20 @@
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 7580.3,
+     "price": 7581.3,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -250.9
+     "dist_pts": -249.9
     },
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 7529.8,
+     "price": 7530.8,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -301.4
+     "dist_pts": -300.4
     }
    ],
    "developing_poc": 7824.0,
@@ -256,32 +256,32 @@
   },
   "NQ": {
    "version": 1,
-   "generated_at": "2026-10-06T06:55:26.409754+00:00",
+   "generated_at": "2026-10-06T06:58:12.946947+00:00",
    "futures": "NQ",
    "last_price": 31338.5,
    "read": [
     "Apertura dentro la value di ieri: giornata rotazionale \u2014 il prezzo dovrebbe oscillare tra VAL 31011 e VAH 31162 fino a prova contraria.",
     "Prezzo sopra VWAP (31243) \u2192 bias intraday long: si comprano i pullback verso il VWAP.",
-    "Gamma: Pin sopra: 31532, 32154 \u00b7 Pin sotto: 31324 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
+    "Gamma: Pin sopra: 31536, 32158 \u00b7 Pin sotto: 31328 \u2014 dove i dealer sono long gamma il prezzo tende a essere respinto."
    ],
    "levels": [
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 32154.2,
+     "price": 32158.3,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 815.7
+     "dist_pts": 819.8
     },
     {
      "name": "PIN",
      "nome_it": "Muro call in pin (sopra)",
-     "price": 31531.9,
+     "price": 31535.9,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": 193.4
+     "dist_pts": 197.4
     },
     {
      "name": "W-HIGH",
@@ -294,27 +294,27 @@
     {
      "name": "ONH",
      "nome_it": "Max overnight",
-     "price": 31398.2,
+     "price": 31399.0,
      "kind": "pivot",
      "source": "price",
-     "dist_pts": 59.7
+     "dist_pts": 60.5
     },
     {
      "name": "GVWAP",
      "nome_it": "VWAP Globex (18:00)",
-     "price": 31358.9,
+     "price": 31359.2,
      "kind": "pivot",
      "source": "price",
-     "dist_pts": 20.4
+     "dist_pts": 20.7
     },
     {
      "name": "PIN",
      "nome_it": "Muro put in pin (sotto)",
-     "price": 31324.5,
+     "price": 31328.4,
      "kind": "barrier",
      "source": "options",
      "gamma": "pin",
-     "dist_pts": -14.0
+     "dist_pts": -10.1
     },
     {
      "name": "VWAP+1s",
@@ -375,10 +375,10 @@
     {
      "name": "GEX-FLIP",
      "nome_it": "GEX flip (cambio regime gamma)",
-     "price": 31079.7,
+     "price": 31083.6,
      "kind": "pivot",
      "source": "options",
-     "dist_pts": -258.8
+     "dist_pts": -254.9
     },
     {
      "name": "OPEN",
@@ -431,20 +431,20 @@
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 30079.8,
+     "price": 30083.6,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -1258.7
+     "dist_pts": -1254.9
     },
     {
      "name": "TRIGGER",
      "nome_it": "Trigger put",
-     "price": 29042.5,
+     "price": 29046.2,
      "kind": "trigger",
      "source": "options",
      "gamma": "trigger",
-     "dist_pts": -2296.0
+     "dist_pts": -2292.3
     }
    ],
    "developing_poc": 31219.0,
