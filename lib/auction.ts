@@ -170,6 +170,7 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
       statsKey: best.name ?? best.label,
       rawLabel: best.label,
       family: best.family,
+      kind: best.kind,
       gammaSign: members.find(m => m.gammaSign)?.gammaSign,
       isFlip: members.some(m => m.isFlip),
       isNaked: hasNaked,
@@ -178,11 +179,15 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
     });
   }
 
+  // Raggio operativo: oltre il 3% dal prezzo non è day trading (quei livelli
+  // restano nella mappa sul profilo e nella lettura, non nella scala).
+  const operational = zones.filter(z => Math.abs(z.price - spot) / spot <= 0.03);
+
   const rank = (a: LadderLevel & { score: number }, b: LadderLevel & { score: number }) =>
     b.score - a.score || Math.abs(a.price - spot) - Math.abs(b.price - spot);
 
   const pick = (side: 'above' | 'below') => {
-    const pool = zones
+    const pool = operational
       .filter(z => side === 'above' ? z.price > spot : z.price < spot)
       .sort((a, b) => side === 'above'
         ? a.price - b.price          // sopra: il più vicino allo spot prima

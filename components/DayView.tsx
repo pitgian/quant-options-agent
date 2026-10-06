@@ -78,7 +78,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h3 className="text-sm font-bold text-slate-200">🎯 La scala — livelli di oggi</h3>
-          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger</span>
+          <span className="text-[10px] text-gray-500">distanza in punti dal prezzo live · 🧲 magnete · 🛡 barriera · ⚡ trigger · raggio ±3%</span>
         </div>
         <Ladder levels={plan.levels} spot={spot} futures={futures} stats={stats} />
       </Card>

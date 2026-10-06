@@ -117,8 +117,9 @@ export const Ladder: React.FC<{
             {r.kind === 'magnet' ? '🧲 magnete' : r.kind === 'barrier' ? '🛡 barriera' : r.kind === 'trigger' ? '⚡ trigger' : 'pivot'}
           </span>
           {!isSpot && (
-            <span className={`text-[11px] font-mono font-semibold tnum w-14 text-right ${r.distPts > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}>
-              {r.distPts > 0 ? '+' : ''}{r.distPts}
+            <span className={`text-[11px] font-mono font-semibold tnum w-16 text-right ${r.distPts > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}
+                  title={`Distanza dal prezzo live in punti: ${r.distPts > 0 ? '+' : ''}${r.distPts}`}>
+              {r.distPts > 0 ? '+' : ''}{r.distPts} pt
             </span>
           )}
         </div>
