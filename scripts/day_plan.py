@@ -27,6 +27,7 @@ import json
 import math
 import os
 import sys
+import numpy as np
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -257,12 +258,27 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         add("IB-HIGH", "Initial Balance max", ibh, "pivot", "amt")
         add("IB-LOW", "Initial Balance min", ibl, "pivot", "amt")
 
-    # --- VWAP seduta + bande ---
+    # --- VWAP RTH (09:30, convenzione equity) + bande ---
     vwap, sigma = vwap_of(today_bars)
     if vwap:
-        add("VWAP", "VWAP seduta", vwap, "pivot", "price")
+        add("VWAP", "VWAP RTH (09:30)", vwap, "pivot", "price")
         for name, mult, nome in (("VWAP+1s", 1, "VWAP +1σ"), ("VWAP-1s", -1, "VWAP −1σ")):
             add(name, nome, vwap + mult * sigma, "reference", "price")
+
+    # --- VWAP Globex (dalla 18:00 ET più recente: apertura CME del giorno
+    #     di trading corrente; il lunedì mattina prende la domenica 18:00) ---
+    now_et = datetime.now(ET)
+    anchor18 = now_et.replace(hour=18, minute=0, second=0, microsecond=0)
+    if now_et < anchor18:
+        anchor18 -= timedelta(days=1)
+    ts_list = [t.to_pydatetime() if hasattr(t, "to_pydatetime") else t for t in idx_et]
+    g_mask = np.array([t >= anchor18 for t in ts_list])
+    if g_mask.sum() > 0:
+        tp = (h[g_mask] + l[g_mask] + c[g_mask]) / 3.0
+        vol = v[g_mask]
+        if vol.sum() > 0:
+            gvwap = float((tp * vol).sum() / vol.sum())
+            add("GVWAP", "VWAP Globex (18:00)", gvwap, "pivot", "price")
 
     # --- POC developing di oggi ---
     p_today = value_area(profile_from_bars(today_bars))
@@ -284,21 +300,26 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
             add(f"NAKED-{dval.isoformat()}", f"POC naked {dval.strftime('%d/%m')}",
                 p["poc"], "magnet", "amt")
 
-    # --- settimanali ---
-    wks = defaultdict(list)
-    for d in dates:
-        iso = d.isocalendar()
-        wks[(iso[0], iso[1])].extend(rth[d])
-    wkeys = sorted(wks)
-    if len(wkeys) >= 1:
-        hi_w = max(b["h"] for b in wks[wkeys[-1]])
-        lo_w = min(b["l"] for b in wks[wkeys[-1]])
-        add("W-HIGH", "Max settimana in corso", hi_w, "pivot", "price")
-        add("W-LOW", "Min settimana in corso", lo_w, "pivot", "price")
-    if len(wkeys) >= 2:
-        prev_w = wkeys[-2]
-        add("PWH", "Max sett. scorsa", max(b["h"] for b in wks[prev_w]), "pivot", "price")
-        add("PWL", "Min sett. scorsa", min(b["l"] for b in wks[prev_w]), "pivot", "price")
+    # --- settimanali: TUTTE le barre (RTH+overnight) dalla mezzanotte ET del
+    #     lunedì corrente. Prima usava solo le barre RTH: il lunedì mattina
+    #     (nessuna barra RTH del giorno) restituiva silenziosamente il max/min
+    #     di VENERDÌ etichettato come 'settimana in corso'. Per i futures il
+    #     max/min settimanale include l'overnight Globex. ---
+    monday = today - timedelta(days=today.weekday())
+    wk_bars = []
+    for d, bars in list(rth.items()) + list(on.items()):
+        if d >= monday:
+            wk_bars.extend(bars)
+    if wk_bars:
+        add("W-HIGH", "Max settimana (in agg.)", max(b["h"] for b in wk_bars), "pivot", "price")
+        add("W-LOW", "Min settimana (in agg.)", min(b["l"] for b in wk_bars), "pivot", "price")
+    if prev_days:
+        pwh_days = [d for d in dates if d < monday]
+        if pwh_days:
+            pb = [b for d in pwh_days for b in rth[d]]
+            if pb:
+                add("PWH", "Max sett. scorsa", max(b["h"] for b in pb), "pivot", "price")
+                add("PWL", "Min sett. scorsa", min(b["l"] for b in pb), "pivot", "price")
 
     # --- GEX flip (opzioni) ---
     if gex_flip_etf:

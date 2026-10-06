@@ -110,7 +110,8 @@ export interface LadderInput {
 export const LADDER_LABEL_IT: Record<string, string> = {
   PDH: 'Max di ieri', PDL: 'Min di ieri',
   ONH: 'Max overnight', ONL: 'Min overnight',
-  VWAP: 'VWAP', 'VWAP+1σ': 'VWAP +1σ', 'VWAP-1σ': 'VWAP −1σ',
+  VWAP: 'VWAP RTH (09:30)', 'VWAP+1σ': 'VWAP +1σ', 'VWAP-1σ': 'VWAP −1σ',
+  GVWAP: 'VWAP Globex (18:00)',
   OPEN: 'Apertura RTH', 'W-OPEN': 'Open settimanale',
   'IB-HIGH': 'Initial Balance max', 'IB-LOW': 'Initial Balance min',
   'VAH-1d': 'Value high di ieri', 'POC-1d': 'POC di ieri', 'VAL-1d': 'Value low di ieri',
