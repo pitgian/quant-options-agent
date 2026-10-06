@@ -26,7 +26,27 @@ interface Row {
   score?: number;
   held?: number;
   n?: number;
+  /** GEX netto aggregato sugli strike caduti in questa zona (dal profilo gamma). */
+  gex?: { net: number; parts: string[] };
 }
+
+const fmtGex = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 1 });
+
+/** Colonna GEX della scala: barra orizzontale ancorata a destra, lunghezza
+ *  = |gex netto| della zona sul muro più grande di TUTTI gli strike.
+ *  Verde = gamma lunga (pin, respinge) · rossa = gamma corta (trigger, amplifica). */
+const GexBar: React.FC<{ g?: { net: number; parts: string[] }; max: number }> = ({ g, max }) => {
+  if (!g) return <div className="w-14 shrink-0 ml-auto" aria-hidden />;
+  const w = Math.max(8, Math.round(Math.abs(g.net) / max * 100));
+  const long = g.net >= 0;
+  return (
+    <div className="w-14 shrink-0 ml-auto flex items-center justify-end"
+         title={`GEX netto ${fmtGex.format(g.net)} · strike ${g.parts.join(' + ')} — ${long ? 'gamma lunga: respinge (pin)' : 'gamma corta: amplifica (trigger)'}`}>
+      <div className={`h-1.5 rounded-full ${long ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
+           style={{ width: `${w}%` }} />
+    </div>
+  );
+};
 
 const KIND_META: Record<string, { chip: string; title: string }> = {
   magnet: { chip: 'bg-violet-500/15 text-violet-300 border-violet-500/30', title: 'Magnete: il prezzo tende a tornarci' },
@@ -42,7 +62,9 @@ export const Ladder: React.FC<{
   futures: string;
   stats: Record<string, { n: number; held: number; rate: number }>;
   maxPerSide?: number;
-}> = ({ levels, spot, futures, stats, maxPerSide = 6 }) => {
+  /** Profilo gamma per strike (plan.top_gamma): ripescato sulla griglia della scala. */
+  topGamma?: Array<{ strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
+}> = ({ levels, spot, futures, stats, maxPerSide = 6, topGamma }) => {
   // Clustering: livelli che cadono nella stessa zona a 5 punti si fondono
   // (merged = quante fonti), rank = confluenza + magneti + flip + prossimità.
   const { above: zonesAbove, below: zonesBelow } = useMemo(
@@ -65,6 +87,27 @@ export const Ladder: React.FC<{
     [levels, spot, maxPerSide],
   );
 
+  // GEX per zona: gli strike del profilo gamma riportati sulla STESSA griglia
+  // a 5 punti della scala (Math.round(p/5)*5, come buildLadder). Le barre
+  // sono normalizzate sul muro più grande di tutti gli strike, anche quelli
+  // fuori scala: così il confronto tra zone resta onesto.
+  const gammaByZone = useMemo(() => {
+    const m = new Map<number, { net: number; parts: string[] }>();
+    for (const t of topGamma ?? []) {
+      if (!isFinite(t.strike_fut) || !t.net_gex) continue;
+      const z = Math.round(t.strike_fut / 5) * 5;
+      const cur = m.get(z) ?? { net: 0, parts: [] };
+      cur.net += t.net_gex;
+      cur.parts.push(`${t.strike_fut.toFixed(0)} ${t.sign === 'long' ? 'pin' : 'trg'}`);
+      m.set(z, cur);
+    }
+    return m;
+  }, [topGamma]);
+  const maxAbsGex = useMemo(
+    () => Math.max(1, ...[...gammaByZone.values()].map(v => Math.abs(v.net))),
+    [gammaByZone],
+  );
+
   const mkRow = (z: LadderLevel): Row => {
     const statsKey = `${futures}:${z.statsKey}`;
     return {
@@ -81,6 +124,7 @@ export const Ladder: React.FC<{
       score: z.score,
       held: stats[statsKey]?.held,
       n: stats[statsKey]?.n,
+      gex: gammaByZone.get(z.price),
     };
   };
 
@@ -146,6 +190,7 @@ export const Ladder: React.FC<{
               {r.distPts > 0 ? '+' : ''}{r.distPts} pt
             </span>
           )}
+          <GexBar g={isSpot ? undefined : r.gex} max={maxAbsGex} />
         </div>
         {(r.merged ?? 0) > 1 && r.members && r.members.length > 0 && (
           <div className="text-[10px] text-gray-500 truncate" title="I livelli che compongono la confluenza">

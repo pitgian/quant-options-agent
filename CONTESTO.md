@@ -23,7 +23,10 @@ separato futuro con modelli decisionali dedicati.
    AMT: tipo di apertura vs value di ieri, posizione nella value, IB, VWAP
 3. **🎯 La scala** (`Ladder.tsx`) — i livelli opzioni fusi in zone a 5 punti,
    spot inline, distanza in punti, badge meccanismo (🧲 magnete / 🛡 barriera /
-   ⚡ trigger) e ★ confluenze
+   ⚡ trigger), ★ confluenze e **barra GEX integrata per riga** (verde pin /
+   rossa trigger, lunghezza = GEX netto della zona normalizzato sul muro
+   massimo). La vecchia tabella gamma separata è stata riassorbita nella
+   scala il 06/10 sera
 4. **📊 Profilo di oggi** (`SessionProfileChart.tsx`) con overlay dei livelli
 5. **📐 Affidabilità storica** (`StatsPanel.tsx`, ripiegata)
 
@@ -43,8 +46,9 @@ components/
   StatsPanel.tsx             affidabilità per livello
   ui.tsx                     KIT condiviso: ControlBar, Segmented, Badge, Card,
                              Collapsible, InfoHint, Freshness, Skeleton
-  GexByStrike.tsx            profilo gamma per strike (non usato in DayView ora,
-                             pronto per riattivazione)
+  GexByStrike.tsx            profilo gamma per strike — RIASSORBITO nella scala il
+                             06/10 (barra GEX per riga in Ladder + muri top-3 come
+                             livelli in DayView); file tenuto per riattivazione
 services/dayPlanService.ts   UNICO servizio: day_plan.json + level_stats.json + live spot
 lib/auction.ts               MOTORE puro: profileStats (VA 70%), classifyOpen,
                              buildLadder (clustering 5pt, rank, importanza) + test
@@ -86,6 +90,9 @@ rimossi dalla scala su richiesta esplicita; restano calcolati nel backend):
    (pin di oggi) + aggregato tutte le scadenze (magnete strutturale)
 4. **Muri OI+Volume** — da `calculate_walls` (formula unificata Python↔TS),
    classificati pin/trigger dal segno di net_gex, top 3 per lato
+5. **Top strike gamma** — i 3 più grandi per lato di |GEX| per strike entrano
+   in scala come livelli propri ("Muro gamma XXX Mld") e si fondono coi muri
+   OI+Volume vicini (= confluenza); il GEX netto è la barra sulla riga
 
 Scala operativa = raggio **±5%** dal prezzo, zone arrotondate a **5 punti**,
 max 10 per lato, ordinata: sopra lo spot dal più lontano in alto al più

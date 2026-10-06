@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { fetchDayPlan, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
 import { buildLadder, type LadderLevel } from '../lib/auction';
 import { Ladder } from './Ladder';
-import { GexByStrike } from './GexByStrike';
 import { Card, Badge } from './ui';
+
+const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 0 });
 
 /**
  * DayView — i livelli OPERATIVI DA OPZIONI del giorno.
@@ -68,6 +69,28 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
         dist_pts: Math.round(plan.max_pain_all - spot),
       } as DayPlanLevel);
     }
+    // I muri gamma del profilo per strike entrano nella scala come livelli a
+    // sé — ma SOLO i top 3 per lato per |GEX|: i minori restano visibili come
+    // barra sulla loro zona (se esiste) senza creare righe proprie. Il
+    // clustering può fonderli con i muri OI+Volume vicini (= confluenza), così
+    // anche il muro più grande, prima invisibile se cadeva tra le zone, entra.
+    const gammaSorted = [...(plan.top_gamma ?? [])].sort((a, b) => Math.abs(b.net_gex) - Math.abs(a.net_gex));
+    const top3 = new Set([
+      ...gammaSorted.filter(t => t.strike_fut >= spot).slice(0, 3),
+      ...gammaSorted.filter(t => t.strike_fut < spot).slice(0, 3),
+    ]);
+    for (const t of top3) {
+      const zone = Math.round(t.strike_fut / 5) * 5;
+      out.push({
+        name: `GAMMA-${zone}`,
+        nome_it: `Muro gamma ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})`,
+        price: zone,
+        kind: t.sign === 'long' ? 'barrier' : 'trigger',
+        source: 'options',
+        dist_pts: Math.round(zone - spot),
+        gamma: t.sign === 'long' ? 'pin' : 'trigger',
+      } as DayPlanLevel);
+    }
     return out;
   }, [plan, spot]);
 
@@ -117,27 +140,15 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h3 className="text-sm font-bold text-slate-200">🎯 La scala — livelli opzioni</h3>
-          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger · raggio ±5%</span>
+          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger · barra GEX 🟢 pin / 🔴 trigger</span>
         </div>
-        <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} />
+        <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={plan.top_gamma} />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           Solo livelli derivati da opzioni: GEX flip, muri gamma, max pain.
           Pin = gamma lunga (respinge) · Trg = gamma corta (accelera) · Magnete = il prezzo tende a tornarci.
+          La barra a destra di ogni zona è il GEX netto degli strike lì caduti:
+          più è lunga più il muro è denso, verde respinge / rossa amplifica.
         </p>
-      </Card>
-
-      {/* Profilo gamma per strike */}
-      <Card className="!p-4">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-200">📊 Gamma per strike (dealer positioning)</h3>
-          <span className="text-[10px] text-gray-500">barre verdi = gamma lunga (pin) · rosse = gamma corta (trigger)</span>
-        </div>
-        <GexByStrike
-          strikes={(plan.top_gamma ?? []).map(t => ({ ...t, strike_fut: t.strike_fut }))}
-          spot={spot}
-          flip={gexFlip?.price}
-          futures={futures}
-        />
       </Card>
     </div>
   );
