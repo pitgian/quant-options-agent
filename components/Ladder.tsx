@@ -97,7 +97,7 @@ export const Ladder: React.FC<{
     const meta = KIND_META[r.kind] ?? KIND_META.pivot;
     const conf = r.n && r.n >= 5 ? { text: `${r.held}/${r.n}`, tone: r.held / r.n >= 0.6 ? 'text-emerald-400' : r.held / r.n <= 0.4 ? 'text-red-400' : 'text-slate-300' } : null;
     return (
-      <div className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border transition-colors ${
+      <div className={`flex flex-col px-3 py-2.5 rounded-xl border transition-colors ${
         isSpot
           ? 'border-amber-500/50 bg-amber-500/10'
           : r.distPts >= 0 && r.distPts <= 15 || (r.distPts < 0 && r.distPts >= -15)
@@ -139,11 +139,16 @@ export const Ladder: React.FC<{
           </span>
           {!isSpot && (
             <span className={`text-[11px] font-mono font-semibold tnum w-16 text-right ${r.distPts > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}
-                  title={`Distanza dal prezzo live in punti: ${r.distPts > 0 ? '+' : ''}${r.distPts}`}>
+                  title={`Distanza dal prezzo live: ${r.distPts > 0 ? '+' : ''}${r.distPts} punti`}>
               {r.distPts > 0 ? '+' : ''}{r.distPts} pt
             </span>
           )}
         </div>
+        {(r.merged ?? 0) > 1 && r.members && r.members.length > 0 && (
+          <div className="text-[10px] text-gray-500 truncate" title="I livelli che compongono la confluenza">
+            = {r.members.map(m => m.nome_it).join('  +  ')}
+          </div>
+        )}
       </div>
     );
   };
