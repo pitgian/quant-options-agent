@@ -55,9 +55,12 @@ scripts/
   day_plan.py                MOTORE puro: costruisce data/day_plan.json (livelli
                              prezzo+AMT+opzioni in scala ES/NQ, lettura AMT,
                              max pain, top gamma) + scoring piano precedente →
-                             data/level_stats.json (per NOME livello: n/held/rate)
+                             data/level_stats.json (chiave STRUMENTO:NOME,
+                             n/held/rate; barre solo dalla data del piano)
   auto_updater.py            push locale semplificato sul data branch
-tests/                       test_intraday_playbook.py (26 check)
+tests/                       test_intraday_playbook.py (26 check) +
+                             test_day_plan.py (6 check: filtro date, held/broke,
+                             prefisso strumento)
 .github/workflows/
   fetch-options-data.yml     UN job slim (~3 min, niente torch): fetch → day_plan
                              → publish 4 file sul data branch. Cron */5 6-21 UTC lun-ven
@@ -96,8 +99,17 @@ punteggio (confluenza fonti×3, naked ×2, flip ×1, pin ×1, prossimità ×1).
 `day_plan.py` ogni giro: genera il piano di oggi **e** giudica il piano di
 ieri sulle barre 5m reali. Per ogni livello: **touch** (prezzo in banda ±3pt),
 poi **held** (respinto: allontanamento ≥6pt senza violare il buffer di 4pt) o
-**broke** (violato). Aggregate per NOME livello in `data/level_stats.json`
-("PDH: rispettato 8/12") → visibili in `StatsPanel`.
+**broke** (violato). Aggregate per chiave `STRUMENTO:NOME` in
+`data/level_stats.json` (es. `"ES:PDH": rispettato 8/12`) → visibili in
+`StatsPanel` (che mostra il badge strumento).
+
+**Fissato il 06/10 pomeriggio** (il track record era muto dalla riscrittura,
+`stats: 0 occorrenze` in CI): 1) `h, l` mai definite → `NameError`
+inghiottito dal try/except; 2) nessun filtro temporale → il piano veniva
+valutato su 7 giorni di barre, anche pre-pubblicazione (ora contano solo le
+barre DAL giorno del piano in poi); 3) `load_stats()` dentro il loop simboli
+→ le stats ES venivano perse al giro NQ; 4) chiavi nude → ES e NQ nello
+stesso bucket. Validato end-to-end: 30 occorrenze in un giro.
 
 **Perché serve**: è il magazzino di fiducia — senza conteggi, i livelli sono
 numeri a caso. Con i conteggi, la scala si ordina su ciò che ha funzionato.
@@ -136,7 +148,7 @@ source .venv/bin/activate
 python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
 python scripts/day_plan.py --show   # rigenera piano + stampa la scala
 python tests/test_intraday_playbook.py
-python tests/test_day_plan.py       # se presente
+python tests/test_day_plan.py       # track record (6 check)
 # publish manuale sul data branch: clone --depth1 --branch data, copia i 4
 # file (options_data/options_history/day_plan/level_stats), commit, push
 ```
@@ -148,8 +160,9 @@ e verificata il 06/10 — prima era staccata da 42 giorni).
 
 ## 7. Prossimi passi (aperti)
 
-1. **Lasciare accumulare il track record** (1-2 settimane): i verdetti per
-   livello compaiono da ≥5 occorrenze; la scala mostrerà la confidence.
+1. **Lasciare accumulare il track record** (1-2 settimane): riparte DAVVERO
+   solo ora (bug dello scoring fissato il 06/10 pomeriggio — vedi §4); i
+   verdetti per livello compaiono da ≥5 occorrenze.
 2. **Verificare il cron CI**: schedule `*/5 6-21 UTC lun-ven` attivo su
    master; se un giro salta, il data branch resta com'è (nessun danno).
 3. **Possibili estensioni discusse**:
@@ -161,7 +174,7 @@ e verificata il 06/10 — prima era staccata da 42 giorni).
 
 ## 8. Igiene
 
-- Test: 24 JS (vitest) + 26 Python (playbook) + 12 (lib/auction) verdi.
+- Test: 24 JS (vitest) + 26 Python (playbook) + 6 (test_day_plan) + 12 (lib/auction) verdi.
 - Il data branch porta ancora file Kronos stantii (kronos_forecast.json ecc.)
   — innocui, l'alert di staleness legge options_data.json.
 - `scripts/fetch_options_data.py` contiene `fetch_intraday_playbook` (legacy,

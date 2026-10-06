@@ -65,21 +65,24 @@ export const Ladder: React.FC<{
     [levels, spot, maxPerSide],
   );
 
-  const mkRow = (z: LadderLevel): Row => ({
-    name: z.statsKey,
-    nome_it: z.label,
-    price: z.price,
-    kind: z.kind ?? 'pivot',
-    source: z.family,
-    distPts: Math.round(z.price - spot),
-    gamma: z.gammaSign,
-    merged: z.merged,
-    members: z.members,
-    importance: z.importance,
-    score: z.score,
-    held: stats[z.statsKey]?.held,
-    n: stats[z.statsKey]?.n,
-  });
+  const mkRow = (z: LadderLevel): Row => {
+    const statsKey = `${futures}:${z.statsKey}`;
+    return {
+      name: z.statsKey,
+      nome_it: z.label,
+      price: z.price,
+      kind: z.kind ?? 'pivot',
+      source: z.family,
+      distPts: Math.round(z.price - spot),
+      gamma: z.gammaSign,
+      merged: z.merged,
+      members: z.members,
+      importance: z.importance,
+      score: z.score,
+      held: stats[statsKey]?.held,
+      n: stats[statsKey]?.n,
+    };
+  };
 
   // Ordine a scala: sopra lo spot il PIÙ LONTANO in alto (prezzi decrescenti
   // scendendo verso lo spot), sotto lo spot il più vicino prima.

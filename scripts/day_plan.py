@@ -482,7 +482,19 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
 # ---------------------------------------------------------------------------
 
 def score_plan_against(plan: dict, idx_et, highs, lows) -> list:
-    """Giudica il piano di IERI sulle barre di oggi: rispettato o violato."""
+    """Giudica un piano: rispettato o violato.
+
+    Contano solo le barre DAL giorno di pubblicazione del piano in poi
+    (giorno stesso + overnight + oggi): le barre precedenti alla generazione
+    del livello sono rumore, non reazione al livello."""
+    gen = str(plan.get("generated_at") or "")[:10]
+    if gen:
+        keep = [k for k in range(len(idx_et))
+                if idx_et[k].strftime("%Y-%m-%d") >= gen]
+        if keep:
+            idx_et = [idx_et[k] for k in keep]
+            highs = [highs[k] for k in keep]
+            lows = [lows[k] for k in keep]
     out = []
     for lv in plan.get("levels", []):
         P = lv["price"]
@@ -494,9 +506,6 @@ def score_plan_against(plan: dict, idx_et, highs, lows) -> list:
         for k in range(len(idx_et)):
             if lows[k] <= P + band and highs[k] >= P - band:
                 touched = True
-                # direzione del rispetto: il livello "regge" se il prezzo NON
-                # chiude oltre brk prima di allontanarsi di rej
-                side_ref = None
                 break
         if touched:
             # guarda le barre successive al primo touch
@@ -517,13 +526,15 @@ def score_plan_against(plan: dict, idx_et, highs, lows) -> list:
     return out
 
 
-def update_stats(prev_plan: dict, idx_et, highs, lows, stats: dict) -> dict:
+def update_stats(prev_plan: dict, idx_et, highs, lows, stats: dict, prefix: str = "") -> dict:
+    """Accumula i verdetti nel dizionario stats, con chiave per strumento
+    ("ES:PDH"): nomi identici su strumenti diversi restano statistiche separate."""
     results = score_plan_against(prev_plan, idx_et, highs, lows)
     for r in results:
         if not r["touched"]:
             continue
-        key = r["name"]
-        s = stats.setdefault(key, {"n": 0, "held": 0, "nome_it": r["nome_it"]})
+        key = f"{prefix}:{r['name']}" if prefix else r["name"]
+        s = stats.setdefault(key, {"name": key, "n": 0, "held": 0, "nome_it": r["nome_it"]})
         s["n"] += 1
         if r["held"]:
             s["held"] += 1
@@ -566,6 +577,7 @@ def main() -> None:
         options_data = json.load(f)
 
     plans = {}
+    stats = load_stats()   # caricata UNA volta: ES e NQ si accumulano insieme
     for sym, fut in (("SPY", "ES"), ("QQQ", "NQ")):
         sd = options_data.get("symbols", {}).get(sym)
         if not sd:
@@ -580,6 +592,8 @@ def main() -> None:
         idx_et = idx.tz_convert(ET) if idx.tz is not None else idx.tz_localize(ET)
         es_spot = float(hist["Close"].iloc[-1])
         ratio = es_spot / spot_etf if spot_etf else 10.0
+        h = hist["High"].to_numpy(float)
+        l = hist["Low"].to_numpy(float)
 
         walls, flip, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
         mp = max_pain(sd.get("expiries", []))
@@ -587,8 +601,8 @@ def main() -> None:
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
         index_to_fut = (es_spot / spx_spot) if spx_spot else None
-        plan = build_plan(idx_et, hist["Open"].values, hist["High"].values,
-                          hist["Low"].values, hist["Close"].values,
+        plan = build_plan(idx_et, hist["Open"].values, h, l,
+                          hist["Close"].values,
                           hist["Volume"].values.astype(float),
                           futures=fut, walls_etf=walls, spot_etf=spot_etf,
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
@@ -604,24 +618,17 @@ def main() -> None:
         ]
         plans[fut] = plan
 
-        # --- TRACK RECORD: il piano di IERI giudicato sulle barre di oggi ---
+        # --- TRACK RECORD: il piano del giorno precedente giudicato sulle
+        # barre successive alla pubblicazione (il filtro data è dentro
+        # score_plan_against). Un solo giro al giorno per costrizione. ---
         today = max(idx_et).date()
-        stats = load_stats()
         try:
             if os.path.exists(PLAN_PATH):
                 with open(PLAN_PATH) as pf:
                     old_all = json.load(pf)
                 old_plan = (old_all.get("plans") or {}).get(fut)
                 if old_plan and (old_plan.get("generated_at") or "")[:10] < today.isoformat():
-                    results = score_plan_against(old_plan, idx_et, h, l)
-                    for r in results:
-                        if not r["touched"]:
-                            continue
-                        s = stats.setdefault(r["name"], {"n": 0, "held": 0, "nome_it": r["nome_it"]})
-                        s["n"] += 1
-                        if r["held"]:
-                            s["held"] += 1
-                        s["rate"] = round(s["held"] / s["n"], 3)
+                    update_stats(old_plan, idx_et, h, l, stats, prefix=fut)
         except Exception as e:
             print(f"day_plan: scoring saltato ({e})")
         if args.show:

@@ -35,7 +35,12 @@ export const StatsPanel: React.FC<{ stats: Record<string, LevelStat> }> = ({ sta
             const tone = r.rate >= 0.6 ? 'text-emerald-400' : r.rate <= 0.4 ? 'text-red-400' : 'text-slate-300';
             return (
               <tr key={r.name} className="hover:bg-slate-900/40">
-                <td className="px-4 py-2.5 font-semibold text-slate-200">{r.nome_it}</td>
+                <td className="px-4 py-2.5 font-semibold text-slate-200">
+                  {r.name.includes(':') && (
+                    <span className="mr-1.5 text-[9px] font-mono font-bold text-slate-500">{r.name.split(':')[0]}</span>
+                  )}
+                  {r.nome_it}
+                </td>
                 <td className="px-4 py-2.5 font-mono text-gray-400">{r.n}</td>
                 <td className="px-4 py-2.5 font-mono tnum">
                   <span className="text-emerald-400/90">{r.held}</span>
