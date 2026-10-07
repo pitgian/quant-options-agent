@@ -56,6 +56,64 @@ const KIND_META: Record<string, { chip: string; title: string }> = {
   reference: { chip: 'bg-slate-700/40 text-slate-300 border-slate-600/40', title: 'Riferimento di contesto' },
 };
 
+export interface LadderBuild {
+  above: LadderLevel[];
+  below: LadderLevel[];
+  gammaByZone: Map<number, { net: number; parts: string[] }>;
+  maxAbsGex: number;
+}
+
+/** Costruisce la scala a partire dai livelli del piano: UNICO punto di logica,
+ *  riusato da DayView per la lettura operativa (livelli adiacenti allo spot). */
+export function buildLadderForPlan(
+  levels: DayPlanLevel[],
+  spot: number,
+  topGamma: Array<{ strike_fut: number; net_gex: number; sign: 'long' | 'short' }> | undefined,
+  maxPerSide = 6,
+): LadderBuild {
+  // GEX per zona: gli strike del profilo gamma riportati sulla STESSA griglia
+  // a 5 punti della scala (Math.round(p/5)*5, come buildLadder). Le barre
+  // sono normalizzate sul muro più grande di tutti gli strike, anche quelli
+  // fuori scala: così il confronto tra zone resta onesto.
+  const gammaByZone = new Map<number, { net: number; parts: string[] }>();
+  for (const t of topGamma ?? []) {
+    if (!isFinite(t.strike_fut) || !t.net_gex) continue;
+    const z = Math.round(t.strike_fut / 5) * 5;
+    const cur = gammaByZone.get(z) ?? { net: 0, parts: [] };
+    cur.net += t.net_gex;
+    cur.parts.push(`${t.strike_fut.toFixed(0)} ${t.sign === 'long' ? 'pin' : 'trg'}`);
+    gammaByZone.set(z, cur);
+  }
+  const maxAbsGex = Math.max(1, ...[...gammaByZone.values()].map(v => Math.abs(v.net)));
+
+  // Clustering: livelli che cadono nella stessa zona a 5 punti si fondono
+  // (merged = quante fonti), rank = confluenza + magneti + flip + GEX + prossimità.
+  // Ogni livello porta anche il peso GEX della propria zona (0..1): così lo
+  // score premia la dimensione del muro, non solo la sua esistenza.
+  const { above, below } = buildLadder(
+    levels.map(l => {
+      const bucket = Math.round(l.price / 5) * 5;
+      const g = gammaByZone.get(bucket);
+      return {
+        name: l.name,
+        label: l.name,
+        nome_it: l.nome_it,
+        price: l.price,
+        family: l.source === 'options' ? 'options' as const
+              : l.source === 'amt' ? 'amt' as const
+              : 'price' as const,
+        kind: l.kind,
+        gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
+        isFlip: l.name === 'GEX-FLIP' || l.name === 'GEX-FLIP-0DTE',
+        isNaked: l.name.startsWith('NAKED'),
+        gexWeight: g ? Math.min(1, Math.abs(g.net) / maxAbsGex) : undefined,
+      };
+    }),
+    spot, 5, maxPerSide, 0.05,
+  );
+  return { above, below, gammaByZone, maxAbsGex };
+}
+
 export const Ladder: React.FC<{
   levels: DayPlanLevel[];
   spot: number;
@@ -65,54 +123,9 @@ export const Ladder: React.FC<{
   /** Profilo gamma per strike (plan.top_gamma): ripescato sulla griglia della scala. */
   topGamma?: Array<{ strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
 }> = ({ levels, spot, futures, stats, maxPerSide = 6, topGamma }) => {
-  // GEX per zona: gli strike del profilo gamma riportati sulla STESSA griglia
-  // a 5 punti della scala (Math.round(p/5)*5, come buildLadder). Le barre
-  // sono normalizzate sul muro più grande di tutti gli strike, anche quelli
-  // fuori scala: così il confronto tra zone resta onesto.
-  const gammaByZone = useMemo(() => {
-    const m = new Map<number, { net: number; parts: string[] }>();
-    for (const t of topGamma ?? []) {
-      if (!isFinite(t.strike_fut) || !t.net_gex) continue;
-      const z = Math.round(t.strike_fut / 5) * 5;
-      const cur = m.get(z) ?? { net: 0, parts: [] };
-      cur.net += t.net_gex;
-      cur.parts.push(`${t.strike_fut.toFixed(0)} ${t.sign === 'long' ? 'pin' : 'trg'}`);
-      m.set(z, cur);
-    }
-    return m;
-  }, [topGamma]);
-  const maxAbsGex = useMemo(
-    () => Math.max(1, ...[...gammaByZone.values()].map(v => Math.abs(v.net))),
-    [gammaByZone],
-  );
-
-  // Clustering: livelli che cadono nella stessa zona a 5 punti si fondono
-  // (merged = quante fonti), rank = confluenza + magneti + flip + GEX + prossimità.
-  // Ogni livello porta anche il peso GEX della propria zona (0..1): così lo
-  // score premia la dimensione del muro, non solo la sua esistenza.
-  const { above: zonesAbove, below: zonesBelow } = useMemo(
-    () => buildLadder(
-      levels.map(l => {
-        const bucket = Math.round(l.price / 5) * 5;
-        const g = gammaByZone.get(bucket);
-        return {
-          name: l.name,
-          label: l.name,
-          nome_it: l.nome_it,
-          price: l.price,
-          family: l.source === 'options' ? 'options' as const
-                : l.source === 'amt' ? 'amt' as const
-                : 'price' as const,
-          kind: l.kind,
-          gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
-          isFlip: l.name === 'GEX-FLIP' || l.name === 'GEX-FLIP-0DTE',
-          isNaked: l.name.startsWith('NAKED'),
-          gexWeight: g ? Math.min(1, Math.abs(g.net) / maxAbsGex) : undefined,
-        };
-      }),
-      spot, 5, maxPerSide, 0.05,
-    ),
-    [levels, spot, maxPerSide, gammaByZone, maxAbsGex],
+  const { above: zonesAbove, below: zonesBelow, gammaByZone, maxAbsGex } = useMemo(
+    () => buildLadderForPlan(levels, spot, topGamma, maxPerSide),
+    [levels, spot, topGamma, maxPerSide],
   );
 
   const mkRow = (z: LadderLevel): Row => {

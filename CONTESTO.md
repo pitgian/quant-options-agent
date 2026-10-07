@@ -26,7 +26,10 @@ separato futuro con modelli decisionali dedicati.
    ⚡ trigger), ★ confluenze e **barra GEX integrata per riga** (verde pin /
    rossa trigger, lunghezza = GEX netto della zona normalizzato sul muro
    massimo). La vecchia tabella gamma separata è stata riassorbita nella
-   scala il 06/10 sera
+   scala il 06/10 sera. **Flip 0DTE** (07/10): accanto al flip aggregato —
+   solo le scadenze di oggi, regime intraday; header lo mostra ambra se
+   divergente. **Lettura operativa** nell'header (07/10): spot vs i due
+   livelli adiacenti + aspettativa per meccanismo + clausola di regime
 4. **📊 Profilo di oggi** (`SessionProfileChart.tsx`) con overlay dei livelli
 5. **📐 Affidabilità storica** (`StatsPanel.tsx`, ripiegata)
 

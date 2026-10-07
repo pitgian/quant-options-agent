@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { fetchDayPlan, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
-import { buildLadder, type LadderLevel } from '../lib/auction';
+import { buildLadderForPlan } from './Ladder';
 import { Ladder } from './Ladder';
 import { Card, Badge } from './ui';
 
@@ -98,6 +98,20 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   const flip0 = plan?.gex_flip_0dte;
   const regime = plan?.levels.find(l => l.name === 'GEX-FLIP');
 
+  // Lettura operativa: i due livelli adiacenti allo spot (sopra/sotto) e cosa
+  // ci si aspetta da ciascuno in base al meccanismo. maxPerSide alto: voglio
+  // il VERO adiacente, non il top-ranked.
+  const lettura = useMemo(() => {
+    if (!plan || !spot) return null;
+    const { above, below } = buildLadderForPlan(optLevels, spot, plan.top_gamma, 99);
+    const nearest = (arr: typeof above) =>
+      [...arr].sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot))[0] ?? null;
+    const up = nearest(above);
+    const dn = nearest(below);
+    if (!up && !dn) return null;
+    return { up, dn };
+  }, [plan, spot, optLevels]);
+
   if (!plan) {
     return (
       <Card className="flex flex-col items-center justify-center min-h-[280px] text-center">
@@ -150,6 +164,35 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
             piano delle {new Date(plan.generated_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
+        {lettura && (
+          <p className="text-[11px] leading-relaxed mt-2 pt-2 border-t border-slate-800/70 text-gray-400">
+            <span className="font-bold text-slate-200">Spot {futures} {Math.round(spot).toLocaleString()}</span>
+            {' — '}
+            {lettura.up && (() => {
+              const d = Math.round(lettura.up.price - spot);
+              const exp = lettura.up.kind === 'magnet' ? 'tende ad attirarlo'
+                : lettura.up.kind === 'trigger' ? 'se lo supera, il movimento accelera'
+                : 'se il prezzo ci arriva, dovrebbe respingere';
+              return <>sopra: <span className="text-slate-200">{lettura.up.label}</span> {lettura.up.price.toLocaleString()} ({d > 0 ? '+' : ''}{d} pt) — {exp}</>;
+            })()}
+            {lettura.up && lettura.dn && ' · '}
+            {lettura.dn && (() => {
+              const d = Math.round(lettura.dn.price - spot);
+              const exp = lettura.dn.kind === 'magnet' ? 'tende ad attirarlo'
+                : lettura.dn.kind === 'trigger' ? 'se lo perde, il movimento accelera'
+                : 'se il prezzo ci arriva, dovrebbe respingere';
+              return <>sotto: <span className="text-slate-200">{lettura.dn.label}</span> {lettura.dn.price.toLocaleString()} ({d} pt) — {exp}</>;
+            })()}
+            {'. '}
+            {gexFlip && (
+              <span className={spot > gexFlip.price ? 'text-emerald-400/80' : 'text-red-400/80'}>
+                {spot > gexFlip.price
+                  ? 'Long gamma: i respingimenti sui barrier sono favoriti, le rotture spesso falliscono.'
+                  : 'Short gamma: i pin reggono meno e le rotture dei trigger accelerano.'}
+              </span>
+            )}
+          </p>
+        )}
       </Card>
 
       {/* LA SCALA — solo opzioni */}
