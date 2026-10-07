@@ -105,7 +105,7 @@ export const Ladder: React.FC<{
                 : 'price' as const,
           kind: l.kind,
           gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
-          isFlip: l.name === 'GEX-FLIP',
+          isFlip: l.name === 'GEX-FLIP' || l.name === 'GEX-FLIP-0DTE',
           isNaked: l.name.startsWith('NAKED'),
           gexWeight: g ? Math.min(1, Math.abs(g.net) / maxAbsGex) : undefined,
         };

@@ -95,6 +95,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   }, [plan, spot]);
 
   const gexFlip = plan?.levels.find(l => l.name === 'GEX-FLIP');
+  const flip0 = plan?.gex_flip_0dte;
   const regime = plan?.levels.find(l => l.name === 'GEX-FLIP');
 
   if (!plan) {
@@ -127,6 +128,17 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
             {gexFlip && (
               <span className="text-[11px] font-mono text-gray-400 tnum">
                 Flip {futures} {gexFlip.price.toLocaleString()}
+              </span>
+            )}
+            {flip0 && (
+              <span className={`text-[11px] font-mono font-semibold tnum ${
+                gexFlip && ((spot > gexFlip.price) === (spot > flip0))
+                  ? 'text-gray-400' : 'text-amber-300'
+                }`}
+                title={gexFlip && ((spot > gexFlip.price) === (spot > flip0))
+                  ? 'Flip 0DTE: allineato al regime strutturale'
+                  : 'Flip 0DTE DIVERGENTE dal regime aggregato: il libro che scade oggi spinge in direzione opposta alla struttura — probabili scatti intraday'}>
+                0DTE {futures} {flip0.toLocaleString()}
               </span>
             )}
           </div>

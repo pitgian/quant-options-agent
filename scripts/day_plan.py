@@ -142,11 +142,15 @@ def vwap_of(bars):
 # Opzioni: muri (calculate_walls) + GEX flip dalle catene
 # ---------------------------------------------------------------------------
 
-def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, list]:
-    """Restituisce (walls, gex_flip).
+def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, float | None, list]:
+    """Restituisce (walls, gex_flip, gex_flip_0dte, top_gamma).
 
     walls: [{strike(INDICE), type, net_gex}] — top per |net_gex|
-    gex_flip: strike a zero-crossing del GEX netto vicino allo spot
+    gex_flip: strike a zero-crossing del GEX netto vicino allo spot,
+              aggregato su TUTTE le scadenze (regime strutturale)
+    gex_flip_0dte: idem ma solo sulle scadenze di OGGI (daily + weekly +
+              mensile che cadono oggi): il libro che i dealer coprono
+              entro la chiusura. None se oggi non scade nulla.
     """
     put_walls_raw, call_walls_raw, _ = calculate_walls(expiries, spot)
     walls = []
@@ -158,10 +162,12 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
             "score": w.get("score", 0) or 0,
         })
 
-    # GEX per strike (gamma dal nodo; fallback stimata non disponibile qui)
-    net: dict = {}
     CONTRACT = 100.0
+    today = datetime.now(ET).date().isoformat()
+    net: dict = {}
+    net0: dict = {}
     for exp in expiries:
+        is_today = exp.get("date") == today
         for o in exp.get("options", []):
             g = o.get("gamma")
             if not g:
@@ -169,25 +175,29 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
             sign = 1.0 if o["side"] == "CALL" else -1.0
             v = o["oi"] * g * CONTRACT * spot * spot * sign
             net[o["strike"]] = net.get(o["strike"], 0.0) + v
+            if is_today:
+                net0[o["strike"]] = net0.get(o["strike"], 0.0) + v
 
-    flip = None
-    strikes = sorted(net)
-    best = None
-    for i in range(len(strikes) - 1):
-        a, b = net[strikes[i]], net[strikes[i + 1]]
-        if a * b < 0:  # zero-crossing
-            # il crossing più vicino allo spot
-            d = abs(strikes[i] - spot)
-            if best is None or d < best[0]:
-                best = (d, strikes[i] + (strikes[i + 1] - strikes[i]) * abs(a) / (abs(a) + abs(b)))
-    if best:
-        flip = round(best[1], 1)
+    def _nearest_zero_crossing(profile: dict) -> float | None:
+        strikes = sorted(profile)
+        best = None
+        for i in range(len(strikes) - 1):
+            a, b = profile[strikes[i]], profile[strikes[i + 1]]
+            if a * b < 0:  # zero-crossing
+                # il crossing più vicino allo spot
+                d = abs(strikes[i] - spot)
+                if best is None or d < best[0]:
+                    best = (d, strikes[i] + (strikes[i + 1] - strikes[i]) * abs(a) / (abs(a) + abs(b)))
+        return round(best[1], 1) if best else None
+
+    flip = _nearest_zero_crossing(net)
+    flip0 = _nearest_zero_crossing(net0) if net0 else None
 
     top = sorted(net.items(), key=lambda kv: -abs(kv[1]))[:10]
     top_strikes = [{"strike": round(k, 1), "net_gex": round(vv, 0),
                     "sign": "long" if vv >= 0 else "short"} for k, vv in top]
 
-    return walls, flip, top_strikes
+    return walls, flip, flip0, top_strikes
 
 
 def max_pain(expiries: list) -> dict:
@@ -251,7 +261,8 @@ def max_pain(expiries: list) -> dict:
 
 def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: float,
                gex_flip_etf: float | None, spot_fut_ratio: float,
-               index_to_fut: float | None = None) -> dict:
+               index_to_fut: float | None = None,
+               gex_flip0_etf: float | None = None) -> dict:
     """
     walls_etf: i muri già calcolati dal pipeline opzioni, in scala ETF/strike
                [{"strike":..., "type": "put_wall|call_wall", "net_gex":...,
@@ -391,6 +402,12 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
     if gex_flip_etf:
         add("GEX-FLIP", "GEX flip (cambio regime gamma)",
             gex_flip_etf * spot_fut_ratio, "pivot", "options")
+    # Flip 0DTE: solo le scadenze di oggi (daily + weekly + mensile che
+    # cadono oggi). Regime intraday: è il libro che i dealer coprono entro
+    # la chiusura. Può divergere dall'aggregato → info, non rumore.
+    if gex_flip0_etf:
+        add("GEX-FLIP-0DTE", "GEX flip 0DTE (scade oggi)",
+            gex_flip0_etf * spot_fut_ratio, "pivot", "options")
 
     # --- muri da opzioni: pin (gamma lunga) = barriera; trigger = accelerano ---
     # Le walls sono in scala ETF (SPY/QQQ): stesso fattore di tutti gli altri
@@ -614,7 +631,7 @@ def main() -> None:
             walls, flip, top_gamma = [], None, []
             mp = {"nearest": {}, "all": {}}
         else:
-            walls, flip, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
+            walls, flip, flip0, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
             mp = max_pain(sd.get("expiries", []))
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
@@ -625,8 +642,10 @@ def main() -> None:
                           hist["Volume"].values.astype(float),
                           futures=fut, walls_etf=walls, spot_etf=spot_etf,
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
-                          index_to_fut=index_to_fut)
+                          index_to_fut=index_to_fut, gex_flip0_etf=flip0)
         plan["spot_etf"] = spot_etf
+        if flip0:
+            plan["gex_flip_0dte"] = round(flip0 * ratio, 1)
         if degraded:
             plan["read"].insert(0, "⚠️ Catena opzioni non disponibile in questo "
                                  "snapshot (OI assente): la scala mostra solo "
