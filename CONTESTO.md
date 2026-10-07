@@ -165,12 +165,34 @@ python scripts/fetch_options_data.py --symbol ALL --output data/options_data.jso
 python scripts/day_plan.py --show   # rigenera piano + stampa la scala
 python tests/test_intraday_playbook.py
 python tests/test_day_plan.py       # track record (6 check)
-# publish manuale sul data branch: clone --depth1 --branch data, copia i 4
-# file (options_data/options_history/day_plan/level_stats), commit, push
+# publish manuale sul data branch: clone --depth1 --branch data, copia i file
+# (options_data/options_oi_lastgood/options_history/day_plan/level_stats),
+# commit, push
 ```
 
 Deploy: **automatico da push su master** (Vercel Git integration, riconnessa
 e verificata il 06/10 — prima era staccata da 42 giorni).
+
+### Incidente 07/10 mattina: catena opzioni senza OI (flip a +17%)
+
+yfinance/Yahoo ha smesso di fornire `openInterest` (OI QQQ 24k contro ~10M
+normali). Il piano ha pubblicato flip NQ a 36.870 con spot 31.352, max pain
+"tutte le scadenze" a 12.214 (min() su pareggio totale di OI zero), muri
+fantasiosi. Tre difese aggiunte:
+
+1. `fetch_options_data.py`: flag `data_quality: degraded` se >80% dei
+   contratti resta senza OI anche dopo il fallback + **archivio compatto
+   `options_oi_lastgood.json`** (scritto SOLO a catena sana, ~300KB):
+   prima il fallback attingeva da options_data.json sul data branch, che
+   dopo un guasto prolungato è già stato sovrascritto con catene rotte
+2. workflow: restore di options_data.json + archivio lastgood (il fallback
+   era disabilitato in CI: "No previous file found")
+3. `day_plan.py`: guard `MIN_CHAIN_OI=100k` → catena degradata = nessun
+   livello opzioni pubblicato + avviso nel read del piano
+
+Recupero verificato: 6542/7636 OI riparate per SPY dall'archivio, flip tornato
+a −1,2% dallo spot. Le 0DTE nuove (scadenze non presenti nell'archivio)
+restano senza OI: minoranza tollerata.
 
 ---
 
