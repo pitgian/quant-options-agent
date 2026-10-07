@@ -5,7 +5,12 @@ name: Fetch Options Data
 
 on:
   schedule:
-    - cron: '*/5 6-21 * * 1-5'   # 07:00-23:55 CEST: copre anche la pre-apertura europea
+    # GitHub THROTTLE i cron sotto carico (nella pratica */5 scatta ogni
+    # 10-20 min): tre entry scaglionate danno una cadenza effettiva ~5 min.
+    # La concurrency group serializza i ritardatari, nessun danno.
+    - cron: '*/5 6-21 * * 1-5'
+    - cron: '1-59/5 6-21 * * 1-5'
+    - cron: '3-59/5 6-21 * * 1-5'
   workflow_dispatch:
 
 permissions:

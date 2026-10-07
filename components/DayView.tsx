@@ -38,7 +38,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
       if (alive && s) setLive(s);
     };
     tick();
-    const id = setInterval(tick, 15000);
+    const id = setInterval(tick, 10000);
     return () => { alive = false; clearInterval(id); };
   }, []);
 
@@ -142,7 +142,11 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
               </span>
             )}
           </div>
-          <span className="text-[10px] text-gray-500">
+          <span className={`text-[10px] tnum ${
+            (Date.now() - new Date(plan.generated_at).getTime()) > 12 * 60000 ? 'text-red-400'
+            : (Date.now() - new Date(plan.generated_at).getTime()) > 7 * 60000 ? 'text-amber-300'
+            : 'text-gray-500'
+          }`} title="Se il piano è fermo da più di 7 minuti controlla la pagina Actions su GitHub: il cron di GitHub a volte ritarda">
             piano delle {new Date(plan.generated_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
