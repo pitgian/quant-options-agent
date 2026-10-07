@@ -49,6 +49,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 DEFAULT_SYMBOL = "SPY"
 DEFAULT_OUTPUT = "data/options_data.json"
+# Archivio compatto "ultima OI buona": riscritto solo quando TUTTE le catene
+# sono sane; è la fonte dell'OI fallback quando la sorgente si rompe
+# (yfinance/Yahoo a volte perde openInterest per ore).
+LASTGOOD_OI_NAME = "options_oi_lastgood.json"
 DATA_VERSION = "3.0"
 # History schema version for the GEX covariate. Bumped when the GEX formula
 # changes; append_to_history discards records produced by older versions so
@@ -197,11 +201,40 @@ def load_previous_oi_lookup(
     file_path: str = DEFAULT_OUTPUT,
 ) -> Dict[Tuple[str, float, str, str], int]:
     """
-    Load the previous options_data.json and build a lookup dictionary
-    keyed by (symbol, strike, side, expiry_date) → oi value.
-    Only includes entries where oi > 0.
-    Returns an empty dict if the file doesn't exist or is invalid.
+    OI dell'ultimo snapshot BUONO, per il fallback zero-OI.
+
+    Fonte primaria: l'archivio compatto options_oi_lastgood.json (scritto
+    solo a catena sana). Fonte secondaria: options_data.json del giro
+    precedente — valida solo se contiene abbastanza OI non-zero, perché
+    dopo un guasto prolungato anche quel file sul data branch è rotto.
     """
+    # 1) archivio lastgood
+    archive = Path(file_path).parent / LASTGOOD_OI_NAME
+    if archive.exists():
+        try:
+            with open(archive, "r") as f:
+                data = json.load(f)
+            lookup: Dict[Tuple[str, float, str, str], int] = {}
+            for symbol, entries in data.get("symbols", {}).items():
+                for key, oi in entries.items():
+                    try:
+                        expiry_date, side, strike = key.split("|")
+                        lookup[(symbol, float(strike), side, expiry_date)] = int(oi)
+                    except (ValueError, TypeError):
+                        continue
+            if len(lookup) >= 1000:
+                logger.info(
+                    f"📄 OI fallback: {len(lookup)} entries dall'archivio "
+                    f"lastgood ({str(data.get('generated', '?'))[:16]})"
+                )
+                return lookup
+            logger.warning(
+                f"⚠️ lastgood archive troppo piccolo ({len(lookup)} entries) — ignoro"
+            )
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"⚠️ lastgood archive illeggibile: {e}")
+
+    # 2) options_data.json del giro precedente (validato)
     path = Path(file_path)
     if not path.exists():
         logger.info("📄 No previous options_data.json found — OI fallback disabled")
@@ -214,7 +247,7 @@ def load_previous_oi_lookup(
         logger.warning(f"⚠️ Could not load previous data for OI fallback: {e}")
         return {}
 
-    lookup: Dict[Tuple[str, float, str, str], int] = {}
+    lookup = {}
     symbols = prev_data.get("symbols", {})
     for symbol, sym_data in symbols.items():
         for expiry in sym_data.get("expiries", []):
@@ -224,6 +257,15 @@ def load_previous_oi_lookup(
                 if oi > 0:
                     key = (symbol, opt["strike"], opt["side"], expiry_date)
                     lookup[key] = oi
+
+    if len(lookup) < 1000:
+        # dopo un guasto prolungato anche il file precedente è rotto:
+        # usarlo significherebbe fondere OI zero su OI zero
+        logger.warning(
+            f"⚠️ previous OI lookup ha solo {len(lookup)} entries — inutilizzabile, "
+            f"fallback disabilitato (catena probabilmente già rotta)"
+        )
+        return {}
 
     logger.info(
         f"📄 Loaded previous OI lookup: {len(lookup)} non-zero OI entries "
@@ -2112,6 +2154,7 @@ def fetch_symbol_data(
     all_options_by_expiry: List[Dict[str, Any]] = []
     total_zero_oi = 0
     total_fallbacks = 0
+    total_rows = 0
 
     for exp_date, contract_count in selected_counts:
         chain = fetched_chains[exp_date]
@@ -2123,6 +2166,7 @@ def fetch_symbol_data(
         )
         total_zero_oi += call_zeros + put_zeros
         total_fallbacks += call_fbs + put_fbs
+        total_rows += len(calls) + len(puts)
         all_options = calls + puts
 
         # Recompute IV (Black-Scholes inversion from bid/ask + per-expiry smile
@@ -2287,6 +2331,19 @@ def fetch_symbol_data(
     else:
         logger.info(f"🔄 [{symbol}] OI fallback: no zero-OI values detected")
 
+    # 7b. Qualità della catena: se anche DOPO il fallback resta quasi tutto a
+    #     zero (yfinance/Yahoo a volte smette di fornire openInterest), la
+    #     catena è degradata — chi la consuma (day_plan) deve saperlo per NON
+    #     produrre muri/flip/max pain con numeri a caso.
+    remaining_zero = total_zero_oi - total_fallbacks
+    data_quality = "degraded" if (total_rows > 0 and remaining_zero > 0.8 * total_rows) else "ok"
+    if data_quality == "degraded":
+        logger.warning(
+            f"⚠️ [{symbol}] catena opzioni DEGRADATA: {remaining_zero}/{total_rows} "
+            f"contratti senza OI anche dopo il fallback — muri/flip/max pain "
+            f"saranno scartati dal piano"
+        )
+
     # 8. Assemble per-symbol output (matches RawSymbolData interface)
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -2326,6 +2383,7 @@ def fetch_symbol_data(
         "spot": spot,
         "generated": now_iso,
         "oi_fallback_used": oi_fallback_used,
+        "data_quality": data_quality,
         "total_net_gex": round(total_net_gex, 2),
         "volatility_skew_25d": round(skew_value, 4),
         "put_call_oi_ratio": round(pcr_value, 4),
@@ -2804,6 +2862,37 @@ def main() -> None:
     # Write JSON
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
+
+    # Archivio "ultima OI buona": riscritto SOLO quando ogni catena è sana.
+    # Con il solo options_data.json sul data branch, dopo un guasto prolungato
+    # della sorgente OI l'ultima buona andrebbe persa (il file viene
+    # sovrascritto a ogni giro); l'archivio compatto sopravvive ai giri rotti.
+    if symbols_data and all(
+        sd.get("data_quality") == "ok" for sd in symbols_data.values()
+    ):
+        archive: Dict[str, Dict[str, int]] = {}
+        for sym, sd in symbols_data.items():
+            entries: Dict[str, int] = {}
+            for e in sd.get("expiries", []):
+                d = e.get("date", "")
+                for o in e.get("options", []):
+                    if o.get("oi", 0) > 0:
+                        entries[f"{d}|{o['side']}|{o['strike']}"] = int(o["oi"])
+            archive[sym] = entries
+        try:
+            with open(output_path.parent / LASTGOOD_OI_NAME, "w") as f:
+                json.dump(
+                    {"version": 1, "generated": now_iso, "symbols": archive}, f
+                )
+            n = sum(len(v) for v in archive.values())
+            logger.info(f"💾 lastgood OI archive aggiornato: {n} entries")
+        except OSError as e:
+            logger.warning(f"⚠️ impossibile scrivere l'archivio lastgood: {e}")
+    else:
+        logger.warning(
+            "⚠️ catena degradata — archivio lastgood NON toccato "
+            "(resta l'ultima OI buona)"
+        )
 
     # Summary
     total_put = sum(

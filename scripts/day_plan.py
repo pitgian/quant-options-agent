@@ -40,6 +40,12 @@ from fetch_options_data import calculate_walls  # parità con la UI (stessa form
 PLAN_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "day_plan.json")
 PREV_PLAN_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "day_plan_prev.json")
 STATS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "level_stats.json")
+
+# OI aggregata minima perché la catena opzioni sia considerata sana.
+# Un giorno normale SPY/QQQ ha milioni di contratti; yfinance/Yahoo a volte
+# smette di fornire openInterest e la catena torna con OI≈0: sotto questa
+# soglia muri/flip/max pain sono numeri a caso e NON vengono pubblicati.
+MIN_CHAIN_OI = 100_000
 OPTIONS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "options_data.json")
 
 ET = ZoneInfo("America/New_York")
@@ -595,8 +601,21 @@ def main() -> None:
         h = hist["High"].to_numpy(float)
         l = hist["Low"].to_numpy(float)
 
-        walls, flip, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
-        mp = max_pain(sd.get("expiries", []))
+        # Catena sana? OI aggregata oltre la soglia e nessun flag degraded:
+        # con la catena rotta il flip esce a +17% dallo spot e il max pain a
+        # −60% (min() su pareggio totale di OI zero) — meglio nessun livello.
+        oi_tot = sum(int(o.get("oi", 0) or 0)
+                     for e in sd.get("expiries", [])
+                     for o in (e.get("options") or []))
+        degraded = (sd.get("data_quality") == "degraded" or oi_tot < MIN_CHAIN_OI)
+        if degraded:
+            print(f"day_plan: catena {sym} degradata (OI tot {oi_tot:,}) → "
+                  f"livelli opzioni saltati")
+            walls, flip, top_gamma = [], None, []
+            mp = {"nearest": {}, "all": {}}
+        else:
+            walls, flip, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
+            mp = max_pain(sd.get("expiries", []))
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
@@ -608,6 +627,11 @@ def main() -> None:
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
                           index_to_fut=index_to_fut)
         plan["spot_etf"] = spot_etf
+        if degraded:
+            plan["read"].insert(0, "⚠️ Catena opzioni non disponibile in questo "
+                                 "snapshot (OI assente): la scala mostra solo "
+                                 "i livelli prezzo/AMT. I muri gamma torneranno "
+                                 "appena la sorgente OI torna disponibile.")
         # max pain + top gamma in scala futures
         if mp.get("nearest", {}).get("strike"):
             plan["max_pain_nearest"] = round(mp["nearest"]["strike"] * ratio, 1)

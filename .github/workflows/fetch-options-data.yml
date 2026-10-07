@@ -45,6 +45,7 @@ jobs:
       - name: Restore state from data branch
         run: |
           git fetch origin data || true
+          git checkout origin/data -- data/options_data.json || true
           git checkout origin/data -- data/options_history.json || true
           git checkout origin/data -- data/day_plan.json || true
           git checkout origin/data -- data/level_stats.json || true
@@ -67,7 +68,7 @@ jobs:
         timeout-minutes: 5
         run: |
           mkdir -p /tmp/generated_data
-          for f in options_data.json options_history.json day_plan.json level_stats.json; do
+          for f in options_data.json options_oi_lastgood.json options_history.json day_plan.json level_stats.json; do
             cp data/$f /tmp/generated_data/ 2>/dev/null || true
           done
           rm -f data/options_data.json data/options_history.json data/day_plan.json data/level_stats.json
@@ -81,7 +82,7 @@ jobs:
             echo '{"git": {"deploymentEnabled": {"data": false}}, "ignoreCommand": "exit 0"}' > vercel.json
             git add vercel.json
           fi
-          for f in options_data.json options_history.json day_plan.json level_stats.json; do
+          for f in options_data.json options_oi_lastgood.json options_history.json day_plan.json level_stats.json; do
             git add data/$f 2>/dev/null || true
           done
           if git diff --quiet && git diff --staged --quiet; then
