@@ -46,6 +46,7 @@ jobs:
         run: |
           git fetch origin data || true
           git checkout origin/data -- data/options_data.json || true
+          git checkout origin/data -- data/options_oi_lastgood.json || true
           git checkout origin/data -- data/options_history.json || true
           git checkout origin/data -- data/day_plan.json || true
           git checkout origin/data -- data/level_stats.json || true
