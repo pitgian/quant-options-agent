@@ -16,6 +16,8 @@ export interface DayPlanLevel {
   source: 'price' | 'amt' | 'options';
   dist_pts: number;
   gamma?: 'pin' | 'trigger';
+  /** Serie dell'opzione che genera il muro (solo walls: call/put). */
+  side?: 'call' | 'put';
 }
 
 export interface DayPlan {

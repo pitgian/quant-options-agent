@@ -97,6 +97,8 @@ export interface LadderLevel {
   gammaSign?: 'pin' | 'trigger';
   isFlip?: boolean;
   isNaked?: boolean;
+  /** Serie del livello dominante (call/put), se è un muro. */
+  side?: 'call' | 'put';
   /** Quanti livelli distinti confluiscono nella stessa zona. */
   merged: number;
   /** Punteggio di importanza (confluenza, magneti, flip, pin, prossimità). */
@@ -117,6 +119,8 @@ export interface LadderInput {
   gammaSign?: 'pin' | 'trigger';
   isFlip?: boolean;
   isNaked?: boolean;
+  /** Serie dell'opzione del muro ('call' | 'put') — per i chip della scala. */
+  side?: 'call' | 'put';
   /** Peso del GEX netto della zona (0..1, frazione del muro massimo del giorno):
    *  alimenta il punteggio d'importanza — il muro più grosso vale 3 punti. */
   gexWeight?: number;
@@ -196,6 +200,7 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
       rawLabel: best.label,
       family: best.family,
       kind: best.kind,
+      side: best.side,
       members: members.map(m => ({
         nome_it: m.nome_it ?? LADDER_LABEL_IT[m.label] ?? m.label,
         label: m.label,

@@ -426,12 +426,14 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
 
     # pin più significativi: top 3 per |net_gex|
     for price_fut, w in sorted(pin_walls, key=lambda x: -abs(x[1].get("net_gex", 0)))[:3]:
-        side = "sopra" if price_fut > last else "sotto"
-        add("PIN", f"Muro {w['type'].replace('_wall','')} in pin ({side})",
-            price_fut, "barrier", "options", gamma="pin")
+        side_pos = "sopra" if price_fut > last else "sotto"
+        wall_side = w["type"].replace("_wall", "")
+        add("PIN", f"Muro {wall_side} in pin ({side_pos})",
+            price_fut, "barrier", "options", gamma="pin", side=wall_side)
     for price_fut, w in sorted(trigger_walls, key=lambda x: -abs(x[1].get("net_gex", 0)))[:2]:
-        add("TRIGGER", f"Trigger {w['type'].replace('_wall','')}",
-            price_fut, "trigger", "options", gamma="trigger")
+        wall_side = w["type"].replace("_wall", "")
+        add("TRIGGER", f"Trigger {wall_side}",
+            price_fut, "trigger", "options", gamma="trigger", side=wall_side)
 
     # NOTA scala: price/amt derivano da barre futures (già in scala ES/NQ);
     # le opzioni sono convertite al momento dell'add() — nessuna doppia conversione.

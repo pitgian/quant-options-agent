@@ -26,6 +26,7 @@ interface Row {
   score?: number;
   held?: number;
   n?: number;
+  side?: 'call' | 'put';
   /** GEX netto aggregato sugli strike caduti in questa zona (dal profilo gamma). */
   gex?: { net: number; parts: string[] };
 }
@@ -104,6 +105,7 @@ export function buildLadderForPlan(
               : 'price' as const,
         kind: l.kind,
         gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
+        side: l.side,
         isFlip: l.name === 'GEX-FLIP' || l.name === 'GEX-FLIP-0DTE',
         isNaked: l.name.startsWith('NAKED'),
         gexWeight: g ? Math.min(1, Math.abs(g.net) / maxAbsGex) : undefined,
@@ -144,6 +146,7 @@ export const Ladder: React.FC<{
       score: z.score,
       held: stats[statsKey]?.held,
       n: stats[statsKey]?.n,
+      side: z.side,
       gex: gammaByZone.get(z.price),
     };
   };
@@ -202,7 +205,10 @@ export const Ladder: React.FC<{
             </span>
           )}
           <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded border ${meta.chip}`} title={meta.title}>
-            {r.kind === 'magnet' ? '🧲 magnete' : r.kind === 'barrier' ? '🛡 barriera' : r.kind === 'trigger' ? '⚡ trigger' : 'pivot'}
+            {r.kind === 'magnet' ? '🧲 magnete'
+              : r.kind === 'barrier' ? `🛡 barriera${r.side ? ` ${r.side}` : ''}`
+              : r.kind === 'trigger' ? `⚡ trigger${r.side ? ` ${r.side}` : ''}`
+              : 'pivot'}
           </span>
           {!isSpot && (
             <span className={`text-[11px] font-mono font-semibold tnum w-16 text-right ${r.distPts > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}
