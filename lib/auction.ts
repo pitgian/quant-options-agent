@@ -80,6 +80,7 @@ export interface LadderMember {
   label: string;
   family: Family;
   gammaSign?: 'pin' | 'trigger';
+  side?: 'call' | 'put';
 }
 
 export interface LadderLevel {
@@ -200,12 +201,15 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
       rawLabel: best.label,
       family: best.family,
       kind: best.kind,
-      side: best.side,
+      // fallback: se il dominante non ha serie (es. flip), usa quella di un
+      // altro membro del cluster — il chip deve sempre dire call/put
+      side: best.side ?? members.find(m => m.side)?.side,
       members: members.map(m => ({
         nome_it: m.nome_it ?? LADDER_LABEL_IT[m.label] ?? m.label,
         label: m.label,
         family: m.family,
         gammaSign: m.gammaSign,
+        side: m.side,
       })),
       score,
       importance: (score >= 7 ? 'alta' : score >= 5 ? 'media' : 'bassa') as 'alta' | 'media' | 'bassa',
