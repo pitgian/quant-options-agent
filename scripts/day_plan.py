@@ -702,7 +702,31 @@ def main() -> None:
                              default=None)
                 if old_plan and target:
                     n0 = sum(s["n"] for s in stats.values())
-                    update_stats(old_plan, idx_et, h, l, stats, prefix=fut, only_date=target)
+                    # SOLO i livelli che la scala mostra davvero: fonti opzioni
+                    # + max pain + muri gamma top-3 per lato (le sintesi che fa
+                    # la UI). VWAP/VAH/overnight non sono più nella scala e non
+                    # devono accumulare fiducia.
+                    old_levels = [l for l in old_plan.get("levels", [])
+                                  if l.get("source") == "options"]
+                    if old_plan.get("max_pain_nearest"):
+                        old_levels.append({"name": "MAXPAIN-0DTE",
+                                           "nome_it": "Max Pain scadenza vicina",
+                                           "price": float(old_plan["max_pain_nearest"])})
+                    if old_plan.get("max_pain_all"):
+                        old_levels.append({"name": "MAXPAIN-ALL",
+                                           "nome_it": "Max Pain (tutte le scadenze)",
+                                           "price": float(old_plan["max_pain_all"])})
+                    spot_ref = float(old_plan.get("last_price") or 0)
+                    tg = sorted(old_plan.get("top_gamma") or [],
+                                key=lambda t: -abs(t.get("net_gex", 0) or 0))
+                    for t in ([x for x in tg if x.get("strike_fut", 0) >= spot_ref][:3]
+                              + [x for x in tg if x.get("strike_fut", 0) < spot_ref][:3]):
+                        zone = round(t["strike_fut"] / 5) * 5
+                        old_levels.append({"name": f"GAMMA-{zone}",
+                                           "nome_it": "Muro gamma",
+                                           "price": float(zone)})
+                    update_stats({**old_plan, "levels": old_levels},
+                                 idx_et, h, l, stats, prefix=fut, only_date=target)
                     n1 = sum(s["n"] for s in stats.values())
                     print(f"day_plan: track record +{n1 - n0} verdetti (giornata {target})")
                     scored = True

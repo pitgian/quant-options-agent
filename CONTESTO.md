@@ -140,7 +140,10 @@ nuovo giorno). Ora il giudizio è guidato dal marcatore **`last_scored`** in
 level_stats.json: al primo run con una nuova giornata ET si giudica il piano
 ripristinato sulle barre COMPLETE dell'ultimo giorno non ancora giudicato
 (`score_plan_against(..., only_date=target)`). Il giudizio usa il piano
-ripristinato = quello con cui si ha aperto la giornata.
+ripristinato = quello con cui si ha aperto la giornata. **Scope**: vengono
+stillati SOLO i livelli che la scala mostra (fonti opzioni + max pain +
+muri gamma top-3/lato, sintesi identiche a quelle della UI) — VWAP/VAH/
+overnight non accumulano più fiducia.
 
 **Perché serve**: è il magazzino di fiducia — senza conteggi, i livelli sono
 numeri a caso. Con i conteggi, la scala si ordina su ciò che ha funzionato.
