@@ -53,9 +53,6 @@ components/
   StatsPanel.tsx             affidabilità per livello
   ui.tsx                     KIT condiviso: ControlBar, Segmented, Badge, Card,
                              Collapsible, InfoHint, Freshness, Skeleton
-  GexByStrike.tsx            profilo gamma per strike — RIASSORBITO nella scala il
-                             06/10 (barra GEX per riga in Ladder + muri top-3 come
-                             livelli in DayView); file tenuto per riattivazione
 services/dayPlanService.ts   UNICO servizio: day_plan.json + level_stats.json + live spot
 lib/auction.ts               MOTORE puro: profileStats (VA 70%), classifyOpen,
                              buildLadder (clustering 5pt, rank, importanza) + test
@@ -67,7 +64,8 @@ scripts/
                              prezzo+AMT+opzioni in scala ES/NQ, lettura AMT,
                              max pain, top gamma) + scoring piano precedente →
                              data/level_stats.json (chiave STRUMENTO:NOME,
-                             n/held/rate; barre solo dalla data del piano)
+                             n/held/rate; solo livelli della scala; barre della
+                             giornata completata — marcatore last_scored)
   auto_updater.py            push locale semplificato sul data branch
 tests/                       test_intraday_playbook.py (26 check) +
                              test_day_plan.py (6 check: filtro date, held/broke,
@@ -181,7 +179,6 @@ npm run build                       # build produzione
 source .venv/bin/activate
 python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
 python scripts/day_plan.py --show   # rigenera piano + stampa la scala
-python tests/test_intraday_playbook.py
 python tests/test_day_plan.py       # track record (6 check)
 # publish manuale sul data branch: clone --depth1 --branch data, copia i file
 # (options_data/options_oi_lastgood/options_history/day_plan/level_stats),
@@ -233,8 +230,10 @@ restano senza OI: minoranza tollerata.
 - Test: 25 JS (vitest) + 26 Python (playbook) + 6 (test_day_plan) + 12 (lib/auction) verdi.
 - Il data branch porta ancora file Kronos stantii (kronos_forecast.json ecc.)
   — innocui, l'alert di staleness legge options_data.json.
-- `scripts/fetch_options_data.py` contiene `fetch_intraday_playbook` (legacy,
-  calcola ma nessuno lo consuma) — rimovibile quando si vuole.
+- 08/10 pulizia profonda: rimossi playbook intraday legacy (+26 check),
+  auto_updater.py, GexByStrike.tsx, ControlBar/Freshness, parity tooling,
+  plans/, options_history.json (mai letta da nessuno) e i file Kronos dal
+  data branch. Kept: docs/cron-job-setup.md (infra dispatcher esterno).
 - gh CLI: `gh run list` funziona, il **dispatch può dare 401** (serve scope
   workflow) — in tal caso lanciare il workflow da GitHub → Actions → Run
   workflow, o aspettare il cron.

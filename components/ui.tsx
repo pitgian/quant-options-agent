@@ -1,13 +1,10 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
-import { IconRefresh } from './Icons';
+import React, { useState, useRef, useEffect } from 'react';
 
 /**
  * Shared UI kit — one implementation of the visual primitives that every
  * view used to hand-roll with duplicated Tailwind class strings:
  *
  *   Segmented   pill selector (market, timeframe, filters…)
- *   ControlBar  sticky sub-header: title/left slot + controls + Freshness
- *   Freshness   ONE refresh button + "aggiornato X fa" format for the whole app
  *   Card        the standard panel container
  *   StatCard    label / value / sub
  *   Badge       tone-coloured pill (good / warn / bad / info / violet / neutral)
@@ -71,101 +68,6 @@ export function Labeled({ label, children, title }: { label: string; children: R
   );
 }
 
-// ---------------------------------------------------------------------------
-// Freshness — one refresh + timestamp format for the whole app
-// ---------------------------------------------------------------------------
-
-export function Freshness({
-  timeSinceUpdate, refreshing, onRefresh,
-  isBackgroundRefreshing, flashVisible,
-}: {
-  timeSinceUpdate: string;
-  refreshing: boolean;
-  onRefresh: () => void;
-  isBackgroundRefreshing?: boolean;
-  flashVisible?: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-2.5">
-      {isBackgroundRefreshing && (
-        <span className="inline-flex items-center gap-1 text-[11px] text-blue-400/80 animate-pulse">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400 animate-ping" />
-          Aggiornamento…
-        </span>
-      )}
-      {flashVisible && (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-500/15 text-green-400 animate-pulse">
-          ✓ Aggiornato
-        </span>
-      )}
-      <button
-        onClick={onRefresh}
-        disabled={refreshing}
-        aria-label="Aggiorna dati"
-        className="flex items-center gap-1.5 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-        title={timeSinceUpdate ? `Aggiornato: ${timeSinceUpdate}` : 'Aggiorna'}
-      >
-        <IconRefresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-        {timeSinceUpdate && (
-          <span className="text-[11px] text-gray-500 tnum">aggiornato {timeSinceUpdate}</span>
-        )}
-      </button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ControlBar — sticky sub-header under the app nav
-// ---------------------------------------------------------------------------
-
-export function ControlBar({
-  title, icon, left, right,
-}: {
-  title?: string;
-  icon?: string;
-  /** Free-form controls (segmented, selects…). */
-  left?: React.ReactNode;
-  /** Usually a <Freshness>. */
-  right?: React.ReactNode;
-}) {
-  const barRef = useRef<HTMLDivElement>(null);
-
-  // Publish the bar height as a CSS var so SECONDARY sticky bars (e.g. the
-  // levels sub-bar in Mercato) can stick exactly below it at any viewport
-  // width — the bar wraps to multiple rows on mobile, so a hardcoded offset
-  // would overlap or leave gaps. Same pattern as --app-nav-h in App.tsx.
-  useLayoutEffect(() => {
-    const el = barRef.current;
-    if (!el) return;
-    const update = () => {
-      document.documentElement.style.setProperty('--app-controlbar-h', `${el.offsetHeight}px`);
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  return (
-    <div
-      ref={barRef}
-      className="sticky z-40 bg-[#161b22]/95 backdrop-blur border-b border-slate-800"
-      style={{ top: 'var(--app-nav-h, 0px)' }}
-    >
-      <div className="max-w-[1850px] mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 flex-wrap">
-          {title && (
-            <span className="text-sm font-bold text-slate-200 whitespace-nowrap">
-              {icon && <span className="mr-1.5">{icon}</span>}{title}
-            </span>
-          )}
-          {left}
-        </div>
-        <div className="flex items-center gap-3">{right}</div>
-      </div>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Card / StatCard / Badge

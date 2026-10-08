@@ -54,12 +54,7 @@ DEFAULT_OUTPUT = "data/options_data.json"
 # (yfinance/Yahoo a volte perde openInterest per ore).
 LASTGOOD_OI_NAME = "options_oi_lastgood.json"
 DATA_VERSION = "3.0"
-# History schema version for the GEX covariate. Bumped when the GEX formula
-# changes; append_to_history discards records produced by older versions so
-# the adapter never trains on stale/incompatible GEX values.
-#   v2 = Black-Scholes IV inversion + per-expiry smile fit (replaces the
-#        Yahoo-IV-floor artefact that had corrupted ~99% of the old GEX).
-HISTORY_GEX_VERSION = 2
+
 MAX_EXPIRATIONS_TO_PROCESS = 25  # Max expirations to process, selected by highest contract count
 CHAIN_FETCH_DELAY = 0.3  # seconds between individual chain fetches to avoid rate limiting
 TOP_N_WALLS = 999  # Show all walls, no artificial limit
@@ -91,24 +86,6 @@ CROSS_SYMBOL_STRENGTH_WEIGHT = 0.25 # Weight for individual strength
 # Symbols processed when --symbol ALL is used
 ALL_SYMBOLS = ["SPY", "QQQ", "SPX", "NDX"]
 
-# Symbols appended to options_history.json for adapter training. The fetcher
-# still computes options data for ALL_SYMBOLS (SPX/NDX are shown live in the
-# UI), but only these contribute to the adapter's training history — they are
-# the symbols train_adapter.py actually consumes (--symbols SPY QQQ), and they
-# share a single ETF-scale covariate space. Writing SPX/NDX here would mix
-# index-scale GEX into the model and bias the correction silently.
-HISTORY_SYMBOLS = ["SPY", "QQQ"]
-
-# Retention policy for options_history.json. The adapter's 1d horizon needs
-# snapshots with >=5 realized daily bars AFTER them (~7 calendar days) to
-# build a training sample. The previous FIFO-500/symbol cap was filled in
-# ~5 days at the 5-min CI cadence, so every snapshot was evicted before the
-# 1d future materialized — structurally starving the 1d horizon to 0 samples.
-# Age-based retention keeps snapshots long enough for the 1d horizon to
-# accumulate real samples; HISTORY_SAFETY_CAP is a per-symbol upper bound that
-# only bites on accidental CI bursts (normally ~2200 records/symbol @ 14d).
-HISTORY_RETENTION_DAYS = 14
-HISTORY_SAFETY_CAP = 2500
 
 # ---------------------------------------------------------------------------
 # Symbol mapping
@@ -1218,313 +1195,6 @@ def fetch_futures_volume_profile(
     except Exception as e:
         logger.error(f"❌ Error computing futures volume profile for {symbol}: {e}")
         return {}
-
-
-def fetch_intraday_playbook(symbol: str) -> Dict[str, Any]:
-    """
-    Playbook intraday da desk: livelli di PREZZO derivati dai futures (ES/NQ),
-    indipendenti dalle opzioni — la spina dorsale del trading intraday.
-
-    Convenzioni professionali:
-      RTH      regular trading hours 09:30-16:00 ET (la seduta "vera")
-      ON       overnight = tutte le barre dopo la chiusura RTH precedente
-               fino all'apertura RTH di oggi (Globex)
-      PDH/PDL  previous day high/low (seduta RTH completata)
-      ONH/ONL  overnight high/low
-      OPEN_RTH primo prezzo della seduta RTH corrente
-      VWAP     volume-weighted average price della seduta RTH corrente
-               (reset giornaliero) con bande sigma1/sigma2
-      POC/VAH/VAL prev-day: profilo volumi della seduta RTH di ieri
-               (distribuzione volume su griglia 1pt, value area 70%)
-      POC developing: POC provvisorio della seduta in corso
-      NAKED POC: POC delle ultime 5 sedute non ancora attraversati dal prezzo
-               (magneti — il prezzo tende a tornarci)
-      PWH/PWL  previous week high/low; WEEK_OPEN apertura della settimana in corso
-
-    Tutto in scala NATIVA futures. Robusto ai buchi: se una finestra non ha
-    barre (weekend/festivi) il livello viene omesso, mai inventato.
-    """
-    futures_symbol = "ES=F" if symbol in ["SPY", "SPX"] else "NQ=F"
-    logger.info(f"🕐 [{symbol}] Intraday playbook da {futures_symbol}...")
-    try:
-        t = yf.Ticker(futures_symbol)
-        hist = t.history(period="7d", interval="5m", prepost=False)
-        if hist.empty or len(hist) < 20:
-            logger.warning(f"⚠️ Playbook: nessuna barra 5m per {futures_symbol}")
-            return {}
-
-        idx = hist.index
-        if idx.tz is None:
-            idx = idx.tz_localize("UTC")
-        idx_et = idx.tz_convert(_ET)
-        return compute_intraday_playbook(
-            idx_et, hist["Open"].values, hist["High"].values,
-            hist["Low"].values, hist["Close"].values,
-            hist["Volume"].values.astype(float),
-            futures_ticker=futures_symbol.replace("=F", ""),
-        )
-    except Exception as e:
-        logger.error(f"❌ Errore playbook intraday {symbol}: {e}")
-        return {}
-
-
-def compute_intraday_playbook(idx_et, o, h, l, c, v, futures_ticker: str = "ES") -> Dict[str, Any]:
-    """Core puro del playbook (nessun I/O): vedi fetch_intraday_playbook."""
-    try:
-        import numpy as _np
-        o = _np.asarray(o, dtype=float)
-        h = _np.asarray(h, dtype=float)
-        l = _np.asarray(l, dtype=float)
-        c = _np.asarray(c, dtype=float)
-        v = _np.asarray(v, dtype=float)
-        futures_symbol = futures_ticker
-
-        # --- sessioni RTH per data ET ---
-        hours = np.array([t.hour for t in idx_et])
-        minutes = np.array([t.minute for t in idx_et])
-        rth_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
-        rth_mask &= hours < 16
-        dates = [d.date() for d in idx_et]
-        rth_dates = sorted({d for d, m in zip(dates, rth_mask) if m})
-        if not rth_dates:
-            return {}
-
-        def session_stats(date_val):
-            mask = np.array([d == date_val and m for d, m in zip(dates, rth_mask)])
-            if mask.sum() == 0:
-                return None
-            return {
-                "high": float(np.max(h[mask])),
-                "low": float(np.min(l[mask])),
-                "open": float(o[mask][0]),
-                "close": float(c[mask][-1]),
-                "mask": mask,
-            }
-
-        today = rth_dates[-1]
-        today_s = session_stats(today)
-        prev_completed = [d for d in rth_dates if d < today]
-        prev_s = session_stats(prev_completed[-1]) if prev_completed else None
-
-        out: Dict[str, Any] = {"futures_symbol": futures_symbol.replace("=F", ""), "as_of": datetime.now(timezone.utc).isoformat()}
-
-        # --- PDH/PDL ---
-        if prev_s:
-            out["pdh"] = round(prev_s["high"], 2)
-            out["pdl"] = round(prev_s["low"], 2)
-
-        # --- ONH/ONL: barre tra chiusura RTH di ieri (16:00 ET) e apertura RTH
-        #     di oggi (09:30 ET) — include la sessione Globex delle 18:00 ---
-        if prev_s and prev_completed:
-            prev_date = prev_completed[-1]
-            tz = idx_et[0].tzinfo
-            prev_close_dt = datetime.combine(prev_date, datetime.min.time(), tzinfo=tz) + timedelta(hours=16)
-            today_open_dt = datetime.combine(today, datetime.min.time(), tzinfo=tz) + timedelta(hours=9, minutes=30)
-            on_mask = np.array([
-                (not m) and (t >= prev_close_dt) and (t < today_open_dt)
-                for t, m in zip(idx_et, rth_mask)
-            ])
-            if on_mask.sum() > 0:
-                out["onh"] = round(float(np.max(h[on_mask])), 2)
-                out["onl"] = round(float(np.min(l[on_mask])), 2)
-
-        # --- OPEN RTH di oggi ---
-        if today_s:
-            out["open_rth"] = round(today_s["open"], 2)
-
-        # --- INITIAL BALANCE: range dei primi 60 minuti RTH (rotture IB = segnale trend day) ---
-        if today_s:
-            mask = today_s["mask"]
-            ib_idx = np.where(mask)[0][:12]  # 12 barre da 5m = 1 ora
-            if len(ib_idx) > 0:
-                out["ib_high"] = round(float(np.max(h[ib_idx])), 2)
-                out["ib_low"] = round(float(np.min(l[ib_idx])), 2)
-
-
-        # --- VWAP seduta corrente + bande sigma ---
-        if today_s:
-            mask = today_s["mask"]
-            tp = (h[mask] + l[mask] + c[mask]) / 3.0
-            vol = v[mask]
-            if vol.sum() > 0:
-                vwap = float((tp * vol).sum() / vol.sum())
-                variance = float((vol * (tp - vwap) ** 2).sum() / vol.sum())
-                sigma = math.sqrt(max(variance, 0.0))
-                out["vwap"] = round(vwap, 2)
-                out["vwap_sigma"] = round(sigma, 2)
-                out["vwap_bands"] = {
-                    "s1_up": round(vwap + sigma, 2), "s1_dn": round(vwap - sigma, 2),
-                    "s2_up": round(vwap + 2 * sigma, 2), "s2_dn": round(vwap - 2 * sigma, 2),
-                }
-
-        # --- POC/VAH/VAL: profilo 1pt di una seduta (distribuzione overlap) ---
-        def profile_of(date_val, mask_override=None):
-            mask = mask_override if mask_override is not None else np.array(
-                [d == date_val and m for d, m in zip(dates, rth_mask)])
-            grid: Dict[float, float] = {}
-            for k in np.where(mask)[0]:
-                hi, lo, vol = h[k], l[k], v[k]
-                if vol <= 0 or pd.isna(vol):
-                    continue
-                R = hi - lo
-                if R < 1e-5:
-                    key = round(round(mid_grid(lo, hi) ), 1)
-                    grid[key] = grid.get(key, 0.0) + vol
-                    continue
-                lo_row = math.floor(lo)
-                hi_row = math.ceil(hi)
-                r = float(lo_row)
-                while r <= hi_row:
-                    cell_hi = r + 1.0
-                    overlap = max(0.0, min(hi, cell_hi) - max(lo, r))
-                    if overlap > 0:
-                        grid[r] = grid.get(r, 0.0) + (vol / R) * overlap
-                    r += 1.0
-            if not grid:
-                return None
-            prices = sorted(grid)
-            vols = np.array([grid[p] for p in prices])
-            poc_i = int(np.argmax(vols))
-            total = vols.sum()
-            target = total * 0.70
-            lo_i = hi_i = poc_i
-            acc = vols[poc_i]
-            while acc < target and (lo_i > 0 or hi_i < len(prices) - 1):
-                up = vols[hi_i + 1] if hi_i < len(prices) - 1 else -1
-                dn = vols[lo_i - 1] if lo_i > 0 else -1
-                if up >= dn and up >= 0:
-                    hi_i += 1; acc += vols[hi_i]
-                elif dn >= 0:
-                    lo_i -= 1; acc += vols[lo_i]
-                else:
-                    break
-            return {"poc": round(prices[poc_i], 1), "vah": round(prices[hi_i], 1), "val": round(prices[lo_i], 1)}
-
-        def mid_grid(lo, hi):
-            return (lo + hi) / 2.0
-
-        if prev_s and prev_completed:
-            p = profile_of(prev_completed[-1])
-            if p:
-                out["prev_day_profile"] = p
-
-        # --- TIPO DI APERTURA (AMT): open vs value area di ieri ---
-        if today_s and out.get("prev_day_profile"):
-            open_p = today_s["open"]
-            va = out["prev_day_profile"]
-            if open_p > va["vah"]:
-                out["open_type"] = "above_vah"
-                out["open_note"] = ("Apertura SOPRA la value di ieri: il mercato cerca nuovi prezzi. "
-                                    "Se il prezzo resta accettato sopra la VAH → trend day al rialzo; "
-                                    "se rientra velocemente dentro la value → failed breakout, ritorno rapido verso il POC.")
-            elif open_p < va["val"]:
-                out["open_type"] = "below_val"
-                out["open_note"] = ("Apertura SOTTO la value di ieri: il mercato cerca acquirenti. "
-                                    "Accettazione sotto la VAL → trend day al ribasso; "
-                                    "rientro dentro la value → short covering verso il POC.")
-            else:
-                out["open_type"] = "inside_va"
-                out["open_note"] = ("Apertura DENTRO la value di ieri: giornata rotazionale. "
-                                    "Scenario base: il prezzo oscilla tra VAH (vendere) e VAL (comprare) "
-                                    "fino a prova contraria (breakout dell'IB o della value).")
-
-        if today_s:
-            p = profile_of(today)
-            if p:
-                out["developing_profile"] = p
-
-        # --- NAKED POC: POC delle ultime 5 sedute mai rivalutati dopo ---
-        naked = []
-        for k, dval in enumerate(rth_dates[-6:]):
-            s = session_stats(dval)
-            if not s:
-                continue
-            p = profile_of(dval)
-            if not p:
-                continue
-            poc = p["poc"]
-            later = np.array([(d > dval) for d in dates])
-            if later.sum() > 0:
-                touched = ((l[later] <= poc) & (h[later] >= poc)).any()
-            else:
-                touched = False
-            if not touched:
-                naked.append({"price": poc, "session": dval.isoformat()})
-        if naked:
-            out["naked_pocs"] = naked
-
-        # --- PWH/PWL + open settimana (da barre giornaliere) ---
-        d_daily = yf.Ticker(f"{futures_symbol}=F").history(period="1mo", interval="1d", prepost=False)
-        if not d_daily.empty:
-            didx = d_daily.index
-            if didx.tz is None:
-                didx = didx.tz_localize("UTC")
-            det = didx.tz_convert(_ET)
-            weeks: Dict[Any, list] = {}
-            for k, ts in enumerate(det):
-                iso = ts.date().isocalendar()
-                weeks.setdefault((iso[0], iso[1]), []).append(k)
-            wkeys = sorted(weeks.keys())
-            if len(wkeys) >= 1:
-                cur = wkeys[-1]
-                cur_rows = weeks[cur]
-                out["week_open"] = round(float(d_daily["Open"].values[cur_rows[0]]), 2)
-                if len(wkeys) >= 2:
-                    prev_rows = weeks[wkeys[-2]]
-                    out["pwh"] = round(float(d_daily["High"].values[prev_rows].max()), 2)
-                    out["pwl"] = round(float(d_daily["Low"].values[prev_rows].min()), 2)
-
-        # --- lista piatta pronta per la UI, raggruppata vs ultimo prezzo ---
-        last = float(c[-1])
-        named: List[Tuple[str, float]] = []
-        # 1) riferimenti day/session
-        for key in ("pdh", "pdl", "onh", "onl"):
-            if key in out: named.append((key.upper(), float(out[key])))
-        # 2) VWAP e bande (riferimento istituzionale primario intraday)
-        if "vwap" in out: named.append(("VWAP", float(out["vwap"])))
-        if "vwap_bands" in out:
-            named.append(("VWAP+1σ", float(out["vwap_bands"]["s1_up"])))
-            named.append(("VWAP-1σ", float(out["vwap_bands"]["s1_dn"])))
-        # 3) aperture
-        if "open_rth" in out: named.append(("OPEN", float(out["open_rth"])))
-        if "ib_high" in out: named.append(("IB-HIGH", float(out["ib_high"])))
-        if "ib_low" in out: named.append(("IB-LOW", float(out["ib_low"])))
-        if "week_open" in out: named.append(("W-OPEN", float(out["week_open"])))
-        # 4) profilo giorno prima (value area)
-        if "prev_day_profile" in out:
-            named.append(("VAH-1d", float(out["prev_day_profile"]["vah"])))
-            named.append(("POC-1d", float(out["prev_day_profile"]["poc"])))
-            named.append(("VAL-1d", float(out["prev_day_profile"]["val"])))
-        if "developing_profile" in out: named.append(("POC-dev", float(out["developing_profile"]["poc"])))
-        # 5) settimana
-        for key in ("pwh", "pwl"):
-            if key in out: named.append((key.upper(), float(out[key])))
-        # 6) magneti (POC naked non rivalutati)
-        for n in out.get("naked_pocs", []):
-            named.append(("NAKED POC", float(n["price"])))
-
-        seen_prices: List[float] = []
-        levels = []
-        for label, price in named:
-            if any(abs(price - p) < 0.75 for p in seen_prices):
-                continue  # livelli sovrapposti (es. PDH=VAH-1d): uno solo
-            seen_prices.append(price)
-            levels.append({
-                "label": label,
-                "price": round(price, 2),
-                "side": "above" if price > last else ("below" if price < last else "at"),
-                "dist_pct": round((price - last) / last * 100, 2) if last else 0,
-            })
-        out["last_price"] = round(last, 2)
-        out["levels"] = levels
-
-        logger.info(f"   ✅ playbook intraday: {len(levels)} livelli (PDH/ONH/VWAP/POC/naked)")
-        return out
-    except Exception as e:
-        logger.error(f"❌ Errore compute playbook: {e}")
-        return {}
-
-
 def calculate_volatility_skew_25d(all_options_by_expiry: List[Dict[str, Any]], spot: float) -> float:
     """
     Calculate the 25-Delta volatility skew: IV(Put 25D) - IV(Call 25D)
@@ -1960,103 +1630,6 @@ def clean_expiry_iv(options: List[Dict[str, Any]], spot: float, dte: int, symbol
         # Recompute gamma from the cleaned IV (BS formula; matches estimate_gamma).
         opt["gamma"] = estimate_gamma(spot, opt["strike"], dte, symbol, final_iv)
     return replaced
-
-
-def append_to_history(symbol: str, skew: float, pcr: float, net_gex: float, file_path: str = "data/options_history.json") -> None:
-    """
-    Append skew, PCR and Net GEX metrics to history log with age-based retention.
-
-    Two filters run on every append:
-
-    1. Schema versioning (gex_v): records tagged with an incompatible GEX
-       computation version are DROPPED — this self-heals the log when the GEX
-       formula changes. In particular, all records produced before the
-       Black-Scholes IV fix (gex_v missing / =1) carried an artefactual GEX
-       (the Yahoo-IV-floor bug inflated GEX by ~99%), so they are discarded
-       here on the next append and accumulation restarts clean.
-
-    2. Age-based retention: keeps records newer than HISTORY_RETENTION_DAYS
-       (per-symbol). The adapter's 1d horizon needs >=5 realized daily bars
-       AFTER each snapshot (~7 calendar days) to build a training sample; the
-       previous FIFO-500 cap filled in ~5 days and evicted every snapshot
-       before the 1d future materialized, structurally starving the 1d
-       horizon. HISTORY_SAFETY_CAP is a per-symbol upper bound for burst
-       protection.
-
-    Note: only HISTORY_SYMBOLS are appended. SPX/NDX are still fetched and
-    shown live in the UI, but they are index-scale and not consumed by
-    train_adapter.py; writing them here would mix scales and bias the model.
-    """
-    if symbol not in HISTORY_SYMBOLS:
-        return
-
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    history = []
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r") as f:
-                history = json.load(f)
-        except Exception as e:
-            logger.warning(f"Could not load history file: {e}")
-
-    # Drop records produced by an incompatible (e.g. pre-BS-fix) GEX formula.
-    before = len(history)
-    history = [r for r in history if r.get("gex_v") == HISTORY_GEX_VERSION]
-    purged = before - len(history)
-    if purged:
-        logger.info(f"🧹 Purged {purged} stale history record(s) with incompatible gex_v (≠{HISTORY_GEX_VERSION})")
-
-    new_record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "symbol": symbol,
-        "gex_v": HISTORY_GEX_VERSION,
-        "volatility_skew_25d": round(skew, 5),
-        "put_call_oi_ratio": round(pcr, 5),
-        "total_net_gex": round(net_gex, 5)
-    }
-    history.append(new_record)
-
-    # Age-based retention: drop records older than HISTORY_RETENTION_DAYS.
-    cutoff = datetime.now(timezone.utc) - timedelta(days=HISTORY_RETENTION_DAYS)
-    kept = []
-    for r in history:
-        try:
-            ts = datetime.fromisoformat(r["timestamp"])
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-        except (ValueError, KeyError, TypeError):
-            # Malformed/missing timestamp: keep defensively (the gex_v filter
-            # above is the authoritative schema guard).
-            kept.append(r)
-            continue
-        if ts >= cutoff:
-            kept.append(r)
-    expired = len(history) - len(kept)
-    if expired:
-        logger.info(f"🧹 Dropped {expired} record(s) older than {HISTORY_RETENTION_DAYS}d from history")
-
-    # Per-symbol safety cap (burst protection; normally inactive at 14d).
-    by_sym: Dict[str, list] = {}
-    for r in kept:
-        by_sym.setdefault(r.get("symbol", "?"), []).append(r)
-    history = []
-    for sym, recs in by_sym.items():
-        recs.sort(key=lambda r: r.get("timestamp", ""))
-        history.extend(recs[-HISTORY_SAFETY_CAP:])
-
-    try:
-        with open(file_path, "w") as f:
-            json.dump(history, f, indent=2)
-        logger.info(f"💾 Saved real-time covariates for {symbol} to history ({file_path})")
-    except Exception as e:
-        logger.error(f"❌ Failed to write to history file: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Main pipeline
-# ---------------------------------------------------------------------------
-
-
 def fetch_symbol_data(
     symbol: str,
     max_expirations: int = MAX_EXPIRATIONS_TO_PROCESS,
@@ -2376,9 +1949,6 @@ def fetch_symbol_data(
     pcr_value = calculate_put_call_oi_ratio(all_options_by_expiry)
     logger.info(f"📈 [{symbol}] Calculated 25-Delta Skew: {skew_value:.4f}, Put/Call OI Ratio: {pcr_value:.4f}")
     
-    # Append to history database
-    append_to_history(symbol, skew_value, pcr_value, total_net_gex)
-
     result = {
         "spot": spot,
         "generated": now_iso,
@@ -2403,7 +1973,6 @@ def fetch_symbol_data(
             "call_walls": call_walls,
             "confluence_levels": confluence_levels,
         },
-        "intraday_levels": fetch_intraday_playbook(symbol),
     }
 
     logger.info(
@@ -2840,7 +2409,6 @@ def main() -> None:
     # matching above — the frontend re-derives walls and GEX directly from
     # the 'expiries' array (see services/index.ts), so shipping 'walls'
     # would be ~30% dead payload (1.3 MB on a typical run).
-    # 'total_net_gex' is KEPT because run_kronos.py consumes it as a covariate.
     INTERNAL_FIELDS_TO_STRIP = ()  # le walls servono al day plan (pin/trigger)
     output_symbols = {
         sym: {k: v for k, v in sd.items() if k not in INTERNAL_FIELDS_TO_STRIP}

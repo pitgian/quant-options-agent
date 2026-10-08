@@ -44,7 +44,9 @@ ENV/
 .vercel/
 .vercel
 
-# Generated data & model artifacts (produced by GitHub Actions on the
+# Generated data — produced by GitHub Actions and published ONLY on the
+# `data` branch (the frontend reads them from there). Never on master.
+data/*.json
 # `data` branch / Gist; should never be committed on master)
 data/options_data.json
 data/options_history.json
