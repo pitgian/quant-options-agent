@@ -504,20 +504,27 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
 # Scoring: affidabilità storica per nome livello
 # ---------------------------------------------------------------------------
 
-def score_plan_against(plan: dict, idx_et, highs, lows) -> list:
+def score_plan_against(plan: dict, idx_et, highs, lows, only_date=None) -> list:
     """Giudica un piano: rispettato o violato.
 
-    Contano solo le barre DAL giorno di pubblicazione del piano in poi
-    (giorno stesso + overnight + oggi): le barre precedenti alla generazione
-    del livello sono rumore, non reazione al livello."""
+    only_date: se fornito, giudica SOLO le barre di quel giorno ET (giudizio
+    della giornata completata — è la modalità del track record). Altrimenti
+    conta le barre DAL giorno di pubblicazione del piano in poi: le barre
+    precedenti alla generazione del livello sono rumore, non reazione."""
     gen = str(plan.get("generated_at") or "")[:10]
-    if gen:
+    if only_date is not None:
+        keep = [k for k in range(len(idx_et)) if idx_et[k].date() == only_date]
+        if not keep:
+            return []
+    elif gen:
         keep = [k for k in range(len(idx_et))
                 if idx_et[k].strftime("%Y-%m-%d") >= gen]
-        if keep:
-            idx_et = [idx_et[k] for k in keep]
-            highs = [highs[k] for k in keep]
-            lows = [lows[k] for k in keep]
+    else:
+        keep = None
+    if keep is not None:
+        idx_et = [idx_et[k] for k in keep]
+        highs = [highs[k] for k in keep]
+        lows = [lows[k] for k in keep]
     out = []
     for lv in plan.get("levels", []):
         P = lv["price"]
@@ -549,10 +556,10 @@ def score_plan_against(plan: dict, idx_et, highs, lows) -> list:
     return out
 
 
-def update_stats(prev_plan: dict, idx_et, highs, lows, stats: dict, prefix: str = "") -> dict:
+def update_stats(prev_plan: dict, idx_et, highs, lows, stats: dict, prefix: str = "", only_date=None) -> dict:
     """Accumula i verdetti nel dizionario stats, con chiave per strumento
     ("ES:PDH"): nomi identici su strumenti diversi restano statistiche separate."""
-    results = score_plan_against(prev_plan, idx_et, highs, lows)
+    results = score_plan_against(prev_plan, idx_et, highs, lows, only_date=only_date)
     for r in results:
         if not r["touched"]:
             continue
@@ -579,10 +586,23 @@ def load_stats() -> dict:
         return {}
 
 
-def save_stats(stats: dict) -> None:
+def load_last_scored():
+    """Ultima giornata ET già inclusa nel track record (None se mai scalato)."""
+    if not os.path.exists(STATS_PATH):
+        return None
+    try:
+        with open(STATS_PATH) as f:
+            v = json.load(f).get("last_scored")
+        return datetime.fromisoformat(v).date() if v else None
+    except (json.JSONDecodeError, OSError, ValueError, TypeError):
+        return None
+
+
+def save_stats(stats: dict, last_scored=None) -> None:
     os.makedirs(os.path.dirname(STATS_PATH), exist_ok=True)
     with open(STATS_PATH, "w") as f:
         json.dump({"version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
+                   "last_scored": last_scored.isoformat() if last_scored else None,
                    "levels": stats}, f, indent=1)
 
 
@@ -601,6 +621,9 @@ def main() -> None:
 
     plans = {}
     stats = load_stats()   # caricata UNA volta: ES e NQ si accumulano insieme
+    last_scored = load_last_scored()   # ultima giornata ET già giudicata
+    scored = False
+    today = None
     for sym, fut in (("SPY", "ES"), ("QQQ", "NQ")):
         sd = options_data.get("symbols", {}).get(sym)
         if not sd:
@@ -661,17 +684,28 @@ def main() -> None:
         ]
         plans[fut] = plan
 
-        # --- TRACK RECORD: il piano del giorno precedente giudicato sulle
-        # barre successive alla pubblicazione (il filtro data è dentro
-        # score_plan_against). Un solo giro al giorno per costrizione. ---
+        # --- TRACK RECORD: al cambio di giornata ET si giudica il piano
+        # ripristinato (quello con cui si apre la giornata) sulle barre
+        # COMPLETE dell'ultimo giorno non ancora giudicato. Il marcatore
+        # last_scored è indispensabile: i run 24/7 rigenerano il piano anche
+        # di notte, quindi il confronto "data generazione < oggi" (che è un
+        # confronto UTC vs ET) non sarebbe MAI vero al momento giusto. ---
         today = max(idx_et).date()
         try:
             if os.path.exists(PLAN_PATH):
                 with open(PLAN_PATH) as pf:
                     old_all = json.load(pf)
                 old_plan = (old_all.get("plans") or {}).get(fut)
-                if old_plan and (old_plan.get("generated_at") or "")[:10] < today.isoformat():
-                    update_stats(old_plan, idx_et, h, l, stats, prefix=fut)
+                bar_dates = sorted({d.date() for d in idx_et})
+                target = max((d for d in bar_dates
+                              if d < today and (last_scored is None or d >= last_scored)),
+                             default=None)
+                if old_plan and target:
+                    n0 = sum(s["n"] for s in stats.values())
+                    update_stats(old_plan, idx_et, h, l, stats, prefix=fut, only_date=target)
+                    n1 = sum(s["n"] for s in stats.values())
+                    print(f"day_plan: track record +{n1 - n0} verdetti (giornata {target})")
+                    scored = True
         except Exception as e:
             print(f"day_plan: scoring saltato ({e})")
         if args.show:
@@ -683,7 +717,7 @@ def main() -> None:
     with open(PLAN_PATH, "w") as f:
         json.dump({"version": VERSION, "generated_at": datetime.now(timezone.utc).isoformat(),
                    "plans": plans}, f, indent=1)
-    save_stats(stats)
+    save_stats(stats, last_scored=(today if scored else last_scored))
     print(f"day_plan scritto → {PLAN_PATH} (stats: {sum(v['n'] for v in stats.values())} occorrenze)")
 
 

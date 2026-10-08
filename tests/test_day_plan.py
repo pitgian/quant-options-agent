@@ -71,4 +71,14 @@ assert stats["ES:PDH"]["name"] == "ES:PDH"
 update_stats(PLAN, [D1], [6002], [5996], stats, prefix="NQ")
 assert stats["NQ:PDH"]["n"] == 1 and stats["ES:PDH"]["n"] == 2
 
-print("test_day_plan: 6 check OK")
+# --- 5. only_date: giudica SOLO le barre della giornata richiesta ---
+idx, h, l = bars([
+    (D1, 6002, 5996),                                          # touch il 05/10
+    (D1 + timedelta(days=1), 6002, 5996),                      # touch il 06/10
+])
+r = score_plan_against(PLAN, idx, h, l, only_date=(D1 + timedelta(days=1)).date())
+assert r[0]["touched"], "il touch del 06/10 deve essere visto da only_date"
+r = score_plan_against(PLAN, idx, h, l, only_date=(D1 + timedelta(days=2)).date())
+assert r == [], "giorno senza barre non deve dare verdetti"
+
+print("test_day_plan: 8 check OK")

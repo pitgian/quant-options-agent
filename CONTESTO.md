@@ -134,6 +134,14 @@ barre DAL giorno del piano in poi); 3) `load_stats()` dentro il loop simboli
 → le stats ES venivano perse al giro NQ; 4) chiavi nude → ES e NQ nello
 stesso bucket. Validato end-to-end: 30 occorrenze in un giro.
 
+**Secondo fix (08/10)**: il confronto "data generazione < oggi" era UTC vs ET
+e con i run 24/7 non scattava MAI (il piano notturno ha già la data UTC del
+nuovo giorno). Ora il giudizio è guidato dal marcatore **`last_scored`** in
+level_stats.json: al primo run con una nuova giornata ET si giudica il piano
+ripristinato sulle barre COMPLETE dell'ultimo giorno non ancora giudicato
+(`score_plan_against(..., only_date=target)`). Il giudizio usa il piano
+ripristinato = quello con cui si ha aperto la giornata.
+
 **Perché serve**: è il magazzino di fiducia — senza conteggi, i livelli sono
 numeri a caso. Con i conteggi, la scala si ordina su ciò che ha funzionato.
 
