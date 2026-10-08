@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { fetchDayPlan, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
+import { fetchDayPlanFile, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
 import { buildLadderForPlan } from './Ladder';
 import { Ladder } from './Ladder';
 import { Card, Badge } from './ui';
@@ -15,15 +15,17 @@ const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maxi
  */
 export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   const [plan, setPlan] = useState<DayPlan | null>(null);
+  const [otherPlan, setOtherPlan] = useState<DayPlan | null>(null);
   const [stats, setStats] = useState<Record<string, { n: number; held: number; rate: number }>>({});
   const [live, setLive] = useState<LiveSpot | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      const [p, s] = await Promise.all([fetchDayPlan(futures), fetchLevelStats()]);
+      const [file, s] = await Promise.all([fetchDayPlanFile(), fetchLevelStats()]);
       if (!alive) return;
-      setPlan(p);
+      setPlan(file?.plans?.[futures] ?? null);
+      setOtherPlan(file?.plans?.[futures === 'ES' ? 'NQ' : 'ES'] ?? null);
       setStats(s ?? {});
     };
     load();
@@ -101,16 +103,73 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   // Lettura operativa: i due livelli adiacenti allo spot (sopra/sotto) e cosa
   // ci si aspetta da ciascuno in base al meccanismo. maxPerSide alto: voglio
   // il VERO adiacente, non il top-ranked.
+  // Tutte le zone della scala (raggio pieno): usate dalla lettura e dallo scenario.
+  const ladderAll = useMemo(
+    () => (plan ? buildLadderForPlan(optLevels, spot, plan.top_gamma, 99) : null),
+    [plan, spot, optLevels],
+  );
+
   const lettura = useMemo(() => {
     if (!plan || !spot) return null;
-    const { above, below } = buildLadderForPlan(optLevels, spot, plan.top_gamma, 99);
+    const { above, below } = ladderAll!;
     const nearest = (arr: typeof above) =>
       [...arr].sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot))[0] ?? null;
     const up = nearest(above);
     const dn = nearest(below);
     if (!up && !dn) return null;
     return { up, dn };
-  }, [plan, spot, optLevels]);
+  }, [plan, spot, ladderAll]);
+
+  // Scenario GEX × Max Pain (configurazioni A/B/C) + divergenza SPY/QQQ.
+  //  A compressione: long gamma + max pain vicino → gravità rafforzata
+  //  B trend:        short gamma + max pain lontano → gravità inefficace
+  //  C checkpoint:   un muro barriera frapposto tra spot e max pain
+  //  ibridi (long+lontano / short+vicino): deriva lenta / tensione
+  const scenario = useMemo(() => {
+    if (!plan || !spot || !ladderAll) return null;
+    const NEAR_MP_PCT = 0.004;  // "vicino" al max pain: entro lo 0,4%
+    const parts: string[] = [];
+    let tag: 'compressione' | 'trend' | 'ibrido' | null = null;
+    const mp = plan.max_pain_nearest;
+    const regimeLong = gexFlip ? spot > gexFlip.price : null;
+    const fmtDist = (d: number) => `${d > 0 ? '+' : ''}${Math.round(d).toLocaleString('it-IT')} pt`;
+
+    if (mp && regimeLong !== null) {
+      const dist = mp - spot;
+      const near = Math.abs(dist) / spot < NEAR_MP_PCT;
+      if (regimeLong && near) {
+        tag = 'compressione';
+        parts.push(`long gamma e max pain a ${fmtDist(dist)}: la gravità del livello è rafforzata dal regime — favorita la rotazione attorno a ${Math.round(mp).toLocaleString('it-IT')}`);
+      } else if (!regimeLong && !near) {
+        tag = 'trend';
+        parts.push(`short gamma e max pain a ${fmtDist(dist)} (${(dist / spot * 100).toFixed(1)}%): la gravità del max pain perde efficacia — momentum favorito`);
+      } else if (regimeLong) {
+        tag = 'ibrido';
+        parts.push(`long gamma ma max pain lontano: deriva lenta, i muri sul percorso attenuano ogni spinta`);
+      } else {
+        tag = 'ibrido';
+        parts.push(`short gamma con max pain vicino: le coperture incontrano la gravità del livello — volatilità in avvicinamento`);
+      }
+      // C. checkpoint: un muro barriera tra lo spot e il max pain
+      const lo = Math.min(spot, mp), hi = Math.max(spot, mp);
+      const wall = [...ladderAll.above, ...ladderAll.below]
+        .filter(z => z.kind === 'barrier' && z.price > lo && z.price < hi)
+        .sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot))[0] ?? null;
+      if (wall) parts.push(`checkpoint verso il max pain: ${wall.label} a ${Math.round(wall.price).toLocaleString('it-IT')} — la rotura apre il riallineamento`);
+      if (plan.gex_flip_0dte && regimeLong) parts.push('scadenza oggi: la convergenza verso il max pain tende ad accelerare in chiusura');
+    }
+
+    // Divergenza SPY/QQQ: i due regimi sono d'accordo?
+    const oFlip = otherPlan?.levels.find(l => l.name === 'GEX-FLIP');
+    if (gexFlip && oFlip && otherPlan?.last_price) {
+      const mineLong = spot > gexFlip.price;
+      const otherLong = otherPlan.last_price > oFlip.price;
+      if (mineLong !== otherLong) {
+        parts.push(`divergenza SPY/QQQ: ES ${mineLong ? 'long' : 'short'} gamma contro NQ ${otherLong ? 'long' : 'short'} — rotazione fra indici, conviction direzionale ridotta`);
+      }
+    }
+    return { tag, parts };
+  }, [plan, spot, gexFlip, otherPlan, ladderAll]);
 
   if (!plan) {
     return (
@@ -191,6 +250,12 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
                   : 'Short gamma: i pin reggono meno e le rotture dei trigger accelerano.'}
               </span>
             )}
+          </p>
+        )}
+        {scenario && scenario.parts.length > 0 && (
+          <p className="text-[11px] leading-relaxed text-gray-400 mt-1">
+            {scenario.tag && <span className="font-bold text-slate-200 uppercase tracking-wide">Scenario {scenario.tag}</span>}
+            {' — '}{scenario.parts.join(' · ')}
           </p>
         )}
       </Card>

@@ -75,12 +75,23 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 
 interface DayPlanFile { version: number; generated_at: string; plans: Record<string, DayPlan> }
 
+let fileCache: { ts: number; data: DayPlanFile } | null = null;
+
+/** L'intero file (ES + NQ): serve per il confronto dei regimi SPY/QQQ. */
+export async function fetchDayPlanFile(force = false): Promise<DayPlanFile | null> {
+  const now = Date.now();
+  if (!force && fileCache && now - fileCache.ts < TTL) return fileCache.data;
+  const data = await fetchJson<DayPlanFile>(`${BASE}/day_plan.json`);
+  if (data) fileCache = { ts: now, data };
+  return data;
+}
+
 export async function fetchDayPlan(futures: 'ES' | 'NQ', force = false): Promise<DayPlan | null> {
   const now = Date.now();
   const cached = planCache.get(futures);
   if (!force && cached && now - cached.ts < TTL) return cached.data;
-  const data = await fetchJson<DayPlanFile>(`${BASE}/day_plan.json`);
-  const plan = data?.plans?.[futures] ?? null;
+  const file = await fetchDayPlanFile(force);
+  const plan = file?.plans?.[futures] ?? null;
   if (!plan || !plan.levels) return null;
   planCache.set(futures, { ts: now, data: plan });
   return plan;
@@ -108,5 +119,6 @@ export async function fetchLiveSpot(): Promise<LiveSpot | null> {
 
 export function clearDayPlanCache(): void {
   planCache.clear();
+  fileCache = null;
   statsCache = null;
 }

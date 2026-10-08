@@ -29,7 +29,11 @@ separato futuro con modelli decisionali dedicati.
    scala il 06/10 sera. **Flip 0DTE** (07/10): accanto al flip aggregato —
    solo le scadenze di oggi, regime intraday; header lo mostra ambra se
    divergente. **Lettura operativa** nell'header (07/10): spot vs i due
-   livelli adiacenti + aspettativa per meccanismo + clausola di regime
+   livelli adiacenti + aspettativa per meccanismo + clausola di regime.
+   **Scenario GEX×MaxPain** (08/10): configura A compressione (long gamma
+   + max pain entro 0,4%), B trend (short gamma + max pain lontano), C
+   checkpoint (muro barriera frapposto), clausola OPEX, divergenza SPY/QQQ
+   (i due piani di day_plan.json confrontati sul regime)
 4. **📊 Profilo di oggi** (`SessionProfileChart.tsx`) con overlay dei livelli
 5. **📐 Affidabilità storica** (`StatsPanel.tsx`, ripiegata)
 
