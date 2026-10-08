@@ -51,6 +51,25 @@ OPTIONS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "options_data.json")
 ET = ZoneInfo("America/New_York")
 VERSION = 1
 
+# Finestra di rilevanza: muri, flip e max pain si cercano entro questo raggio
+# dallo spot. Fuori, l'OI delle scadenze lunghe (LEAPS accumulati da anni)
+# domina e produce "muri" a −19% e max pain senza senso (bug 08/10: put wall
+# a 625 con spot 775 perché lì dormiva OI storica).
+RELEVANCE_WINDOW_PCT = 0.10
+
+
+def relevant_expiries(expiries: list, spot: float) -> list:
+    """Copia delle scadenze con solo i contratti entro la finestra di rilevanza."""
+    if not spot:
+        return expiries
+    lo, hi = spot * (1 - RELEVANCE_WINDOW_PCT), spot * (1 + RELEVANCE_WINDOW_PCT)
+    out = []
+    for e in expiries:
+        opts = [o for o in (e.get("options") or [])
+                if lo <= float(o.get("strike", 0) or 0) <= hi]
+        out.append({**e, "options": opts})
+    return out
+
 # soglie di giudizio (in punti, minime per futures; % per livelli lontani)
 TOUCH_BAND_PTS = 3.0     # il prezzo è "sul livello" entro ±3 pt
 BREAK_BUF_PTS = 4.0      # oltre il livello di 4 pt = violato
@@ -152,6 +171,7 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
               mensile che cadono oggi): il libro che i dealer coprono
               entro la chiusura. None se oggi non scade nulla.
     """
+    expiries = relevant_expiries(expiries, spot)
     put_walls_raw, call_walls_raw, _ = calculate_walls(expiries, spot)
     walls = []
     for w in put_walls_raw + call_walls_raw:
@@ -200,11 +220,12 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
     return walls, flip, flip0, top_strikes
 
 
-def max_pain(expiries: list) -> dict:
+def max_pain(expiries: list, spot: float) -> dict:
     """Max Pain: lo strike dove il payout TOTALE agli acquirenti di opzioni
     è MINIMO (dolore massimo per chi le ha comprate). Vicino alla scadenza il
     prezzo tende a gravitare lì. Calcolato (a) sull'ultima scadenza — il pin
     di oggi — e (b) aggregato su tutte le scadenze."""
+    expiries = relevant_expiries(expiries, spot)
     if not expiries:
         return {}
     # aggrega OI call/put per strike per scadenza
@@ -657,7 +678,7 @@ def main() -> None:
             mp = {"nearest": {}, "all": {}}
         else:
             walls, flip, flip0, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
-            mp = max_pain(sd.get("expiries", []))
+            mp = max_pain(sd.get("expiries", []), spot_etf)
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
