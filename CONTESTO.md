@@ -165,6 +165,12 @@ Questi risultati hanno guidato le decisioni (non rimuoverli dal documento):
   mattina calcolava silenziosamente il max di venerdì).
 - **I livelli sono ZONE**: arrotondati a 5 punti in scala futures (gli strike
   ETF convertiti producevano decimale residuo finto, es. ...7811).
+- **Finestra di rilevanza ±10%** (08/10, dal confronto con InsiderFinance):
+  put wall e max pain "tutte le scadenze" selezionati per OI assoluta cadevano
+  su strike LEAPS profondi (put wall a 625 con spot 775; max pain −61%).
+  Muri, flip e max pain si cercano solo entro ±10% dallo spot
+  (`relevant_expiries`). Il Call Wall, invece, matchava ESATTAMENTE (785),
+  così come l'OI totale (17,9M vs 18,9M) e lo zero gamma 0DTE (±0,2%).
 - **OI è stale**: l'OCC lo aggiorna 1 volta al giorno — dichiarato in UI.
 
 ---
