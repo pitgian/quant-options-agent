@@ -1,42 +1,1180 @@
 {
  "version": 1,
- "generated_at": "2026-10-11T15:17:05.035607+00:00",
- "last_scored": "2026-10-09",
+ "generated_at": "2026-10-24T13:32:12.762267+00:00",
+ "last_scored": "2026-10-22",
  "levels": {
-  "ES:TRIGGER": {
-   "name": "ES:TRIGGER",
-   "n": 1,
-   "held": 1,
-   "nome_it": "Trigger call",
-   "rate": 1.0
-  },
-  "ES:MAXPAIN-0DTE": {
-   "name": "ES:MAXPAIN-0DTE",
-   "n": 1,
-   "held": 1,
-   "nome_it": "Max Pain scadenza vicina",
-   "rate": 1.0
-  },
-  "ES:MAXPAIN-ALL": {
-   "name": "ES:MAXPAIN-ALL",
-   "n": 1,
-   "held": 0,
-   "nome_it": "Max Pain (tutte le scadenze)",
-   "rate": 0.0
-  },
   "ES:GAMMA-7780": {
    "name": "ES:GAMMA-7780",
    "n": 1,
    "held": 1,
    "nome_it": "Muro gamma",
-   "rate": 1.0
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-08",
+     "spot": 7861.2,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": null,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": -81,
+     "held": true
+    }
+   ]
+  },
+  "ES:GAMMA-7810": {
+   "name": "ES:GAMMA-7810",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-08",
+     "spot": 7861.2,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": null,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": -51,
+     "held": true
+    }
+   ]
   },
   "ES:GAMMA-7830": {
    "name": "ES:GAMMA-7830",
    "n": 1,
    "held": 1,
    "nome_it": "Muro gamma",
-   "rate": 1.0
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-08",
+     "spot": 7861.2,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": null,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": -31,
+     "held": true
+    }
+   ]
+  },
+  "NQ:PIN": {
+   "name": "NQ:PIN",
+   "n": 5,
+   "held": 4,
+   "nome_it": "Muro put in pin (sotto)",
+   "rate": 0.8,
+   "history": [
+    {
+     "date": "2026-10-09",
+     "spot": 31112.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "barrier",
+     "dist_pts": -61,
+     "held": true
+    },
+    {
+     "date": "2026-10-11",
+     "spot": 31111.8,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "barrier",
+     "dist_pts": 70,
+     "held": false
+    },
+    {
+     "date": "2026-10-12",
+     "spot": 30896.2,
+     "regime": null,
+     "divergence": null,
+     "near_mp": false,
+     "scenario": null,
+     "kind": "barrier",
+     "dist_pts": 172,
+     "held": true
+    },
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "barrier",
+     "dist_pts": -264,
+     "held": true
+    },
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "barrier",
+     "dist_pts": -514,
+     "held": true
+    }
+   ]
+  },
+  "NQ:MAXPAIN-0DTE": {
+   "name": "NQ:MAXPAIN-0DTE",
+   "n": 7,
+   "held": 6,
+   "nome_it": "Max Pain scadenza vicina",
+   "rate": 0.857,
+   "history": [
+    {
+     "date": "2026-10-09",
+     "spot": 31112.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "pivot",
+     "dist_pts": -61,
+     "held": true
+    },
+    {
+     "date": "2026-10-11",
+     "spot": 31111.8,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "pivot",
+     "dist_pts": 70,
+     "held": false
+    },
+    {
+     "date": "2026-10-12",
+     "spot": 30896.2,
+     "regime": null,
+     "divergence": null,
+     "near_mp": false,
+     "scenario": null,
+     "kind": "pivot",
+     "dist_pts": 213,
+     "held": true
+    },
+    {
+     "date": "2026-10-14",
+     "spot": 30789.0,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "pivot",
+     "dist_pts": 65,
+     "held": true
+    },
+    {
+     "date": "2026-10-19",
+     "spot": 29721.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": 59,
+     "held": true
+    },
+    {
+     "date": "2026-10-20",
+     "spot": 29687.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 143,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 29997.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": -244,
+     "held": true
+    }
+   ]
+  },
+  "ES:PIN": {
+   "name": "ES:PIN",
+   "n": 2,
+   "held": 2,
+   "nome_it": "Muro call in pin (sopra)",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-12",
+     "spot": 7856.8,
+     "regime": null,
+     "divergence": null,
+     "near_mp": true,
+     "scenario": null,
+     "kind": "barrier",
+     "dist_pts": 21,
+     "held": true
+    },
+    {
+     "date": "2026-10-14",
+     "spot": 7856.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "barrier",
+     "dist_pts": -38,
+     "held": true
+    }
+   ]
+  },
+  "ES:MAXPAIN-0DTE": {
+   "name": "ES:MAXPAIN-0DTE",
+   "n": 7,
+   "held": 7,
+   "nome_it": "Max Pain scadenza vicina",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-12",
+     "spot": 7856.8,
+     "regime": null,
+     "divergence": null,
+     "near_mp": true,
+     "scenario": null,
+     "kind": "pivot",
+     "dist_pts": -20,
+     "held": true
+    },
+    {
+     "date": "2026-10-13",
+     "spot": 7856.2,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": 8,
+     "held": true
+    },
+    {
+     "date": "2026-10-14",
+     "spot": 7856.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "pivot",
+     "dist_pts": -17,
+     "held": true
+    },
+    {
+     "date": "2026-10-15",
+     "spot": 7771.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 37,
+     "held": true
+    },
+    {
+     "date": "2026-10-19",
+     "spot": 7734.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 39,
+     "held": true
+    },
+    {
+     "date": "2026-10-20",
+     "spot": 7759.0,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": 2,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 7799.0,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": -33,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GEX-FLIP-0DTE": {
+   "name": "NQ:GEX-FLIP-0DTE",
+   "n": 4,
+   "held": 4,
+   "nome_it": "GEX flip 0DTE (scade oggi)",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-12",
+     "spot": 30896.2,
+     "regime": null,
+     "divergence": null,
+     "near_mp": false,
+     "scenario": null,
+     "kind": "pivot",
+     "dist_pts": 213,
+     "held": true
+    },
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": -152,
+     "held": true
+    },
+    {
+     "date": "2026-10-20",
+     "spot": 29687.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 102,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 29997.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": -240,
+     "held": true
+    }
+   ]
+  },
+  "NQ:TRIGGER": {
+   "name": "NQ:TRIGGER",
+   "n": 8,
+   "held": 5,
+   "nome_it": "Trigger put",
+   "rate": 0.625,
+   "history": [
+    {
+     "date": "2026-10-12",
+     "spot": 30896.2,
+     "regime": null,
+     "divergence": null,
+     "near_mp": false,
+     "scenario": null,
+     "kind": "trigger",
+     "dist_pts": -243,
+     "held": false
+    },
+    {
+     "date": "2026-10-13",
+     "spot": 30789.0,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -29,
+     "held": false
+    },
+    {
+     "date": "2026-10-14",
+     "spot": 30789.0,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "trigger",
+     "dist_pts": -764,
+     "held": true
+    },
+    {
+     "date": "2026-10-14",
+     "spot": 30789.0,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "trigger",
+     "dist_pts": -805,
+     "held": true
+    },
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "trigger",
+     "dist_pts": 27,
+     "held": false
+    },
+    {
+     "date": "2026-10-16",
+     "spot": 29379.5,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": 308,
+     "held": true
+    },
+    {
+     "date": "2026-10-20",
+     "spot": 29687.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -271,
+     "held": true
+    },
+    {
+     "date": "2026-10-22",
+     "spot": 29997.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -510,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-30655": {
+   "name": "NQ:GAMMA-30655",
+   "n": 1,
+   "held": 0,
+   "nome_it": "Muro gamma",
+   "rate": 0.0,
+   "history": [
+    {
+     "date": "2026-10-12",
+     "spot": 30896.2,
+     "regime": null,
+     "divergence": null,
+     "near_mp": false,
+     "scenario": null,
+     "kind": "trigger",
+     "dist_pts": -241,
+     "held": false
+    }
+   ]
+  },
+  "ES:GEX-FLIP": {
+   "name": "ES:GEX-FLIP",
+   "n": 4,
+   "held": 4,
+   "nome_it": "GEX flip (cambio regime gamma)",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 7856.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "pivot",
+     "dist_pts": -42,
+     "held": true
+    },
+    {
+     "date": "2026-10-19",
+     "spot": 7734.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 18,
+     "held": true
+    },
+    {
+     "date": "2026-10-20",
+     "spot": 7759.0,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": 8,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 7799.0,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": -4,
+     "held": true
+    }
+   ]
+  },
+  "ES:TRIGGER": {
+   "name": "ES:TRIGGER",
+   "n": 3,
+   "held": 2,
+   "nome_it": "Trigger call",
+   "rate": 0.667,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 7856.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "trigger",
+     "dist_pts": -68,
+     "held": true
+    },
+    {
+     "date": "2026-10-15",
+     "spot": 7771.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -24,
+     "held": false
+    },
+    {
+     "date": "2026-10-16",
+     "spot": 7702.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -11,
+     "held": true
+    }
+   ]
+  },
+  "ES:MAXPAIN-ALL": {
+   "name": "ES:MAXPAIN-ALL",
+   "n": 6,
+   "held": 6,
+   "nome_it": "Max Pain (tutte le scadenze)",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 7856.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "pivot",
+     "dist_pts": -88,
+     "held": true
+    },
+    {
+     "date": "2026-10-15",
+     "spot": 7771.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 27,
+     "held": true
+    },
+    {
+     "date": "2026-10-16",
+     "spot": 7702.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 70,
+     "held": true
+    },
+    {
+     "date": "2026-10-19",
+     "spot": 7734.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 29,
+     "held": true
+    },
+    {
+     "date": "2026-10-20",
+     "spot": 7759.0,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": 2,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 7799.0,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": -43,
+     "held": true
+    }
+   ]
+  },
+  "ES:GAMMA-7790": {
+   "name": "ES:GAMMA-7790",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 7856.2,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "trigger",
+     "dist_pts": -66,
+     "held": true
+    }
+   ]
+  },
+  "NQ:MAXPAIN-ALL": {
+   "name": "NQ:MAXPAIN-ALL",
+   "n": 3,
+   "held": 3,
+   "nome_it": "Max Pain (tutte le scadenze)",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 30789.0,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "pivot",
+     "dist_pts": -474,
+     "held": true
+    },
+    {
+     "date": "2026-10-19",
+     "spot": 29721.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": 266,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 29997.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": -79,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-30025": {
+   "name": "NQ:GAMMA-30025",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 30789.0,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "trigger",
+     "dist_pts": -764,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29820": {
+   "name": "NQ:GAMMA-29820",
+   "n": 1,
+   "held": 0,
+   "nome_it": "Muro gamma",
+   "rate": 0.0,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 30789.0,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "trigger",
+     "dist_pts": -969,
+     "held": false
+    }
+   ]
+  },
+  "NQ:GAMMA-30230": {
+   "name": "NQ:GAMMA-30230",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-14",
+     "spot": 30789.0,
+     "regime": "long",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "compressione",
+     "kind": "trigger",
+     "dist_pts": -559,
+     "held": true
+    }
+   ]
+  },
+  "ES:GEX-FLIP-0DTE": {
+   "name": "ES:GEX-FLIP-0DTE",
+   "n": 2,
+   "held": 2,
+   "nome_it": "GEX flip 0DTE (scade oggi)",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-15",
+     "spot": 7771.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 35,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 7799.0,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": -7,
+     "held": true
+    }
+   ]
+  },
+  "ES:GAMMA-7750": {
+   "name": "ES:GAMMA-7750",
+   "n": 1,
+   "held": 0,
+   "nome_it": "Muro gamma",
+   "rate": 0.0,
+   "history": [
+    {
+     "date": "2026-10-15",
+     "spot": 7771.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -22,
+     "held": false
+    }
+   ]
+  },
+  "NQ:GEX-FLIP": {
+   "name": "NQ:GEX-FLIP",
+   "n": 4,
+   "held": 4,
+   "nome_it": "GEX flip (cambio regime gamma)",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": -239,
+     "held": true
+    },
+    {
+     "date": "2026-10-16",
+     "spot": 29379.5,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 798,
+     "held": true
+    },
+    {
+     "date": "2026-10-19",
+     "spot": 29721.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "pivot",
+     "dist_pts": 129,
+     "held": true
+    },
+    {
+     "date": "2026-10-21",
+     "spot": 29997.8,
+     "regime": "short",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "pivot",
+     "dist_pts": 8,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-30215": {
+   "name": "NQ:GAMMA-30215",
+   "n": 1,
+   "held": 0,
+   "nome_it": "Muro gamma",
+   "rate": 0.0,
+   "history": [
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "trigger",
+     "dist_pts": 30,
+     "held": false
+    }
+   ]
+  },
+  "NQ:GAMMA-30005": {
+   "name": "NQ:GAMMA-30005",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "trigger",
+     "dist_pts": -180,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29795": {
+   "name": "NQ:GAMMA-29795",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-15",
+     "spot": 30185.5,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "trigger",
+     "dist_pts": -390,
+     "held": true
+    }
+   ]
+  },
+  "ES:GAMMA-7740": {
+   "name": "ES:GAMMA-7740",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-16",
+     "spot": 7702.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": 37,
+     "held": true
+    }
+   ]
+  },
+  "ES:GAMMA-7690": {
+   "name": "ES:GAMMA-7690",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-16",
+     "spot": 7702.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -13,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29690": {
+   "name": "NQ:GAMMA-29690",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-16",
+     "spot": 29379.5,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": 310,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29480": {
+   "name": "NQ:GAMMA-29480",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-16",
+     "spot": 29379.5,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": 100,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29895": {
+   "name": "NQ:GAMMA-29895",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-16",
+     "spot": 29379.5,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": 516,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29780": {
+   "name": "NQ:GAMMA-29780",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-19",
+     "spot": 29721.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": true,
+     "scenario": "ibrido",
+     "kind": "trigger",
+     "dist_pts": 58,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29415": {
+   "name": "NQ:GAMMA-29415",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-20",
+     "spot": 29687.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -273,
+     "held": true
+    }
+   ]
+  },
+  "ES:GAMMA-7755": {
+   "name": "ES:GAMMA-7755",
+   "n": 1,
+   "held": 0,
+   "nome_it": "Muro gamma",
+   "rate": 0.0,
+   "history": [
+    {
+     "date": "2026-10-21",
+     "spot": 7799.0,
+     "regime": "long",
+     "divergence": true,
+     "near_mp": false,
+     "scenario": "ibrido",
+     "kind": "trigger",
+     "dist_pts": -44,
+     "held": false
+    }
+   ]
+  },
+  "ES:GAMMA-7710": {
+   "name": "ES:GAMMA-7710",
+   "n": 1,
+   "held": 0,
+   "nome_it": "Muro gamma",
+   "rate": 0.0,
+   "history": [
+    {
+     "date": "2026-10-22",
+     "spot": 7799.0,
+     "regime": null,
+     "divergence": null,
+     "near_mp": true,
+     "scenario": null,
+     "kind": "trigger",
+     "dist_pts": -89,
+     "held": false
+    }
+   ]
+  },
+  "NQ:GAMMA-29490": {
+   "name": "NQ:GAMMA-29490",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-22",
+     "spot": 29997.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -508,
+     "held": true
+    }
+   ]
+  },
+  "NQ:GAMMA-29065": {
+   "name": "NQ:GAMMA-29065",
+   "n": 1,
+   "held": 1,
+   "nome_it": "Muro gamma",
+   "rate": 1.0,
+   "history": [
+    {
+     "date": "2026-10-22",
+     "spot": 29997.8,
+     "regime": "short",
+     "divergence": null,
+     "near_mp": false,
+     "scenario": "trend",
+     "kind": "trigger",
+     "dist_pts": -933,
+     "held": true
+    }
+   ]
   }
  }
 }
