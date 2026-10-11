@@ -200,7 +200,7 @@ export const Ladder: React.FC<{
         <div className="flex items-center gap-2 shrink-0">
           {conf && (
             <span className={`text-[10px] font-mono font-bold tnum ${conf.tone}`}
-                  title={`Su ${r.n} occorrenze, il livello è stato rispettato ${r.held} volte`}>
+                  title={`Su ${r.n} tocchi, il livello ha fatto il suo mestiere ${r.held} volte: barriera = respinta/tenuta · trigger = rottura con accelerazione · magnete = convergenza`}>
               {conf.text}
             </span>
           )}

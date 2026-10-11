@@ -26,7 +26,7 @@ export const StatsPanel: React.FC<{ stats: Record<string, LevelStat> }> = ({ sta
           <tr>
             <th className="px-4 py-2.5">Livello</th>
             <th className="px-4 py-2.5">Occorrenze</th>
-            <th className="px-4 py-2.5" title="Quante volte il livello ha retto (rimbalzo senza violazione)">Rispettato</th>
+            <th className="px-4 py-2.5" title="Quante volte il livello ha fatto il suo mestiere: barriera = non ceduta o respinta · trigger = rottura con follow-through · magnete = convergenza">Ha funzionato</th>
             <th className="px-4 py-2.5">Affidabilità</th>
           </tr>
         </thead>

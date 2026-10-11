@@ -527,13 +527,19 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
 # Scoring: affidabilità storica per nome livello
 # ---------------------------------------------------------------------------
 
-def score_plan_against(plan: dict, idx_et, highs, lows, only_date=None) -> list:
-    """Giudica un piano: rispettato o violato.
+def score_plan_against(plan: dict, idx_et, highs, lows, closes=None, only_date=None) -> list:
+    """Giudica un piano: ogni livello ha successo se fa IL SUO MESTIERE.
 
     only_date: se fornito, giudica SOLO le barre di quel giorno ET (giudizio
-    della giornata completata — è la modalità del track record). Altrimenti
-    conta le barre DAL giorno di pubblicazione del piano in poi: le barre
-    precedenti alla generazione del livello sono rumore, non reazione."""
+    della giornata completata). Altrimenti conta le barre DAL giorno di
+    pubblicazione del piano in poi.
+
+    Verdetto per meccanismo (kind), sulla finestra di 2h dal primo touch:
+      barrier/pivot  non cede il buffer di 4 pt, oppure respinge ≥6 pt
+      trigger        rottura CON follow-through ≥6 pt nella direzione di moto
+                     (lo stallo dopo il tocco è fallimento)
+      magnet         convergenza: a fine finestra il prezzo chiude sul livello
+    """
     gen = str(plan.get("generated_at") or "")[:10]
     if only_date is not None:
         keep = [k for k in range(len(idx_et)) if idx_et[k].date() == only_date]
@@ -551,38 +557,51 @@ def score_plan_against(plan: dict, idx_et, highs, lows, only_date=None) -> list:
     out = []
     for lv in plan.get("levels", []):
         P = lv["price"]
+        kind = lv.get("kind", "pivot")
         band = max(TOUCH_BAND_PTS, P * 0.0004)
         brk = max(BREAK_BUF_PTS, P * 0.0005)
         rej = max(REJECT_PTS, P * 0.0007)
         touched = False
         held = False
+        first = None
         for k in range(len(idx_et)):
             if lows[k] <= P + band and highs[k] >= P - band:
                 touched = True
+                first = k
                 break
         if touched:
-            # guarda le barre successive al primo touch
-            first = next(k for k in range(len(idx_et))
-                         if lows[k] <= P + band and highs[k] >= P - band)
             after_hi = max(highs[first:first + 24], default=P)
             after_lo = min(lows[first:first + 24], default=P)
-            close_side = (highs[first] + lows[first]) / 2
-            if close_side > P:
-                held = after_lo > P - brk or after_hi >= P + rej
+            mid = (highs[first] + lows[first]) / 2
+            from_above = mid > P
+            if kind == "trigger":
+                # successo = rottura CON follow-through (≥ rej) nella direzione
+                # di moto entro la finestra; stallo o rimbalzo = fallimento
+                held = after_lo <= P - rej if from_above else after_hi >= P + rej
+            elif kind == "magnet" and closes is not None:
+                # successo = convergenza: a fine finestra il prezzo chiude sul livello
+                last = min(first + 24, len(idx_et) - 1)
+                held = abs(closes[last] - P) <= band
             else:
-                held = after_hi < P + brk or after_lo <= P - rej
+                # barriera/pin/pivot: successo = stallo sul lato di arrivo
+                # (mai il buffer di 4 pt) OPPURE respinta ≥6 pt in direzione
+                # opposta. La rottura continua nel senso di arrivo = fallimento.
+                if from_above:
+                    held = after_lo > P - brk or after_hi >= P + rej
+                else:
+                    held = after_hi < P + brk or after_lo <= P - rej
         out.append({
             "name": lv.get("name"), "nome_it": lv.get("nome_it"),
-            "price": P, "source": lv.get("source"),
+            "price": P, "source": lv.get("source"), "kind": kind,
             "touched": touched, "held": held,
         })
     return out
 
 
-def update_stats(prev_plan: dict, idx_et, highs, lows, stats: dict, prefix: str = "", only_date=None) -> dict:
+def update_stats(prev_plan: dict, idx_et, highs, lows, closes, stats: dict, prefix: str = "", only_date=None) -> dict:
     """Accumula i verdetti nel dizionario stats, con chiave per strumento
     ("ES:PDH"): nomi identici su strumenti diversi restano statistiche separate."""
-    results = score_plan_against(prev_plan, idx_et, highs, lows, only_date=only_date)
+    results = score_plan_against(prev_plan, idx_et, highs, lows, closes=closes, only_date=only_date)
     for r in results:
         if not r["touched"]:
             continue
@@ -663,6 +682,7 @@ def main() -> None:
         ratio = es_spot / spot_etf if spot_etf else 10.0
         h = hist["High"].to_numpy(float)
         l = hist["Low"].to_numpy(float)
+        cl = hist["Close"].to_numpy(float)
 
         # Catena sana? OI aggregata oltre la soglia e nessun flag degraded:
         # con la catena rotta il flip esce a +17% dallo spot e il max pain a
@@ -749,7 +769,7 @@ def main() -> None:
                                            "nome_it": "Muro gamma",
                                            "price": float(zone)})
                     update_stats({**old_plan, "levels": old_levels},
-                                 idx_et, h, l, stats, prefix=fut, only_date=target)
+                                 idx_et, h, l, cl, stats, prefix=fut, only_date=target)
                     n1 = sum(s["n"] for s in stats.values())
                     print(f"day_plan: track record +{n1 - n0} verdetti (giornata {target})")
                     scored = True
