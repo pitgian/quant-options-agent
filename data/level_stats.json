@@ -1,27 +1,13 @@
 {
  "version": 1,
- "generated_at": "2026-10-11T14:46:58.408798+00:00",
+ "generated_at": "2026-10-11T15:17:05.035607+00:00",
  "last_scored": "2026-10-09",
  "levels": {
-  "ES:PIN": {
-   "name": "ES:PIN",
-   "n": 2,
-   "held": 2,
-   "nome_it": "Muro call in pin (sopra)",
-   "rate": 1.0
-  },
-  "NQ:PIN": {
-   "name": "NQ:PIN",
-   "n": 3,
-   "held": 3,
-   "nome_it": "Muro call in pin (sopra)",
-   "rate": 1.0
-  },
-  "NQ:GEX-FLIP-0DTE": {
-   "name": "NQ:GEX-FLIP-0DTE",
+  "ES:TRIGGER": {
+   "name": "ES:TRIGGER",
    "n": 1,
    "held": 1,
-   "nome_it": "GEX flip 0DTE (scade oggi)",
+   "nome_it": "Trigger call",
    "rate": 1.0
   },
   "ES:MAXPAIN-0DTE": {
@@ -34,29 +20,22 @@
   "ES:MAXPAIN-ALL": {
    "name": "ES:MAXPAIN-ALL",
    "n": 1,
-   "held": 1,
+   "held": 0,
    "nome_it": "Max Pain (tutte le scadenze)",
-   "rate": 1.0
+   "rate": 0.0
   },
-  "NQ:GEX-FLIP": {
-   "name": "NQ:GEX-FLIP",
+  "ES:GAMMA-7780": {
+   "name": "ES:GAMMA-7780",
    "n": 1,
    "held": 1,
-   "nome_it": "GEX flip (cambio regime gamma)",
+   "nome_it": "Muro gamma",
    "rate": 1.0
   },
-  "NQ:TRIGGER": {
-   "name": "NQ:TRIGGER",
+  "ES:GAMMA-7830": {
+   "name": "ES:GAMMA-7830",
    "n": 1,
    "held": 1,
-   "nome_it": "Trigger put",
-   "rate": 1.0
-  },
-  "NQ:MAXPAIN-0DTE": {
-   "name": "NQ:MAXPAIN-0DTE",
-   "n": 1,
-   "held": 1,
-   "nome_it": "Max Pain scadenza vicina",
+   "nome_it": "Muro gamma",
    "rate": 1.0
   }
  }
