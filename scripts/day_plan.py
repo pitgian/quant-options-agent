@@ -611,7 +611,7 @@ def update_stats(prev_plan: dict, idx_et, highs, lows, closes, stats: dict, pref
         if r["held"]:
             s["held"] += 1
         s["rate"] = round(s["held"] / s["n"], 3)
-    return stats
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -664,8 +664,7 @@ def main() -> None:
     plans = {}
     stats = load_stats()   # caricata UNA volta: ES e NQ si accumulano insieme
     last_scored = load_last_scored()   # ultima giornata ET già giudicata
-    scored = False
-    today = None
+    bars_data = {}
     for sym, fut in (("SPY", "ES"), ("QQQ", "NQ")):
         sd = options_data.get("symbols", {}).get(sym)
         if not sd:
@@ -726,65 +725,121 @@ def main() -> None:
             {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in top_gamma
         ]
         plans[fut] = plan
-
-        # --- TRACK RECORD: al cambio di giornata ET si giudica il piano
-        # ripristinato (quello con cui si apre la giornata) sulle barre
-        # COMPLETE dell'ultimo giorno non ancora giudicato. Il marcatore
-        # last_scored è indispensabile: i run 24/7 rigenerano il piano anche
-        # di notte, quindi il confronto "data generazione < oggi" (che è un
-        # confronto UTC vs ET) non sarebbe MAI vero al momento giusto. ---
-        today = max(idx_et).date()
-        try:
-            if os.path.exists(PLAN_PATH):
-                with open(PLAN_PATH) as pf:
-                    old_all = json.load(pf)
-                old_plan = (old_all.get("plans") or {}).get(fut)
-                bar_dates = sorted({d.date() for d in idx_et})
-                target = max((d for d in bar_dates
-                              if d < today and (last_scored is None or d >= last_scored)),
-                             default=None)
-                if old_plan and target:
-                    n0 = sum(s["n"] for s in stats.values())
-                    # SOLO i livelli che la scala mostra davvero: fonti opzioni
-                    # + max pain + muri gamma top-3 per lato (le sintesi che fa
-                    # la UI). VWAP/VAH/overnight non sono più nella scala e non
-                    # devono accumulare fiducia.
-                    old_levels = [l for l in old_plan.get("levels", [])
-                                  if l.get("source") == "options"]
-                    if old_plan.get("max_pain_nearest"):
-                        old_levels.append({"name": "MAXPAIN-0DTE",
-                                           "nome_it": "Max Pain scadenza vicina",
-                                           "price": float(old_plan["max_pain_nearest"])})
-                    if old_plan.get("max_pain_all"):
-                        old_levels.append({"name": "MAXPAIN-ALL",
-                                           "nome_it": "Max Pain (tutte le scadenze)",
-                                           "price": float(old_plan["max_pain_all"])})
-                    spot_ref = float(old_plan.get("last_price") or 0)
-                    tg = sorted(old_plan.get("top_gamma") or [],
-                                key=lambda t: -abs(t.get("net_gex", 0) or 0))
-                    for t in ([x for x in tg if x.get("strike_fut", 0) >= spot_ref][:3]
-                              + [x for x in tg if x.get("strike_fut", 0) < spot_ref][:3]):
-                        zone = round(t["strike_fut"] / 5) * 5
-                        old_levels.append({"name": f"GAMMA-{zone}",
-                                           "nome_it": "Muro gamma",
-                                           "price": float(zone)})
-                    update_stats({**old_plan, "levels": old_levels},
-                                 idx_et, h, l, cl, stats, prefix=fut, only_date=target)
-                    n1 = sum(s["n"] for s in stats.values())
-                    print(f"day_plan: track record +{n1 - n0} verdetti (giornata {target})")
-                    scored = True
-        except Exception as e:
-            print(f"day_plan: scoring saltato ({e})")
+        bars_data[fut] = (idx_et, h, l, cl)
+        if args.show:
+            print(f"\n=== {fut} — spot {plan['last_price']} ===")
+            for lv in plan["levels"]:
+                print(f"  {lv['price']:9.1f}  {lv['nome_it']:32s} [{lv['kind']}/{lv['source']}]")
         if args.show:
             print(f"\n=== {fut} — spot {plan['last_price']} ===")
             for lv in plan["levels"]:
                 print(f"  {lv['price']:9.1f}  {lv['nome_it']:32s} [{lv['kind']}/{lv['source']}]")
 
+    # --- TRACK RECORD: al cambio di giornata ET si giudica il piano
+    # ripristinato (quello con cui si apre la giornata) sulle barre
+    # COMPLETE dell'ultimo giorno non ancora giudicato. Il marcatore
+    # last_scored è indispensabile: i run 24/7 rigenerano il piano anche
+    # di notte, quindi il confronto "data generazione < oggi" (che è un
+    # confronto UTC vs ET) non sarebbe MAI vero al momento giusto.
+    # Regola STRICT (> last_scored): il giorno giudicato non si ri-giudica
+    # la sera stessa, e i weekend senza barre non bloccano il ciclo.
+    # Ogni verdetto porta con sé lo SNAPSHOT dello stato (regime, scenario,
+    # divergenza SPY/QQQ): è il dataset per i futuri decision model.
+    scored_target = None
+    try:
+        if plans and os.path.exists(PLAN_PATH):
+            with open(PLAN_PATH) as pf:
+                old_all = json.load(pf)
+            for fut, (idx_et, h, l, cl) in bars_data.items():
+                today = max(idx_et).date()
+                old_plan = (old_all.get("plans") or {}).get(fut)
+                bar_dates = sorted({d.date() for d in idx_et})
+                target = max((d for d in bar_dates
+                              if d < today and (last_scored is None or d > last_scored)),
+                             default=None)
+                if not (old_plan and target):
+                    continue
+                # SOLO i livelli che la scala mostra davvero: fonti opzioni
+                # + max pain + muri gamma top-3 per lato (le sintesi che fa
+                # la UI). VWAP/VAH/overnight non sono più nella scala e non
+                # devono accumulare fiducia.
+                old_levels = [lv for lv in old_plan.get("levels", [])
+                              if lv.get("source") == "options"]
+                if old_plan.get("max_pain_nearest"):
+                    old_levels.append({"name": "MAXPAIN-0DTE",
+                                       "nome_it": "Max Pain scadenza vicina",
+                                       "price": float(old_plan["max_pain_nearest"])})
+                if old_plan.get("max_pain_all"):
+                    old_levels.append({"name": "MAXPAIN-ALL",
+                                       "nome_it": "Max Pain (tutte le scadenze)",
+                                       "price": float(old_plan["max_pain_all"])})
+                spot_ref = float(old_plan.get("last_price") or 0)
+                tg = sorted(old_plan.get("top_gamma") or [],
+                            key=lambda t: -abs(t.get("net_gex", 0) or 0))
+                for t in ([x for x in tg if x.get("strike_fut", 0) >= spot_ref][:3]
+                          + [x for x in tg if x.get("strike_fut", 0) < spot_ref][:3]):
+                    zone = round(t["strike_fut"] / 5) * 5
+                    old_levels.append({"name": f"GAMMA-{zone}",
+                                       "nome_it": "Muro gamma",
+                                       "price": float(zone),
+                                       "kind": ("barrier" if t.get("sign") == "long"
+                                                else "trigger")})
+
+                # snapshot dello stato MISURATO SUL PIANO GIUDICATO
+                o_other = (old_all.get("plans") or {}).get("NQ" if fut == "ES" else "ES") or {}
+                my_flip = next((lv["price"] for lv in old_plan.get("levels", [])
+                                if lv.get("name") == "GEX-FLIP"), None)
+                o_flip = next((lv["price"] for lv in o_other.get("levels", [])
+                               if lv.get("name") == "GEX-FLIP"), None)
+                regime = other_regime = None
+                if my_flip and spot_ref:
+                    regime = "long" if spot_ref > my_flip else "short"
+                if o_flip and o_other.get("last_price"):
+                    other_regime = "long" if o_other["last_price"] > o_flip else "short"
+                mp = old_plan.get("max_pain_nearest")
+                near_mp = bool(mp is not None and spot_ref
+                               and abs(mp - spot_ref) / spot_ref < 0.004)
+                divergence = bool(regime and other_regime and regime != other_regime) or None
+                if regime == "long" and near_mp:
+                    scenario = "compressione"
+                elif regime == "short" and not near_mp:
+                    scenario = "trend"
+                elif regime:
+                    scenario = "ibrido"
+                else:
+                    scenario = None
+                snap = {"date": target.isoformat(), "spot": spot_ref,
+                        "regime": regime, "divergence": divergence,
+                        "near_mp": near_mp if mp is not None else None,
+                        "scenario": scenario}
+
+                results = update_stats({**old_plan, "levels": old_levels},
+                                       idx_et, h, l, cl, stats, prefix=fut,
+                                       only_date=target)
+                n_new = 0
+                for r in results:
+                    if not r.get("touched"):
+                        continue
+                    n_new += 1
+                    s = stats.get(f"{fut}:{r['name']}")
+                    if s is None:
+                        continue
+                    hist = s.setdefault("history", [])
+                    hist.append({**snap, "kind": r.get("kind"),
+                                 "dist_pts": (round(r["price"] - spot_ref)
+                                              if spot_ref else None),
+                                 "held": bool(r["held"])})
+                    del hist[:-400]   # cap per livello
+                print(f"day_plan: track record +{n_new} verdetti (giornata {target})")
+                scored_target = target
+    except Exception as e:
+        print(f"day_plan: scoring saltato ({e})")
+
     os.makedirs(os.path.dirname(PLAN_PATH), exist_ok=True)
     with open(PLAN_PATH, "w") as f:
         json.dump({"version": VERSION, "generated_at": datetime.now(timezone.utc).isoformat(),
                    "plans": plans}, f, indent=1)
-    save_stats(stats, last_scored=(today if scored else last_scored))
+    save_stats(stats, last_scored=(scored_target or last_scored))
     print(f"day_plan scritto → {PLAN_PATH} (stats: {sum(v['n'] for v in stats.values())} occorrenze)")
 
 
