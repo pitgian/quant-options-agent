@@ -18,6 +18,8 @@ export interface DayPlanLevel {
   gamma?: 'pin' | 'trigger';
   /** Serie dell'opzione che genera il muro (solo walls: call/put). */
   side?: 'call' | 'put';
+  /** Open Interest del muro (contratti) — solo per i walls. */
+  oi?: number;
 }
 
 export interface DayPlan {

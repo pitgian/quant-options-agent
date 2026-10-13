@@ -100,6 +100,8 @@ export interface LadderLevel {
   isNaked?: boolean;
   /** Serie del livello dominante (call/put), se è un muro. */
   side?: 'call' | 'put';
+  /** OI del livello dominante, se è un muro con OI. */
+  oi?: number;
   /** Quanti livelli distinti confluiscono nella stessa zona. */
   merged: number;
   /** Punteggio di importanza (confluenza, magneti, flip, pin, prossimità). */
@@ -122,6 +124,8 @@ export interface LadderInput {
   isNaked?: boolean;
   /** Serie dell'opzione del muro ('call' | 'put') — per i chip della scala. */
   side?: 'call' | 'put';
+  /** Open Interest del muro (contratti), se disponibile. */
+  oi?: number;
   /** Peso del GEX netto della zona (0..1, frazione del muro massimo del giorno):
    *  alimenta il punteggio d'importanza — il muro più grosso vale 3 punti. */
   gexWeight?: number;
@@ -204,6 +208,7 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
       // fallback: se il dominante non ha serie (es. flip), usa quella di un
       // altro membro del cluster — il chip deve sempre dire call/put
       side: best.side ?? members.find(m => m.side)?.side,
+      oi: best.oi,
       members: members.map(m => ({
         nome_it: m.nome_it ?? LADDER_LABEL_IT[m.label] ?? m.label,
         label: m.label,

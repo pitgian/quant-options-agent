@@ -180,6 +180,8 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
             "type": w["type"],
             "net_gex": w.get("net_gex", 0.0) or 0.0,
             "score": w.get("score", 0) or 0,
+            "oi": float(w.get("total_oi", 0) or 0),
+            "vol": float(w.get("total_vol", 0) or 0),
         })
 
     CONTRACT = 100.0
@@ -465,11 +467,13 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         side_pos = "sopra" if price_fut > last else "sotto"
         wall_side = w["type"].replace("_wall", "")
         add("PIN", f"Muro {wall_side} in pin ({side_pos})",
-            price_fut, "barrier", "options", gamma="pin", side=wall_side)
+            price_fut, "barrier", "options", gamma="pin", side=wall_side,
+            oi=round(float(w.get("oi", 0) or 0)))
     for price_fut, w in sorted(trigger_walls, key=lambda x: -abs(x[1].get("net_gex", 0)))[:2]:
         wall_side = w["type"].replace("_wall", "")
         add("TRIGGER", f"Trigger {wall_side}",
-            price_fut, "trigger", "options", gamma="trigger", side=wall_side)
+            price_fut, "trigger", "options", gamma="trigger", side=wall_side,
+            oi=round(float(w.get("oi", 0) or 0)))
 
     # NOTA scala: price/amt derivano da barre futures (già in scala ES/NQ);
     # le opzioni sono convertite al momento dell'add() — nessuna doppia conversione.

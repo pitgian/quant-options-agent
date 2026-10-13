@@ -27,11 +27,13 @@ interface Row {
   held?: number;
   n?: number;
   side?: 'call' | 'put';
+  oi?: number;
   /** GEX netto aggregato sugli strike caduti in questa zona (dal profilo gamma). */
   gex?: { net: number; parts: string[] };
 }
 
 const fmtGex = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 1 });
+const fmtOi = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 1 });
 
 /** Colonna GEX della scala: barra orizzontale ancorata a destra, lunghezza
  *  = |gex netto| della zona sul muro più grande di TUTTI gli strike.
@@ -106,6 +108,7 @@ export function buildLadderForPlan(
         kind: l.kind,
         gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
         side: l.side,
+        oi: l.oi,
         isFlip: l.name === 'GEX-FLIP' || l.name === 'GEX-FLIP-0DTE',
         isNaked: l.name.startsWith('NAKED'),
         gexWeight: g ? Math.min(1, Math.abs(g.net) / maxAbsGex) : undefined,
@@ -147,6 +150,7 @@ export const Ladder: React.FC<{
       held: stats[statsKey]?.held,
       n: stats[statsKey]?.n,
       side: z.side,
+      oi: z.oi,
       gex: gammaByZone.get(z.price),
     };
   };
@@ -210,6 +214,12 @@ export const Ladder: React.FC<{
               : r.kind === 'trigger' ? `⚡ trigger${r.side ? ` ${r.side}` : ''}`
               : 'pivot'}
           </span>
+          {r.oi != null && r.oi >= 1000 && (
+            <span className="text-[10px] font-mono text-gray-500 tnum"
+                  title={`Open Interest del muro: ${r.oi.toLocaleString('it-IT')} contratti`}>
+              OI {fmtOi.format(r.oi)}
+            </span>
+          )}
           {!isSpot && (
             <span className={`text-[11px] font-mono font-semibold tnum w-16 text-right ${r.distPts > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}
                   title={`Distanza dal prezzo live: ${r.distPts > 0 ? '+' : ''}${r.distPts} punti`}>
