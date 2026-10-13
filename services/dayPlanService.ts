@@ -43,12 +43,26 @@ export interface DayPlan {
   spot_etf?: number;
 }
 
+export interface LevelHistoryEntry {
+  date: string;
+  kind: string;
+  dist_pts?: number;
+  regime?: 'long' | 'short' | null;
+  scenario?: string | null;
+  divergence?: boolean | null;
+  near_mp?: boolean | null;
+  spot?: number;
+  held: boolean;
+}
+
 export interface LevelStat {
   name: string;
   nome_it: string;
   n: number;
   held: number;
   rate: number;
+  /** Verdetti giornalieri con snapshot dello stato (dataset decision model). */
+  history?: LevelHistoryEntry[];
 }
 
 export interface LevelStats {

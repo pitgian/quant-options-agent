@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { DayView } from './components/DayView';
 import { StatsPanel } from './components/StatsPanel';
+import { SeparationPanel } from './components/SeparationPanel';
 import { Segmented, Collapsible } from './components/ui';
 import { fetchLevelStats, type LevelStat } from './services/dayPlanService';
 
@@ -38,6 +39,12 @@ export default function App() {
           <Collapsible title="Affidabilità storica dei livelli" icon="📐"
                        hint="quante volte ogni livello ha retto, su quante occorrenze">
             <StatsPanel stats={stats} />
+            <div className="mt-4 pt-4 border-t border-slate-800">
+              <h4 className="text-xs font-bold text-slate-300 mb-3">
+                📊 Test di separazione — le feature spiegano gli esiti?
+              </h4>
+              <SeparationPanel stats={stats} />
+            </div>
           </Collapsible>
         </div>
       </main>
