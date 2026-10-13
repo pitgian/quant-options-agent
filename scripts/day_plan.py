@@ -161,8 +161,8 @@ def vwap_of(bars):
 # Opzioni: muri (calculate_walls) + GEX flip dalle catene
 # ---------------------------------------------------------------------------
 
-def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, float | None, list]:
-    """Restituisce (walls, gex_flip, gex_flip_0dte, top_gamma).
+def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, float | None, list, str | None]:
+    """Restituisce (walls, gex_flip, gex_flip_0dte, top_gamma, gex_regime).
 
     walls: [{strike(INDICE), type, net_gex}] — top per |net_gex|
     gex_flip: strike a zero-crossing del GEX netto vicino allo spot,
@@ -217,7 +217,22 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
     top_strikes = [{"strike": round(k, 1), "net_gex": round(vv, 0),
                     "sign": "long" if vv >= 0 else "short"} for k, vv in top]
 
-    return walls, flip, flip0, top_strikes
+    # regime dal SEGNO del GEX ai due strike che bracketano lo spot: è
+    # definito ANCHE quando non c'è zero-crossing entro la finestra (profilo
+    # tutto positivo/negativo) — in quel caso il flip non esiste ma il
+    # regime sì, e il badge non deve sfarfallare.
+    st = sorted(net)
+    vals = []
+    below = [k for k in st if k <= spot]
+    above = [k for k in st if k > spot]
+    if below:
+        vals.append(net[below[-1]])
+    if above:
+        vals.append(net[above[0]])
+    vals = [v for v in vals if v]
+    gex_regime = ("long" if sum(vals) > 0 else "short") if vals else None
+
+    return walls, flip, flip0, top_strikes, gex_regime
 
 
 def max_pain(expiries: list, spot: float) -> dict:
@@ -696,7 +711,8 @@ def main() -> None:
             walls, flip, top_gamma = [], None, []
             mp = {"nearest": {}, "all": {}}
         else:
-            walls, flip, flip0, top_gamma = compute_option_levels(sd.get("expiries", []), spot_etf)
+            walls, flip, flip0, top_gamma, gex_regime = compute_option_levels(
+                sd.get("expiries", []), spot_etf)
             mp = max_pain(sd.get("expiries", []), spot_etf)
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
@@ -709,6 +725,7 @@ def main() -> None:
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
                           index_to_fut=index_to_fut, gex_flip0_etf=flip0)
         plan["spot_etf"] = spot_etf
+        plan["gamma_regime"] = gex_regime
         if flip0:
             plan["gex_flip_0dte"] = round(flip0 * ratio, 1)
         if degraded:

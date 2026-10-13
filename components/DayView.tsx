@@ -99,6 +99,12 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   const gexFlip = plan?.levels.find(l => l.name === 'GEX-FLIP');
   const flip0 = plan?.gex_flip_0dte;
   const regime = plan?.levels.find(l => l.name === 'GEX-FLIP');
+  // Il regime esiste ANCHE senza flip: quando il profilo entro ±10% è
+  // tutto positivo/negativo non c'è zero-crossing (flip assente) ma il
+  // segno del GEX sullo spot resta definito — così il badge non sfarfalla.
+  const regimeNow: 'long' | 'short' | null =
+    gexFlip ? (spot > gexFlip.price ? 'long' : 'short')
+            : (plan?.gamma_regime ?? null);
 
   // Lettura operativa: i due livelli adiacenti allo spot (sopra/sotto) e cosa
   // ci si aspetta da ciascuno in base al meccanismo. maxPerSide alto: voglio
@@ -131,7 +137,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
     const parts: string[] = [];
     let tag: 'compressione' | 'trend' | 'ibrido' | null = null;
     const mp = plan.max_pain_nearest;
-    const regimeLong = gexFlip ? spot > gexFlip.price : null;
+    const regimeLong = regimeNow;
     const fmtDist = (d: number) => `${d > 0 ? '+' : ''}${Math.round(d).toLocaleString('it-IT')} pt`;
 
     if (mp && regimeLong !== null) {
@@ -169,7 +175,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
       }
     }
     return { tag, parts };
-  }, [plan, spot, gexFlip, otherPlan, ladderAll]);
+  }, [plan, spot, regimeNow, otherPlan, ladderAll]);
 
   if (!plan) {
     return (
@@ -190,12 +196,15 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <span className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">Regime gamma</span>
-            {gexFlip ? (
-              <Badge tone={spot > gexFlip.price ? 'good' : 'bad'}
-                     title={spot > gexFlip.price
-                       ? 'Sopra il flip: dealer long gamma — volatilità contenuta, i livelli respingono (pin)'
-                       : 'Sotto il flip: dealer short gamma — i movimenti si amplificano (trend)'}>
-                {spot > gexFlip.price ? '▲ Long gamma (mean reversion)' : '▼ Short gamma (trend/amplificazione)'}
+            {regimeNow ? (
+              <Badge tone={regimeNow === 'long' ? 'good' : 'bad'}
+                     title={regimeNow === 'long'
+                       ? (gexFlip ? 'Sopra il flip: dealer long gamma — volatilità contenuta, i livelli respingono (pin)'
+                                  : 'Dealer long gamma su tutto il profilo entro ±10% — volatilità contenuta (flip oltre la finestra)')
+                       : (gexFlip ? 'Sotto il flip: dealer short gamma — i movimenti si amplificano (trend)'
+                                  : 'Dealer short gamma su tutto il profilo entro ±10% — i movimenti si amplificano (flip oltre la finestra)')}>
+                {regimeNow === 'long' ? '▲ Long gamma (mean reversion)' : '▼ Short gamma (trend/amplificazione)'}
+                {!gexFlip && <span className="ml-1 opacity-70">· flip oltre ±10%</span>}
               </Badge>
             ) : '—'}
             {gexFlip && (
@@ -243,9 +252,9 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
               return <>sotto: <span className="text-slate-200">{lettura.dn.label}</span> {lettura.dn.price.toLocaleString()} ({d} pt) — {exp}</>;
             })()}
             {'. '}
-            {gexFlip && (
-              <span className={spot > gexFlip.price ? 'text-emerald-400/80' : 'text-red-400/80'}>
-                {spot > gexFlip.price
+            {regimeNow && (
+              <span className={regimeNow === 'long' ? 'text-emerald-400/80' : 'text-red-400/80'}>
+                {regimeNow === 'long'
                   ? 'Long gamma: i respingimenti sui barrier sono favoriti, le rotture spesso falliscono.'
                   : 'Short gamma: i pin reggono meno e le rotture dei trigger accelerano.'}
               </span>

@@ -32,6 +32,8 @@ export interface DayPlan {
   max_pain_nearest?: number;
   max_pain_all?: number;
   gex_flip_0dte?: number;
+  /** Regime dal segno del GEX sullo spot: presente anche senza flip. */
+  gamma_regime?: 'long' | 'short' | null;
   top_gamma?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
   vwap?: number;
   vwap_sigma?: number;
