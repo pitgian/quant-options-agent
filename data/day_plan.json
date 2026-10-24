@@ -1,10 +1,10 @@
 {
  "version": 1,
- "generated_at": "2026-10-24T13:32:12.760822+00:00",
+ "generated_at": "2026-10-25T15:32:27.501642+00:00",
  "plans": {
   "ES": {
    "version": 1,
-   "generated_at": "2026-10-24T13:32:12.569604+00:00",
+   "generated_at": "2026-10-25T15:32:27.294794+00:00",
    "futures": "ES",
    "last_price": 7661.0,
    "read": [
@@ -21,7 +21,7 @@
      "source": "options",
      "gamma": "pin",
      "side": "call",
-     "oi": 47660,
+     "oi": 50979,
      "dist_pts": 390.1
     },
     {
@@ -32,7 +32,7 @@
      "source": "options",
      "gamma": "pin",
      "side": "call",
-     "oi": 14188,
+     "oi": 15469,
      "dist_pts": 219.0
     },
     {
@@ -43,7 +43,7 @@
      "source": "options",
      "gamma": "pin",
      "side": "call",
-     "oi": 21886,
+     "oi": 23475,
      "dist_pts": 188.9
     },
     {
@@ -53,14 +53,6 @@
      "kind": "pivot",
      "source": "price",
      "dist_pts": 151.2
-    },
-    {
-     "name": "PWH",
-     "nome_it": "Max sett. scorsa",
-     "price": 7803.2,
-     "kind": "pivot",
-     "source": "price",
-     "dist_pts": 142.2
     },
     {
      "name": "PDH",
@@ -158,7 +150,7 @@
      "source": "options",
      "gamma": "trigger",
      "side": "put",
-     "oi": 38958,
+     "oi": 43388,
      "dist_pts": -62.7
     },
     {
@@ -169,7 +161,7 @@
      "source": "options",
      "gamma": "trigger",
      "side": "put",
-     "oi": 73985,
+     "oi": 80550,
      "dist_pts": -113.1
     }
    ],
@@ -237,73 +229,73 @@
    "spot_etf": 761.11,
    "gamma_regime": "short",
    "max_pain_nearest": 7709.0,
-   "max_pain_all": 7719.0,
+   "max_pain_all": 7709.0,
    "top_gamma": [
     {
      "strike": 750.0,
-     "net_gex": -243977077734.0,
+     "net_gex": -249034390787.0,
      "sign": "short",
      "strike_fut": 7547.9
     },
     {
      "strike": 755.0,
-     "net_gex": -223803795979.0,
+     "net_gex": -225935782781.0,
      "sign": "short",
      "strike_fut": 7598.3
     },
     {
      "strike": 760.0,
-     "net_gex": -155750497375.0,
+     "net_gex": -159033359211.0,
      "sign": "short",
      "strike_fut": 7648.6
     },
     {
      "strike": 745.0,
-     "net_gex": -90699475214.0,
+     "net_gex": -92039779251.0,
      "sign": "short",
      "strike_fut": 7497.6
     },
     {
      "strike": 800.0,
-     "net_gex": 88818086818.0,
+     "net_gex": 87429268467.0,
      "sign": "long",
      "strike_fut": 8051.1
     },
     {
      "strike": 735.0,
-     "net_gex": -81563430086.0,
+     "net_gex": -82468497756.0,
      "sign": "short",
      "strike_fut": 7397.0
     },
     {
      "strike": 740.0,
-     "net_gex": -77957266668.0,
+     "net_gex": -79477644657.0,
      "sign": "short",
      "strike_fut": 7447.3
     },
     {
-     "strike": 700.0,
-     "net_gex": -61103592937.0,
+     "strike": 765.0,
+     "net_gex": -60803196167.0,
      "sign": "short",
-     "strike_fut": 7044.7
+     "strike_fut": 7698.9
     },
     {
      "strike": 767.0,
-     "net_gex": -59440056450.0,
+     "net_gex": -60207663697.0,
      "sign": "short",
      "strike_fut": 7719.0
     },
     {
-     "strike": 765.0,
-     "net_gex": -56519692683.0,
+     "strike": 700.0,
+     "net_gex": -59335663493.0,
      "sign": "short",
-     "strike_fut": 7698.9
+     "strike_fut": 7044.7
     }
    ]
   },
   "NQ": {
    "version": 1,
-   "generated_at": "2026-10-24T13:32:12.744612+00:00",
+   "generated_at": "2026-10-25T15:32:27.492549+00:00",
    "futures": "NQ",
    "last_price": 29122.5,
    "read": [
@@ -320,7 +312,7 @@
      "source": "options",
      "gamma": "pin",
      "side": "call",
-     "oi": 23093,
+     "oi": 24330,
      "dist_pts": 2272.2
     },
     {
@@ -331,7 +323,7 @@
      "source": "options",
      "gamma": "pin",
      "side": "call",
-     "oi": 19853,
+     "oi": 21000,
      "dist_pts": 1859.1
     },
     {
@@ -342,16 +334,8 @@
      "source": "options",
      "gamma": "pin",
      "side": "call",
-     "oi": 5923,
+     "oi": 6437,
      "dist_pts": 991.6
-    },
-    {
-     "name": "PWH",
-     "nome_it": "Max sett. scorsa",
-     "price": 30045.8,
-     "kind": "pivot",
-     "source": "price",
-     "dist_pts": 923.3
     },
     {
      "name": "GEX-FLIP",
@@ -392,14 +376,6 @@
      "kind": "pivot",
      "source": "price",
      "dist_pts": 154.3
-    },
-    {
-     "name": "PWL",
-     "nome_it": "Min sett. scorsa",
-     "price": 29268.8,
-     "kind": "pivot",
-     "source": "price",
-     "dist_pts": 146.3
     },
     {
      "name": "VWAP+1s",
@@ -489,7 +465,7 @@
      "source": "options",
      "gamma": "trigger",
      "side": "put",
-     "oi": 74062,
+     "oi": 79215,
      "dist_pts": -206.3
     },
     {
@@ -500,7 +476,7 @@
      "source": "options",
      "gamma": "trigger",
      "side": "put",
-     "oi": 71395,
+     "oi": 76588,
      "dist_pts": -619.4
     }
    ],
@@ -861,63 +837,63 @@
    "top_gamma": [
     {
      "strike": 700.0,
-     "net_gex": -129420151932.0,
+     "net_gex": -129681340985.0,
      "sign": "short",
      "strike_fut": 28916.2
     },
     {
      "strike": 690.0,
-     "net_gex": -112731532338.0,
+     "net_gex": -114803596624.0,
      "sign": "short",
      "strike_fut": 28503.1
     },
     {
      "strike": 680.0,
-     "net_gex": -76135574003.0,
+     "net_gex": -80243632563.0,
      "sign": "short",
      "strike_fut": 28090.0
     },
     {
      "strike": 670.0,
-     "net_gex": -57846197648.0,
+     "net_gex": -58814658561.0,
      "sign": "short",
      "strike_fut": 27676.9
     },
     {
      "strike": 675.0,
-     "net_gex": -52268120990.0,
+     "net_gex": -54193658777.0,
      "sign": "short",
      "strike_fut": 27883.4
     },
     {
      "strike": 695.0,
-     "net_gex": -47107235736.0,
+     "net_gex": -50555523638.0,
      "sign": "short",
      "strike_fut": 28709.6
     },
     {
      "strike": 710.0,
-     "net_gex": -46035924819.0,
+     "net_gex": -46024018602.0,
      "sign": "short",
      "strike_fut": 29329.3
     },
     {
      "strike": 685.0,
-     "net_gex": -33943429294.0,
+     "net_gex": -36438196234.0,
      "sign": "short",
      "strike_fut": 28296.5
     },
     {
-     "strike": 720.0,
-     "net_gex": -30852450388.0,
-     "sign": "short",
-     "strike_fut": 29742.3
-    },
-    {
      "strike": 705.0,
-     "net_gex": -29863776634.0,
+     "net_gex": -30574888795.0,
      "sign": "short",
      "strike_fut": 29122.7
+    },
+    {
+     "strike": 720.0,
+     "net_gex": -30107276588.0,
+     "sign": "short",
+     "strike_fut": 29742.3
     }
    ]
   }
