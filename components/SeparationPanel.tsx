@@ -36,6 +36,8 @@ interface Table {
   groups: Group[];
   p: number | null;
   nTot: number;
+  extraP?: number | null;
+  extraLabel?: string;
 }
 
 const MIN_N = 30;
@@ -116,8 +118,14 @@ function makeTable(records: Rec[], label: string, pick: (r: Rec) => string | nul
     const g1 = groups.get(vals[0])!, g2 = groups.get(vals[1])!;
     p = fisher(g1.held, g1.n - g1.held, g2.held, g2.n - g2.held);
   }
+  // confronto aggiuntivo magnete vs trigger (prima separazione emersa dai dati)
+  let extraP: number | null = null;
+  if (label === 'meccanismo' && groups.has('magnet') && groups.has('trigger')) {
+    const g1 = groups.get('magnet')!, g2 = groups.get('trigger')!;
+    extraP = fisher(g1.held, g1.n - g1.held, g2.held, g2.n - g2.held);
+  }
   const gs = vals.map(v => groups.get(v)!);
-  return { label, groups: gs, p, nTot };
+  return { label, groups: gs, p, nTot, extraP, extraLabel: 'magnete vs trigger' };
 }
 
 const rateTone = (held: number, n: number) =>
@@ -138,6 +146,10 @@ const MiniTable: React.FC<{ t: Table }> = ({ t }) => (
     {t.p !== null && (() => {
       const g = giudizio(t.p, t.nTot);
       return <div className={`text-[10px] mt-1 ${g.tone}`}>→ {g.text}</div>;
+    })()}
+    {t.extraP != null && (() => {
+      const g = giudizio(t.extraP, t.nTot);
+      return <div className={`text-[10px] mt-0.5 ${g.tone}`}>→ {t.extraLabel}: {g.text}</div>;
     })()}
   </div>
 );
