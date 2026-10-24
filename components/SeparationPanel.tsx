@@ -196,10 +196,11 @@ export const SeparationPanel: React.FC<{ stats: Record<string, LevelStat> }> = (
   }
 
   const nOk = records.filter(r => r.held).length;
-  const sep = tables.filter(t => t.p !== null && t.p < 0.05 && t.nTot >= MIN_N);
-  const weak = tables.filter(t => t.p !== null && t.p >= 0.05 && t.p < 0.10 && t.nTot >= MIN_N);
+  const bestP = (t: Table) => Math.min(...[t.p, t.extraP].filter((v): v is number => v !== null));
+  const sep = tables.filter(t => t.p !== null && bestP(t) < 0.05 && t.nTot >= MIN_N);
+  const weak = tables.filter(t => t.p !== null && bestP(t) >= 0.05 && bestP(t) < 0.10 && t.nTot >= MIN_N);
   const verdict = sep.length > 0
-    ? { text: `${sep.length} feature separano significativamente (${sep.map(t => t.label).join(', ')}). C'è segnale: il dataset vale per un modello (prima boosting interpretabile, CLM solo dopo).`, tone: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' }
+    ? { text: `${sep.length} feature separano significativamente (${sep.map(t => t.label).join(', ')}). C'è segnale nei dati: il dataset vale per un modello (prima boosting interpretabile, CLM solo dopo).`, tone: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' }
     : weak.length > 0
       ? { text: `Solo segnali deboli (${weak.map(t => t.label).join(', ')}). Accumula verdetti: ripeti il confronto tra 1-2 settimane.`, tone: 'text-amber-300 border-amber-500/30 bg-amber-500/5' }
       : { text: 'Nessuna feature separa con i dati attuali: NON addestrare decision model — le regole scritte a mano sono il meglio disponibile. Ripeti ogni 1-2 settimane.', tone: 'text-gray-400 border-slate-700 bg-slate-900/40' };

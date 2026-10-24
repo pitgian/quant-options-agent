@@ -146,7 +146,9 @@ def tabella(records, feature, values_order=None, label=None):
         print(f"    → magnete vs trigger: {giudizio(p2, g1['n'] + g2['n'])}"
               + ("  [nota: significativo nominale — confermare con più dati "
                  "(correzione multipli)]" if p2 is not None and p2 < 0.05 else ""))
-    return {"feature": label, "groups": groups, "p": p, "n_tot": n_tot}
+    return {"feature": label, "groups": groups, "p": p, "n_tot": n_tot,
+            "extraP": p2 if label == "meccanismo" else None,
+            "extraLabel": "magnete vs trigger" if label == "meccanismo" else None}
 
 
 def main() -> None:
@@ -227,9 +229,13 @@ def main() -> None:
             print(f"    {k:22s} {sum(1 for r in v if r['held']):>3}/{len(v):<3} ({rate:5.1f}%)")
 
     # --- verdetto finale ---
-    sep = [t for t in tables if t["p"] is not None and t["p"] < 0.05
+    def best_p(t):
+        ps = [v for v in (t["p"], t.get("extraP")) if v is not None]
+        return min(ps) if ps else None
+
+    sep = [t for t in tables if (bp := best_p(t)) is not None and bp < 0.05
            and t["n_tot"] >= MIN_N_SIGNIFICATIVO]
-    weak = [t for t in tables if t["p"] is not None and 0.05 <= t["p"] < 0.10
+    weak = [t for t in tables if (bp := best_p(t)) is not None and 0.05 <= bp < 0.10
             and t["n_tot"] >= MIN_N_SIGNIFICATIVO]
     print("\n" + "=" * 72)
     if sep:

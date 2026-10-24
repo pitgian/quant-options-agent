@@ -789,11 +789,13 @@ def main() -> None:
                 if old_plan.get("max_pain_nearest"):
                     old_levels.append({"name": "MAXPAIN-0DTE",
                                        "nome_it": "Max Pain scadenza vicina",
-                                       "price": float(old_plan["max_pain_nearest"])})
+                                       "price": float(old_plan["max_pain_nearest"]),
+                                       "kind": "magnet"})
                 if old_plan.get("max_pain_all"):
                     old_levels.append({"name": "MAXPAIN-ALL",
                                        "nome_it": "Max Pain (tutte le scadenze)",
-                                       "price": float(old_plan["max_pain_all"])})
+                                       "price": float(old_plan["max_pain_all"]),
+                                       "kind": "magnet"})
                 spot_ref = float(old_plan.get("last_price") or 0)
                 tg = sorted(old_plan.get("top_gamma") or [],
                             key=lambda t: -abs(t.get("net_gex", 0) or 0))
