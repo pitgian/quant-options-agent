@@ -802,8 +802,8 @@ def main() -> None:
                 for t in ([x for x in tg if x.get("strike_fut", 0) >= spot_ref][:3]
                           + [x for x in tg if x.get("strike_fut", 0) < spot_ref][:3]):
                     zone = round(t["strike_fut"] / 5) * 5
-                    old_levels.append({"name": f"GAMMA-{zone}",
-                                       "nome_it": "Muro gamma",
+                    old_levels.append({"name": "MURO-GAMMA",
+                                       "nome_it": f"Muro gamma a {zone:.0f}",
                                        "price": float(zone),
                                        "kind": ("barrier" if t.get("sign") == "long"
                                                 else "trigger")})

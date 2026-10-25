@@ -84,7 +84,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
     for (const t of top3) {
       const zone = Math.round(t.strike_fut / 5) * 5;
       out.push({
-        name: `GAMMA-${zone}`,
+        name: 'MURO-GAMMA',
         nome_it: `Muro gamma ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})`,
         price: zone,
         kind: t.sign === 'long' ? 'barrier' : 'trigger',
