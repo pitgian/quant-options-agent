@@ -139,6 +139,7 @@ def tabella(records, feature, values_order=None, label=None):
         print(f"    → {vals[0]} vs {vals[1]}: {giudizio(p, g1['n'] + g2['n'])}")
     # confronto aggiuntivo: magnete vs trigger (il pairing più informativo —
     # è la prima separazione emersa dai dati reali, 08/10→22/10)
+    p2 = None
     if label == "meccanismo" and "magnet" in groups and "trigger" in groups:
         g1, g2 = groups["magnet"], groups["trigger"]
         p2 = fisher_exact_2x2(g1["held"], g1["n"] - g1["held"],
