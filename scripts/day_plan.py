@@ -588,7 +588,14 @@ def score_plan_against(plan: dict, idx_et, highs, lows, closes=None, only_date=N
                 touched = True
                 first = k
                 break
-        if touched:
+        # magnete (max pain): il mestiere è la CHIUSURA DI GIORNATA sul
+        # livello — il pinning dei dealer avviene in chiusura, non a 2h dal
+        # tocco (lezione 24/10). Non richiede il tocco: la giornata chiude
+        # sul livello o no. Il close è quello dell'ULTIMA barra del giorno.
+        if kind == "magnet" and closes is not None and closes:
+            held = abs(closes[-1] - P) <= band
+            touched = True
+        elif touched:
             after_hi = max(highs[first:first + 24], default=P)
             after_lo = min(lows[first:first + 24], default=P)
             mid = (highs[first] + lows[first]) / 2
@@ -597,10 +604,6 @@ def score_plan_against(plan: dict, idx_et, highs, lows, closes=None, only_date=N
                 # successo = rottura CON follow-through (≥ rej) nella direzione
                 # di moto entro la finestra; stallo o rimbalzo = fallimento
                 held = after_lo <= P - rej if from_above else after_hi >= P + rej
-            elif kind == "magnet" and closes is not None:
-                # successo = convergenza: a fine finestra il prezzo chiude sul livello
-                last = min(first + 24, len(idx_et) - 1)
-                held = abs(closes[last] - P) <= band
             else:
                 # barriera/pin/pivot: successo = stallo sul lato di arrivo
                 # (mai il buffer di 4 pt) OPPURE respinta ≥6 pt in direzione
@@ -834,7 +837,8 @@ def main() -> None:
                 snap = {"date": target.isoformat(), "spot": spot_ref,
                         "regime": regime, "divergence": divergence,
                         "near_mp": near_mp if mp is not None else None,
-                        "scenario": scenario}
+                        "scenario": scenario,
+                        "expiry_day": bool(old_plan.get("gex_flip_0dte"))}
 
                 results = update_stats({**old_plan, "levels": old_levels},
                                        idx_et, h, l, cl, stats, prefix=fut,
