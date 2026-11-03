@@ -62,13 +62,16 @@ separato futuro con modelli decisionali dedicati.
    CONTRATTO con InsiderFinance sia sul perimetro front-week (9/9 strike)
    sia sul libro completo fino al 2029 (10/10).
    **Scala semplificata** (03/11 sera): troppi livelli, l'utente non
-   distingueva gli importanti. Ora la scala mostra SOLO: i 3 muri gamma
-   PIÙ GROSSI per |GEX| (top-3 globale, non per lato — il segno decide
-   🛡 pin / ⚡ trigger; è la lettura "InsiderFinance": pochi e grandi),
-   il Max Pain della scadenza vicina e il flip gamma. Fuori scala:
-   PIN/TRIGGER minori, muri gamma piccoli, MAXPAIN-ALL, flip 0DTE
-   (quest'ultimo resta nell'header). Il track record lato backend
-   continua a giudicare TUTTI i livelli: nessuna perdita di storicità.
+   distingueva gli importanti. Ora la scala mostra SOLO: i muri gamma per
+   |GEX| col SELETTORE MATURITÀ (03/11 notte: Tutte/≤7gg/0DTE —
+   top_gamma_by_bucket partiziona il libro per scadenza; gamma corta
+   domina naturalmente il top aggregato, senza borse i muri delle
+   scadenze lunghe non emergerebbero mai) con GARANZIA PER LATO (il
+   migliore sopra + il migliore sotto sempre, poi riempimento fino a 3:
+   prima capitava un lato vuoto), più il Max Pain della scadenza vicina
+   e il flip gamma. Fuori scala: PIN/TRIGGER minori, MAXPAIN-ALL, flip
+   0DTE (resta nell'header). Il track record lato backend continua a
+   giudicare TUTTI i livelli: nessuna perdita di storicità.
    **Etichetta lato dominante** (03/11 notte): compute_option_levels ora
    accumula anche il |GEX| per lato (call_abs/put_abs per strike) e
    top_strikes portano side: 'call'|'put' — la scala etichetta 'Call
