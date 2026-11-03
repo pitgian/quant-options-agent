@@ -44,6 +44,10 @@ separato futuro con modelli decisionali dedicati.
    price/AMT o da un altro indice. Se la catena indice è degradata la fonte
    resta assente e la UI mostra avviso; aggregati indice nel piano:
    gamma_regime_index, top_gamma_index, max_pain_*_index, gex_flip_0dte_index.
+   **Soglia OI per simbolo** (03/11): MIN_CHAIN_OI_BY_SYMBOL={"NDX": 25k} —
+   l'OI naturale di NDX su Yahoo è ~50-60k (mercato istituzionale, pochi
+   contratti da ~2,8M$): la soglia assoluta 100k la scartava sempre →
+   niente livelli indice per NQ (bug del 03/11, vista indici solo ES).
    **Scenario GEX×MaxPain** (08/10): configura A compressione (long gamma
    + max pain entro 0,4%), B trend (short gamma + max pain lontano), C
    checkpoint (muro barriera frapposto), clausola OPEX, divergenza SPY/QQQ

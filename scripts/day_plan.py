@@ -46,6 +46,20 @@ STATS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "level_stats.json")
 # smette di fornire openInterest e la catena torna con OI≈0: sotto questa
 # soglia muri/flip/max pain sono numeri a caso e NON vengono pubblicati.
 MIN_CHAIN_OI = 100_000
+# Soglie DIVERSE per simbolo: l'OI naturale dipende dal mercato. NDX è
+# istituzionale con pochi contratti ma ~2,8M$ di nozionale ciascuno — su
+# Yahoo oscilla attorno a 50-60k TOTALI (con il 99% dei contratti che
+# porta OI): con la soglia assoluta 100k la catena NDX risultava sempre
+# "degradata" → niente livelli indice per NQ. La soglia ridotta (~44%
+# del normale) scatta solo se Yahoo perde metà dei dati.
+MIN_CHAIN_OI_BY_SYMBOL = {"NDX": 25_000}
+
+
+def min_chain_oi(symbol: str) -> int:
+    """Soglia OI per simbolo (default: quella degli ETF)."""
+    return MIN_CHAIN_OI_BY_SYMBOL.get(symbol, MIN_CHAIN_OI)
+
+
 OPTIONS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "options_data.json")
 
 ET = ZoneInfo("America/New_York")
@@ -771,7 +785,7 @@ def main() -> None:
         oi_tot = sum(int(o.get("oi", 0) or 0)
                      for e in sd.get("expiries", [])
                      for o in (e.get("options") or []))
-        degraded = (sd.get("data_quality") == "degraded" or oi_tot < MIN_CHAIN_OI)
+        degraded = (sd.get("data_quality") == "degraded" or oi_tot < min_chain_oi(sym))
         if degraded:
             print(f"day_plan: catena {sym} degradata (OI tot {oi_tot:,}) → "
                   f"livelli opzioni saltati")
@@ -797,7 +811,7 @@ def main() -> None:
             oi_idx = sum(int(o.get("oi", 0) or 0)
                          for e in spx.get("expiries", [])
                          for o in (e.get("options") or []))
-            deg_idx = (spx.get("data_quality") == "degraded" or oi_idx < MIN_CHAIN_OI)
+            deg_idx = (spx.get("data_quality") == "degraded" or oi_idx < min_chain_oi(idx_sym))
             if deg_idx:
                 print(f"day_plan: catena {('SPX' if fut == 'ES' else 'NDX')} degradata "
                       f"(OI tot {oi_idx:,}) → livelli da indici saltati")
