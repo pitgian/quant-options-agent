@@ -18,8 +18,10 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import time
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 try:
     from zoneinfo import ZoneInfo
@@ -599,6 +601,132 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
         pass
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# CBOE delayed quotes — catene INDICE (SPX/NDX), fonte ufficiale gratuita
+# ---------------------------------------------------------------------------
+# Yahoo sottostima pesantemente l'OI degli indici (SPX ~5×, NDX ~3,4× meno
+# del reale) e dà IV/gamma a tratti. Le catene delayed quotes CBOE (lo stesso
+# JSON che alimenta cboe.com) danno il libro completo: OI reale, gamma, IV,
+# volume per serie — in UN solo HTTP per simbolo, senza chiavi. Il redirect
+# Cloudflare (307) va seguito; serve uno User-Agent realistico.
+# SPY/QQQ non sono su CBOE delayed quotes (solo indici CBOE-listed): restano
+# su Yahoo, dove l'OI è abbondante e affidabile.
+CBOE_CHAIN_SYMBOLS = {"SPX": "_SPX", "NDX": "_NDX"}
+CBOE_DELAYED_QUOTES_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options/{sym}.json"
+CBOE_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+CBOE_TIMEOUT_S = 60
+# Finestra strike conservata attorno allo spot: fuori, non servono mai (il
+# day plan rileva ±10% con RELEVANCE_WINDOW_PCT) e tagliano il JSON ~4×.
+CBOE_STRIKE_WINDOW_PCT = 0.10
+
+# "SPXW261106P05000000" → root 'SPXW', scadenza 261106 (YYMMDD), PUT, 5000.0
+CBOE_SYMBOL_RE = re.compile(r"^([A-Z]+)(\d{6})([CP])(\d{8})$")
+
+
+def parse_cboe_option_symbol(code: str) -> Optional[Tuple[str, str, str, float]]:
+    """Codice OCC-like CBOE → (root, scadenza YYMMDD, C/P, strike). None se non riconosciuto."""
+    m = CBOE_SYMBOL_RE.match(code or "")
+    if not m:
+        return None
+    root, yymmdd, side, strike_digits = m.groups()
+    return root, yymmdd, side, int(strike_digits) / 1000.0
+
+
+def cboe_expiry_to_iso(yymmdd: str) -> str:
+    """'261106' → '2026-11-06' (formato scadenze del pipeline)."""
+    return f"20{yymmdd[:2]}-{yymmdd[2:4]}-{yymmdd[4:6]}"
+
+
+def fetch_cboe_chains(symbol: str, spot_hint: float = 0.0) -> Optional[Dict[str, Any]]:
+    """
+    Scarica la catena CBOE per un simbolo indice e la restituisce nel formato
+    che fetch_symbol_data si aspetta dallo scan Yahoo:
+        {"spot": float, "chains": {expiry_iso: {"calls": DataFrame, "puts": DataFrame}},
+         "timestamp": str}
+    I DataFrame portano le STESSSE colonne che parse_chain_side legge
+    (strike, openInterest, volume, impliedVolatility, bid, ask, gamma): tutto
+    il downstream (fallback OI, pulizia IV, walls, skew) resta invariato.
+    Scadenze passate scartate; strike fuori ±CBOE_STRIKE_WINDOW_PCT scartati.
+    None se qualcosa va storto (il chiamante ripiega su Yahoo).
+    """
+    url = CBOE_DELAYED_QUOTES_URL.format(sym=CBOE_CHAIN_SYMBOLS[symbol])
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": CBOE_USER_AGENT, "Accept": "application/json"},
+            timeout=CBOE_TIMEOUT_S,
+            allow_redirects=True,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as e:
+        logger.error(f"❌ [{symbol}] fetch CBOE fallito: {e}")
+        return None
+
+    data = payload.get("data") or {}
+    raw_options = data.get("options") or []
+    if not raw_options:
+        logger.error(f"❌ [{symbol}] catena CBOE vuota")
+        return None
+
+    spot = float(data.get("current_price") or 0) or float(spot_hint or 0)
+    if not spot:
+        logger.error(f"❌ [{symbol}] spot CBOE assente")
+        return None
+
+    today_iso = datetime.now(_ET).date().isoformat()
+    lo, hi = spot * (1 - CBOE_STRIKE_WINDOW_PCT), spot * (1 + CBOE_STRIKE_WINDOW_PCT)
+    by_expiry: Dict[str, Dict[str, list]] = defaultdict(lambda: {"CALL": [], "PUT": []})
+    n_past = 0
+    n_far = 0
+    n_bad = 0
+    for o in raw_options:
+        parsed = parse_cboe_option_symbol(o.get("option", ""))
+        if parsed is None:
+            n_bad += 1
+            continue
+        _root, yymmdd, side_code, strike = parsed
+        exp_iso = cboe_expiry_to_iso(yymmdd)
+        if exp_iso < today_iso:
+            n_past += 1
+            continue
+        if not (lo <= strike <= hi):
+            n_far += 1
+            continue
+        side = "CALL" if side_code == "C" else "PUT"
+        by_expiry[exp_iso][side].append({
+            "strike": round(strike, 2),
+            "openInterest": int(o.get("open_interest", 0) or 0),
+            "volume": int(o.get("volume", 0) or 0),
+            "impliedVolatility": float(o.get("iv", 0) or 0),
+            "bid": float(o.get("bid", 0) or 0),
+            "ask": float(o.get("ask", 0) or 0),
+            "gamma": float(o.get("gamma", 0) or 0),
+        })
+
+    chains: Dict[str, Dict[str, pd.DataFrame]] = {}
+    for exp_iso, sides in by_expiry.items():
+        calls = pd.DataFrame(sides["CALL"])
+        puts = pd.DataFrame(sides["PUT"])
+        if calls.empty and puts.empty:
+            continue
+        chains[exp_iso] = {"calls": calls, "puts": puts}
+    if not chains:
+        logger.error(f"❌ [{symbol}] nessuna scadenza CBOE valida entro ±{CBOE_STRIKE_WINDOW_PCT:.0%}")
+        return None
+
+    n_kept = sum(len(c["calls"]) + len(c["puts"]) for c in chains.values())
+    logger.info(
+        f"✅ [{symbol}] CBOE: spot {spot:.2f}, {len(chains)} scadenze, "
+        f"{n_kept} contratti entro ±{CBOE_STRIKE_WINDOW_PCT:.0%} "
+        f"(scarti: {n_far} strike lontani, {n_past} scadenze passate, {n_bad} codici irregolari)"
+    )
+    return {"spot": spot, "chains": chains, "timestamp": data.get("timestamp")}
 
 
 def fetch_options_chain(
@@ -1648,62 +1776,85 @@ def fetch_symbol_data(
 
     ticker = yf.Ticker(yf_symbol)
 
-    # 1. Spot price
-    spot = get_spot_price(symbol, ticker)
-    if spot is None:
-        logger.error(f"❌ Could not determine spot price for {symbol}")
-        return None
-    logger.info(f"💰 {symbol} spot price: ${spot:.2f}")
-
-    # 2. Available expirations
-    try:
-        expirations = ticker.options
-    except Exception as e:
-        logger.error(f"❌ Could not fetch expirations for {symbol}: {e}")
-        return None
-
-    if not expirations:
-        logger.error(f"❌ No expirations available for {symbol}")
-        return None
-
-    # 3. Scan ALL expirations: fetch chains, count contracts, cache data
-    logger.info(
-        f"🔍 Scanning all {len(expirations)} expirations to rank by contract count..."
-    )
-
-    # Stores: expiry_date -> {"calls": DataFrame, "puts": DataFrame, "contract_count": int}
+    # 1-3. Catena opzioni — SPX/NDX via CBOE (fonte ufficiale: OI reale,
+    #      gamma e IV per serie, un solo HTTP); tutte le altre via Yahoo.
+    #      Se CBOE fallisce si ripiega sul percorso Yahoo esistente.
     fetched_chains: Dict[str, Dict[str, Any]] = {}
     expiry_contract_counts: List[Tuple[str, int]] = []
     failed_expirations: List[str] = []
+    chain_source = "yahoo"
 
-    for idx, exp_date in enumerate(expirations):
+    cboe_chain = None
+    if symbol in CBOE_CHAIN_SYMBOLS:
+        cboe_chain = fetch_cboe_chains(symbol)
+        if cboe_chain is None:
+            logger.warning(f"⚠️ [{symbol}] CBOE non disponibile → fallback Yahoo")
+        else:
+            chain_source = "cboe"
+            fetched_chains = cboe_chain["chains"]
+            expiry_contract_counts = [
+                (d, len(c["calls"]) + len(c["puts"]))
+                for d, c in fetched_chains.items()
+            ]
+
+    if cboe_chain is None:
+        # 1. Spot price (percorso Yahoo / derivazione da ETF)
+        spot = get_spot_price(symbol, ticker)
+        if spot is None:
+            logger.error(f"❌ Could not determine spot price for {symbol}")
+            return None
+        logger.info(f"💰 {symbol} spot price: ${spot:.2f}")
+
+        # 2. Available expirations
         try:
-            chain = fetch_options_chain(ticker, exp_date)
-            if chain is None:
-                failed_expirations.append(exp_date)
-                continue
-
-            contract_count = len(chain["calls"]) + len(chain["puts"])
-            fetched_chains[exp_date] = chain
-            expiry_contract_counts.append((exp_date, contract_count))
-            logger.info(
-                f"  📋 [{idx + 1}/{len(expirations)}] {exp_date}: "
-                f"{contract_count} contracts"
-            )
+            expirations = ticker.options
         except Exception as e:
-            logger.warning(f"⚠️ Skipping {exp_date} (unexpected error: {e})")
-            failed_expirations.append(exp_date)
+            logger.error(f"❌ Could not fetch expirations for {symbol}: {e}")
+            return None
 
-        # Small delay between chain fetches to avoid rate limiting
-        if CHAIN_FETCH_DELAY > 0 and idx < len(expirations) - 1:
-            time.sleep(CHAIN_FETCH_DELAY)
+        if not expirations:
+            logger.error(f"❌ No expirations available for {symbol}")
+            return None
 
-    if failed_expirations:
-        logger.warning(
-            f"⚠️ {len(failed_expirations)} expirations failed: "
-            f"{', '.join(failed_expirations[:5])}"
-            f"{'...' if len(failed_expirations) > 5 else ''}"
+        # 3. Scan ALL expirations: fetch chains, count contracts, cache data
+        logger.info(
+            f"🔍 Scanning all {len(expirations)} expirations to rank by contract count..."
         )
+
+        for idx, exp_date in enumerate(expirations):
+            try:
+                chain = fetch_options_chain(ticker, exp_date)
+                if chain is None:
+                    failed_expirations.append(exp_date)
+                    continue
+
+                contract_count = len(chain["calls"]) + len(chain["puts"])
+                fetched_chains[exp_date] = chain
+                expiry_contract_counts.append((exp_date, contract_count))
+                logger.info(
+                    f"  📋 [{idx + 1}/{len(expirations)}] {exp_date}: "
+                    f"{contract_count} contracts"
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Skipping {exp_date} (unexpected error: {e})")
+                failed_expirations.append(exp_date)
+
+            # Small delay between chain fetches to avoid rate limiting
+            if CHAIN_FETCH_DELAY > 0 and idx < len(expirations) - 1:
+                time.sleep(CHAIN_FETCH_DELAY)
+
+        if failed_expirations:
+            logger.warning(
+                f"⚠️ {len(failed_expirations)} expirations failed: "
+                f"{', '.join(failed_expirations[:5])}"
+                f"{'...' if len(failed_expirations) > 5 else ''}"
+            )
+    else:
+        spot = float(cboe_chain["spot"])
+        logger.info(f"💰 {symbol} spot price (CBOE): ${spot:.2f}")
+        # il log di selezione più sotto usa len(expirations): nel percorso CBOE
+        # lo scan Yahoo non c'è — il totale è quello delle scadenze CBOE
+        expirations = sorted(fetched_chains)
 
     if not expiry_contract_counts:
         logger.error(f"❌ No option chains could be fetched for {symbol}")
@@ -1952,6 +2103,7 @@ def fetch_symbol_data(
     result = {
         "spot": spot,
         "generated": now_iso,
+        "chain_source": chain_source,
         "oi_fallback_used": oi_fallback_used,
         "data_quality": data_quality,
         "total_net_gex": round(total_net_gex, 2),

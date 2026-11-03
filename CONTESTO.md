@@ -48,6 +48,16 @@ separato futuro con modelli decisionali dedicati.
    l'OI naturale di NDX su Yahoo è ~50-60k (mercato istituzionale, pochi
    contratti da ~2,8M$): la soglia assoluta 100k la scartava sempre →
    niente livelli indice per NQ (bug del 03/11, vista indici solo ES).
+   **Catene SPX/NDX da CBOE** (03/11 pomeriggio): Yahoo sottostimava l'OI
+   degli indici (SPX ~5×, NDX ~3,4× meno del reale). Le catene delayed
+   quotes CBOE (cdn.cboe.com, ufficiali e gratuite) danno l'intero libro
+   con gamma/IV/OI per serie, in un solo HTTP; il fetch ora le usa per
+   SPX/NDX (parse simbolo OCC-like, strike filtrati ±10%, stesse colonne
+   DataFrame del percorso Yahoo → tutto il downstream invariato), con
+   fallback automatico a Yahoo se CBOE non risponde. Per simbolo nel JSON:
+   chain_source: 'cboe'|'yahoo'. SPY/QQQ restano su Yahoo (non sono su
+   CBOE delayed quotes). Bug scope trovato in test e2e: len(expirations)
+   nel percorso CBOE (fissato con expirations = sorted(fetched_chains)).
    **Scenario GEX×MaxPain** (08/10): configura A compressione (long gamma
    + max pain entro 0,4%), B trend (short gamma + max pain lontano), C
    checkpoint (muro barriera frapposto), clausola OPEX, divergenza SPY/QQQ
@@ -75,8 +85,10 @@ services/dayPlanService.ts   UNICO servizio: day_plan.json + level_stats.json + 
 lib/auction.ts               MOTORE puro: profileStats (VA 70%), classifyOpen,
                              buildLadder (clustering 5pt, rank, importanza) + test
 scripts/
-  fetch_options_data.py      catene opzioni + walls (calculate_walls) + GEX +
-                             profili futures 7 finestre + playbook legacy
+  fetch_options_data.py      catene opzioni (SPX/NDX da CBOE delayed quotes,
+                             fallback Yahoo; SPY/QQQ da Yahoo) + walls
+                             (calculate_walls) + GEX + profili futures
+                             7 finestre + playbook legacy
                              (fetch_intraday_playbook — calcola ma la UI non lo usa più)
   day_plan.py                MOTORE puro: costruisce data/day_plan.json (livelli
                              prezzo+AMT+opzioni in scala ES/NQ da doppia catena
