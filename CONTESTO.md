@@ -58,6 +58,17 @@ separato futuro con modelli decisionali dedicati.
    chain_source: 'cboe'|'yahoo'. SPY/QQQ restano su Yahoo (non sono su
    CBOE delayed quotes). Bug scope trovato in test e2e: len(expirations)
    nel percorso CBOE (fissato con expirations = sorted(fetched_chains)).
+   Validazione esterna: l'OI per strike CBOE coincide CONTRATTO PER
+   CONTRATTO con InsiderFinance sia sul perimetro front-week (9/9 strike)
+   sia sul libro completo fino al 2029 (10/10).
+   **Scala semplificata** (03/11 sera): troppi livelli, l'utente non
+   distingueva gli importanti. Ora la scala mostra SOLO: i 3 muri gamma
+   PIÙ GROSSI per |GEX| (top-3 globale, non per lato — il segno decide
+   🛡 pin / ⚡ trigger; è la lettura "InsiderFinance": pochi e grandi),
+   il Max Pain della scadenza vicina e il flip gamma. Fuori scala:
+   PIN/TRIGGER minori, muri gamma piccoli, MAXPAIN-ALL, flip 0DTE
+   (quest'ultimo resta nell'header). Il track record lato backend
+   continua a giudicare TUTTI i livelli: nessuna perdita di storicità.
    **Scenario GEX×MaxPain** (08/10): configura A compressione (long gamma
    + max pain entro 0,4%), B trend (short gamma + max pain lontano), C
    checkpoint (muro barriera frapposto), clausola OPEX, divergenza SPY/QQQ

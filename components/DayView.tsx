@@ -51,45 +51,45 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
   const spot = (futures === 'ES' ? live?.ES : live?.NQ) ?? plan?.last_price ?? 0;
   const idxName = futures === 'ES' ? 'SPX' : 'NDX';
 
-  // SOLO livelli da opzioni + max pain (i livelli di prezzo — VWAP, max/min,
-  // value — non fanno parte di questo strumento), filtrati per fonte:
-  //  etf   → livelli senza chain (piani legacy) o chain='etf'
-  //  index → solo chain='index'
-  //  both  → tutti: le coincidenze delle due fonti diventano confluenza ★
+  // LA SCALA SEMPLIFICATA — solo i livelli che contano, per fonte selezionata:
+  //   1. i 3 muri gamma PIÙ GROSSI per |GEX| (independentemente dal lato:
+  //      il segno decide pin 🛡 vs trigger ⚡) — è la lettura "InsiderFinance":
+  //      pochi livelli, i grandi
+  //   2. il Max Pain della scadenza vicina (magnete 🧲)
+  //   3. il flip gamma (confinе di regime)
+  // Fuori scala: PIN/TRIGGER minori, muri gamma piccoli, max pain aggregato,
+  // flip 0DTE (resta nell'header). Il track record li continua a giudicare
+  // TUTTI lato backend: l'affidabilità storica non si perde.
   const optLevels: DayPlanLevel[] = useMemo(() => {
     if (!plan) return [];
-    const out: DayPlanLevel[] = plan.levels.filter(l =>
-      l.source === 'options' &&
-      (chain === 'both' ? true : chain === 'index' ? l.chain === 'index' : l.chain !== 'index'));
+    const out: DayPlanLevel[] = [];
+
+    // flip gamma della fonte (regime boundary, pivot)
+    const flipName = chain === 'index' ? 'GEX-FLIP-IDX' : 'GEX-FLIP';
+    const flip = plan.levels.find(l => l.name === flipName);
+    if (flip) out.push(flip);
+
+    // Max Pain della scadenza vicina (magnete intraday)
     const addMp = (price: number | undefined, name: string, nome: string) => {
       if (price) out.push({
         name, nome_it: nome, price, kind: 'magnet', source: 'options',
         dist_pts: Math.round(price - spot),
       } as DayPlanLevel);
     };
-    if (chain !== 'index') {
-      addMp(plan.max_pain_nearest, 'MAXPAIN-0DTE', 'Max Pain scadenza vicina');
-      addMp(plan.max_pain_all, 'MAXPAIN-ALL', 'Max Pain (tutte le scadenze)');
-    }
-    if (chain !== 'etf') {
-      addMp(plan.max_pain_nearest_index, 'MAXPAIN-0DTE-IDX', `Max Pain scadenza vicina (${idxName})`);
-      addMp(plan.max_pain_all_index, 'MAXPAIN-ALL-IDX', `Max Pain (tutte le scadenze, ${idxName})`);
-    }
-    // I muri gamma del profilo per strike entrano nella scala come livelli a
-    // sé — ma SOLO i top 3 per lato per |GEX|: i minori restano visibili come
-    // barra sulla loro zona (se esiste) senza creare righe proprie. Il
-    // clustering può fonderli con i muri OI+Volume vicini (= confluenza), così
-    // anche il muro più grande, prima invisibile se cadeva tra le zone, entra.
+    if (chain !== 'index') addMp(plan.max_pain_nearest, 'MAXPAIN-0DTE', 'Max Pain scadenza vicina');
+    if (chain !== 'etf') addMp(plan.max_pain_nearest_index, 'MAXPAIN-0DTE-IDX', `Max Pain scadenza vicina (${idxName})`);
+
+    // I 3 muri gamma PIÙ GROSSI per |GEX| della fonte (top_gamma = profilo
+    // per strike; il segno dice pin 🛡 o trigger ⚡). Niente più top-3 PER
+    // LATO: l'utente vuole i grandi, non il quadro completo.
     const addGammaWalls = (
       tg: typeof plan.top_gamma | undefined,
       nameSuffix: string, labelSuffix: string,
     ) => {
-      const gammaSorted = [...(tg ?? [])].sort((a, b) => Math.abs(b.net_gex) - Math.abs(a.net_gex));
-      const top3 = new Set([
-        ...gammaSorted.filter(t => t.strike_fut >= spot).slice(0, 3),
-        ...gammaSorted.filter(t => t.strike_fut < spot).slice(0, 3),
-      ]);
-      for (const t of top3) {
+      const top = [...(tg ?? [])]
+        .sort((a, b) => Math.abs(b.net_gex) - Math.abs(a.net_gex))
+        .slice(0, 3);
+      for (const t of top) {
         const zone = Math.round(t.strike_fut / 5) * 5;
         out.push({
           name: `MURO-GAMMA${nameSuffix}`,
@@ -328,10 +328,11 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
           <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={topGammaSel} />
         )}
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
-          Fonte selezionabile nel menu in alto: <b>ETF</b> (SPY/QQQ, esercizio americano fisico) ·
-          <b> Indici</b> ({idxName}, europee a regolamento in contanti, hedge dei dealer sui futures) ·
+          La scala mostra SOLO i livelli chiave: i <b>3 muri gamma più grossi</b> per |GEX|
+          (il segno decide il meccanismo: 🛡 pin = respinge, ⚡ trigger = accelera), il
+          <b> Max Pain della scadenza vicina</b> (🧲 magnete) e il <b>flip gamma</b> (confine di regime).
+          Fonte selezionabile nel menu in alto: <b>ETF</b> (SPY/QQQ) · <b>Indici</b> ({idxName}) ·
           <b> Entrambi</b> (le coincidenze delle due fonti emergono come confluenza ★).
-          Pin = gamma lunga (respinge) · Trg = gamma corta (accelera) · Magnete = il prezzo tende a tornarci.
           La barra a destra di ogni zona è il GEX netto degli strike lì caduti:
           più è lunga più il muro è denso, verde respinge / rossa amplifica.
         </p>
