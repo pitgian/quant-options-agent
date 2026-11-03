@@ -213,6 +213,18 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
     );
   }
 
+  // Nota di regime: esiste almeno un pin (gamma lunga) SOTTO lo spot? Se no,
+  // è la firma strutturale del libro (put comprate = dealer short gamma sotto):
+  // va detto nella scala, non lasciato intuire.
+  const hasPinBelow = useMemo(() => {
+    if (!plan) return null;
+    const tgs = chain === 'etf' ? plan.top_gamma
+      : chain === 'index' ? plan.top_gamma_index
+      : [...(plan.top_gamma ?? []), ...(plan.top_gamma_index ?? [])];
+    if (!tgs || tgs.length === 0) return null;
+    return tgs.some(t => t.sign === 'long' && t.strike_fut < spot);
+  }, [plan, chain, spot]);
+
   return (
     <div className="flex flex-col gap-5">
       {/* Regime gamma */}
@@ -326,6 +338,11 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
           </p>
         ) : (
           <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={topGammaSel} />
+        )}
+        {hasPinBelow === false && optLevels.length > 0 && (
+          <p className="text-[10px] text-amber-400/80 leading-relaxed mt-2" title="Sotto lo spot tutto il libro è put comprate: i dealer sono short gamma e il loro hedging vende mentre il prezzo scende">
+            ⚠ Nessun pin sotto lo spot: sotto è tutto put comprata (dealer short gamma) — le discese tendono ad accelerare. Il primo sostegno “da gamma” torna sopra il flip o dove le put vengono vendute.
+          </p>
         )}
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           La scala mostra SOLO i livelli chiave: i <b>3 muri gamma più grossi</b> per |GEX|
