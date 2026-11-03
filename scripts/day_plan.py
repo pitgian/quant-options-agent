@@ -807,13 +807,14 @@ def main() -> None:
         # UI continua a mostrare gli ETF.
         index_opts = None
         index_aggr: dict = {}
+        idx_sym = "SPX" if fut == "ES" else "NDX"
         if index_to_fut and spx.get("expiries"):
             oi_idx = sum(int(o.get("oi", 0) or 0)
                          for e in spx.get("expiries", [])
                          for o in (e.get("options") or []))
             deg_idx = (spx.get("data_quality") == "degraded" or oi_idx < min_chain_oi(idx_sym))
             if deg_idx:
-                print(f"day_plan: catena {('SPX' if fut == 'ES' else 'NDX')} degradata "
+                print(f"day_plan: catena {idx_sym} degradata "
                       f"(OI tot {oi_idx:,}) → livelli da indici saltati")
             else:
                 walls_i, flip_i, flip0_i, tg_i, reg_i = compute_option_levels(
