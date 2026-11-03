@@ -120,10 +120,18 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
         } as DayPlanLevel);
       }
     };
-    if (chain !== 'index') addGammaWalls(plan.top_gamma, '', '');
-    if (chain !== 'etf') addGammaWalls(plan.top_gamma_index, '-IDX', ` · ${idxName}`);
+    // Profili gamma della borsa selezionata (0dte/week/all) per catena:
+    // usati SIA dai muri della scala SIA dalle barre GEX.
+    const tgEtf = bucket === '0dte' ? plan.top_gamma_0dte
+      : bucket === 'week' ? plan.top_gamma_week
+      : plan.top_gamma;
+    const tgIdx = bucket === '0dte' ? plan.top_gamma_0dte_index
+      : bucket === 'week' ? plan.top_gamma_week_index
+      : plan.top_gamma_index;
+    if (chain !== 'index') addGammaWalls(tgEtf, '', '');
+    if (chain !== 'etf') addGammaWalls(tgIdx, '-IDX', ` · ${idxName}`);
     return out;
-  }, [plan, spot, chain, idxName]);
+  }, [plan, spot, chain, idxName, bucket]);
 
   // Flip e regime SECONDO LA FONTE selezionata. Il regime esiste ANCHE senza
   // flip: quando il profilo entro ±10% è tutto positivo/negativo non c'è
@@ -234,9 +242,10 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
   // hook tra il primo render (piano assente) e quello con i dati → crash React
   // (pagina nera, bug del 03/11).
   const hasPinBelow = useMemo(() => {
-    if (!topGammaSel || topGammaSel.length === 0) return null;
-    return topGammaSel.some(t => t.sign === 'long' && t.strike_fut < spot);
-  }, [topGammaSel, spot]);
+    if (!optLevels.length) return null;
+    // coerente con ciò che la scala MOSTRA: esiste una riga 🛡 sotto lo spot?
+    return optLevels.some(l => l.price < spot && (l.gamma === 'pin' || l.kind === 'barrier'));
+  }, [optLevels, spot]);
 
   if (!plan) {
     return (
