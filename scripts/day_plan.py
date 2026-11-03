@@ -202,6 +202,8 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
     today = datetime.now(ET).date().isoformat()
     net: dict = {}
     net0: dict = {}
+    call_abs: dict = {}   # |GEX| del lato call per strike (per il lato dominante)
+    put_abs: dict = {}
     for exp in expiries:
         is_today = exp.get("date") == today
         for o in exp.get("options", []):
@@ -209,10 +211,13 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
             if not g:
                 continue
             sign = 1.0 if o["side"] == "CALL" else -1.0
-            v = o["oi"] * g * CONTRACT * spot * spot * sign
+            mag = o["oi"] * g * CONTRACT * spot * spot
+            v = mag * sign
             net[o["strike"]] = net.get(o["strike"], 0.0) + v
             if is_today:
                 net0[o["strike"]] = net0.get(o["strike"], 0.0) + v
+            (call_abs if o["side"] == "CALL" else put_abs)[o["strike"]] = \
+                (call_abs if o["side"] == "CALL" else put_abs).get(o["strike"], 0.0) + mag
 
     def _nearest_zero_crossing(profile: dict) -> float | None:
         strikes = sorted(profile)
@@ -230,8 +235,18 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
     flip0 = _nearest_zero_crossing(net0) if net0 else None
 
     top = sorted(net.items(), key=lambda kv: -abs(kv[1]))[:10]
-    top_strikes = [{"strike": round(k, 1), "net_gex": round(vv, 0),
-                    "sign": "long" if vv >= 0 else "short"} for k, vv in top]
+    top_strikes = []
+    for k, vv in top:
+        # lato dominante: quale lato contribuisce di più al GEX dello strike
+        # (serve a etichettare 'call wall' / 'put wall' come InsiderFinance)
+        c_abs = call_abs.get(k, 0.0)
+        p_abs = put_abs.get(k, 0.0)
+        top_strikes.append({
+            "strike": round(k, 1),
+            "net_gex": round(vv, 0),
+            "sign": "long" if vv >= 0 else "short",
+            "side": "call" if c_abs >= p_abs else "put",
+        })
 
     # regime dal SEGNO del GEX ai due strike che bracketano lo spot: è
     # definito ANCHE quando non c'è zero-crossing entro la finestra (profilo

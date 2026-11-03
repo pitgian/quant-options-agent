@@ -91,9 +91,13 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
         .slice(0, 3);
       for (const t of top) {
         const zone = Math.round(t.strike_fut / 5) * 5;
+        // Lato dominante dello strike (call vs put): stessa lingua dei
+        // 'Call wall / Put wall' di InsiderFinance; il segno della gamma
+        // netta resta il meccanismo (pin 🛡 / trigger ⚡).
+        const wallLabel = t.side === 'call' ? 'Call wall' : t.side === 'put' ? 'Put wall' : 'Muro gamma';
         out.push({
           name: `MURO-GAMMA${nameSuffix}`,
-          nome_it: `Muro gamma ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})${labelSuffix}`,
+          nome_it: `${wallLabel} ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})${labelSuffix}`,
           price: zone,
           kind: t.sign === 'long' ? 'barrier' : 'trigger',
           source: 'options',

@@ -18,6 +18,9 @@ export interface DayPlanLevel {
   gamma?: 'pin' | 'trigger';
   /** Serie dell'opzione che genera il muro (solo walls: call/put). */
   side?: 'call' | 'put';
+  /** Lato dominante dello strike per i muri gamma (call vs put):
+   *  etichetta 'Call wall' / 'Put wall' alla InsiderFinance. */
+  wall_side?: 'call' | 'put';
   /** Open Interest del muro (contratti) — solo per i walls. */
   oi?: number;
   /** Catena che genera il livello (solo fonti opzioni):
@@ -40,11 +43,11 @@ export interface DayPlan {
   gex_flip_0dte?: number;
   /** Regime dal segno del GEX sullo spot: presente anche senza flip. */
   gamma_regime?: 'long' | 'short' | null;
-  top_gamma?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
+  top_gamma?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   /** Stessi aggregati ma dalla catena INDICE (SPX per ES, NDX per NQ):
    *  assenti se la catena indice è degradata o mancante nello snapshot. */
   gamma_regime_index?: 'long' | 'short' | null;
-  top_gamma_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
+  top_gamma_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   gex_flip_0dte_index?: number;
   max_pain_nearest_index?: number;
   max_pain_all_index?: number;

@@ -69,6 +69,14 @@ separato futuro con modelli decisionali dedicati.
    PIN/TRIGGER minori, muri gamma piccoli, MAXPAIN-ALL, flip 0DTE
    (quest'ultimo resta nell'header). Il track record lato backend
    continua a giudicare TUTTI i livelli: nessuna perdita di storicità.
+   **Etichetta lato dominante** (03/11 notte): compute_option_levels ora
+   accumula anche il |GEX| per lato (call_abs/put_abs per strike) e
+   top_strikes portano side: 'call'|'put' — la scala etichetta 'Call
+   wall' / 'Put wall' alla InsiderFinance, col meccanismo sempre dal
+   segno della gamma netta. Anche la nota "nessun pin sotto lo spot":
+   nell'indice le put sotto sono comprate → dealer short gamma → le
+   discese accelerano (struttura, non filtro: verificato 0 pin sotto su
+   ES e NQ nel libro reale).
    **Scenario GEX×MaxPain** (08/10): configura A compressione (long gamma
    + max pain entro 0,4%), B trend (short gamma + max pain lontano), C
    checkpoint (muro barriera frapposto), clausola OPEX, divergenza SPY/QQQ
