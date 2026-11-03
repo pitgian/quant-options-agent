@@ -1,7 +1,7 @@
 # CONTESTO — stato del progetto (handoff per le sessioni)
 
 > **Leggi questo file per ripartire con il contesto pieno.**
-> Ultimo aggiornamento: 2026-10-06 · commit di riferimento: vedi `git log -5`
+> Ultimo aggiornamento: 2026-11-03 · commit di riferimento: vedi `git log -5`
 
 ---
 
@@ -30,6 +30,20 @@ separato futuro con modelli decisionali dedicati.
    solo le scadenze di oggi, regime intraday; header lo mostra ambra se
    divergente. **Lettura operativa** nell'header (07/10): spot vs i due
    livelli adiacenti + aspettativa per meccanismo + clausola di regime.
+   **Fonte opzioni** (03/11): toggle nella nav — 📊 ETF (SPY/QQQ) /
+   🏛 Indici (SPX/NDX) / 🔀 Entrambi, persistito in localStorage. Le catene
+   SPX/NDX erano già scaricate dal fetch (--symbol ALL): day_plan ora le usa
+   (stessa compute_option_levels/max_pain sullo spot indice, conversione col
+   fattore indice→futures ES/SPX) e tagga ogni livello opzioni con
+   `chain: 'etf'|'index'`; i livelli indice portano nome con suffisso -IDX
+   (PIN-IDX, GEX-FLIP-IDX, MAXPAIN-*-IDX, MURO-GAMMA-IDX) → track record
+   SEPARATO per fonte in level_stats.json (ES:PIN vs ES:PIN-IDX): è la misura
+   che dice quale fonte produce livelli più affidabili. Dedup 3pt (ora in
+   `dedupe_levels`): un livello indice non viene mai soppresso da un livello
+   opzioni ETF (coincidenze = confluenza ★ in vista 'Entrambi'), solo da
+   price/AMT o da un altro indice. Se la catena indice è degradata la fonte
+   resta assente e la UI mostra avviso; aggregati indice nel piano:
+   gamma_regime_index, top_gamma_index, max_pain_*_index, gex_flip_0dte_index.
    **Scenario GEX×MaxPain** (08/10): configura A compressione (long gamma
    + max pain entro 0,4%), B trend (short gamma + max pain lontano), C
    checkpoint (muro barriera frapposto), clausola OPEX, divergenza SPY/QQQ
@@ -61,7 +75,8 @@ scripts/
                              profili futures 7 finestre + playbook legacy
                              (fetch_intraday_playbook — calcola ma la UI non lo usa più)
   day_plan.py                MOTORE puro: costruisce data/day_plan.json (livelli
-                             prezzo+AMT+opzioni in scala ES/NQ, lettura AMT,
+                             prezzo+AMT+opzioni in scala ES/NQ da doppia catena
+                             ETF+indici con tag chain, lettura AMT,
                              max pain, top gamma) + scoring piano precedente →
                              data/level_stats.json (chiave STRUMENTO:NOME,
                              n/held/rate; solo livelli della scala; barre della

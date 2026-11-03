@@ -109,7 +109,7 @@ export function buildLadderForPlan(
         gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
         side: l.side,
         oi: l.oi,
-        isFlip: l.name === 'GEX-FLIP' || l.name === 'GEX-FLIP-0DTE',
+        isFlip: ['GEX-FLIP', 'GEX-FLIP-0DTE', 'GEX-FLIP-IDX', 'GEX-FLIP-0DTE-IDX'].includes(l.name),
         isNaked: l.name.startsWith('NAKED'),
         gexWeight: g ? Math.min(1, Math.abs(g.net) / maxAbsGex) : undefined,
       };

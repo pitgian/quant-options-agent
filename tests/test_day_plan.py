@@ -119,4 +119,24 @@ idx, h, l, c = bars([
 r = score_plan_against(PLAN_M, idx, h, l, c)
 assert not r[0]["held"], "prezzo fuggito = convergenza fallita"
 
+# --- 8. dedupe_levels: i livelli INDICE non vengono soppressi dai muri ETF ---
+from day_plan import dedupe_levels
+
+def mk(name, price, **kw):
+    return {"name": name, "nome_it": name, "price": price, "source": "options", **kw}
+
+lvls = [
+    mk("PDH", 6005.0, source="price"),        # livello prezzo
+    mk("PIN", 6000.0, chain="etf"),           # muro ETF
+    mk("PIN-IDX", 6001.0, chain="index"),     # 1 pt dal PIN ETF → DEVE restare
+    mk("PIN-IDX", 6002.5, chain="index"),     # 1,5 pt da altro indice → assorbito
+    mk("PIN-IDX", 6006.0, chain="index"),     # 1 pt dal PDH prezzo → assorbito
+    mk("TRIGGER-IDX", 6010.0, chain="index"), # libero → DEVE restare
+]
+out = dedupe_levels(lvls)
+got = sorted(l["price"] for l in out)
+assert got == [6000.0, 6001.0, 6005.0, 6010.0], f"dedup multi-fonte errata: {got}"
+idx_kept = [l for l in out if l.get("chain") == "index"]
+assert {6001.0, 6010.0} <= {l["price"] for l in idx_kept}, "livello indice soppresso da muro ETF"
+
 print("test_day_plan: 12 check OK")

@@ -6,14 +6,18 @@ import { Card, Badge } from './ui';
 
 const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 0 });
 
+export type ChainSource = 'etf' | 'index' | 'both';
+
 /**
  * DayView — i livelli OPERATIVI DA OPZIONI del giorno.
  *
  * Solo fonti opzioni: GEX flip, muri gamma (pin/barriera/trigger), max pain,
  * top strike per gamma assoluta. Ogni livello porta l'affidabilità storica
- * dal track record.
+ * dal track record. La fonte è selezionabile: catene ETF (SPY/QQQ), catene
+ * indici (SPX/NDX) o entrambe — i livelli indice arrivano con chain='index'
+ * e nomi suffissati -IDX (track record separato per fonte).
  */
-export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
+export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = ({ futures, chain }) => {
   const [plan, setPlan] = useState<DayPlan | null>(null);
   const [otherPlan, setOtherPlan] = useState<DayPlan | null>(null);
   const [stats, setStats] = useState<Record<string, { n: number; held: number; rate: number }>>({});
@@ -45,74 +49,94 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
   }, []);
 
   const spot = (futures === 'ES' ? live?.ES : live?.NQ) ?? plan?.last_price ?? 0;
+  const idxName = futures === 'ES' ? 'SPX' : 'NDX';
 
   // SOLO livelli da opzioni + max pain (i livelli di prezzo — VWAP, max/min,
-  // value — non fanno parte di questo strumento)
+  // value — non fanno parte di questo strumento), filtrati per fonte:
+  //  etf   → livelli senza chain (piani legacy) o chain='etf'
+  //  index → solo chain='index'
+  //  both  → tutti: le coincidenze delle due fonti diventano confluenza ★
   const optLevels: DayPlanLevel[] = useMemo(() => {
     if (!plan) return [];
-    const out: DayPlanLevel[] = plan.levels.filter(l => l.source === 'options');
-    if (plan.max_pain_nearest) {
-      out.push({
-        name: 'MAXPAIN-0DTE',
-        nome_it: 'Max Pain scadenza vicina',
-        price: plan.max_pain_nearest,
-        kind: 'magnet',
-        source: 'options',
-        dist_pts: Math.round(plan.max_pain_nearest - spot),
+    const out: DayPlanLevel[] = plan.levels.filter(l =>
+      l.source === 'options' &&
+      (chain === 'both' ? true : chain === 'index' ? l.chain === 'index' : l.chain !== 'index'));
+    const addMp = (price: number | undefined, name: string, nome: string) => {
+      if (price) out.push({
+        name, nome_it: nome, price, kind: 'magnet', source: 'options',
+        dist_pts: Math.round(price - spot),
       } as DayPlanLevel);
+    };
+    if (chain !== 'index') {
+      addMp(plan.max_pain_nearest, 'MAXPAIN-0DTE', 'Max Pain scadenza vicina');
+      addMp(plan.max_pain_all, 'MAXPAIN-ALL', 'Max Pain (tutte le scadenze)');
     }
-    if (plan.max_pain_all) {
-      out.push({
-        name: 'MAXPAIN-ALL',
-        nome_it: 'Max Pain (tutte le scadenze)',
-        price: plan.max_pain_all,
-        kind: 'magnet',
-        source: 'options',
-        dist_pts: Math.round(plan.max_pain_all - spot),
-      } as DayPlanLevel);
+    if (chain !== 'etf') {
+      addMp(plan.max_pain_nearest_index, 'MAXPAIN-0DTE-IDX', `Max Pain scadenza vicina (${idxName})`);
+      addMp(plan.max_pain_all_index, 'MAXPAIN-ALL-IDX', `Max Pain (tutte le scadenze, ${idxName})`);
     }
     // I muri gamma del profilo per strike entrano nella scala come livelli a
     // sé — ma SOLO i top 3 per lato per |GEX|: i minori restano visibili come
     // barra sulla loro zona (se esiste) senza creare righe proprie. Il
     // clustering può fonderli con i muri OI+Volume vicini (= confluenza), così
     // anche il muro più grande, prima invisibile se cadeva tra le zone, entra.
-    const gammaSorted = [...(plan.top_gamma ?? [])].sort((a, b) => Math.abs(b.net_gex) - Math.abs(a.net_gex));
-    const top3 = new Set([
-      ...gammaSorted.filter(t => t.strike_fut >= spot).slice(0, 3),
-      ...gammaSorted.filter(t => t.strike_fut < spot).slice(0, 3),
-    ]);
-    for (const t of top3) {
-      const zone = Math.round(t.strike_fut / 5) * 5;
-      out.push({
-        name: 'MURO-GAMMA',
-        nome_it: `Muro gamma ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})`,
-        price: zone,
-        kind: t.sign === 'long' ? 'barrier' : 'trigger',
-        source: 'options',
-        dist_pts: Math.round(zone - spot),
-        gamma: t.sign === 'long' ? 'pin' : 'trigger',
-      } as DayPlanLevel);
-    }
+    const addGammaWalls = (
+      tg: typeof plan.top_gamma | undefined,
+      nameSuffix: string, labelSuffix: string,
+    ) => {
+      const gammaSorted = [...(tg ?? [])].sort((a, b) => Math.abs(b.net_gex) - Math.abs(a.net_gex));
+      const top3 = new Set([
+        ...gammaSorted.filter(t => t.strike_fut >= spot).slice(0, 3),
+        ...gammaSorted.filter(t => t.strike_fut < spot).slice(0, 3),
+      ]);
+      for (const t of top3) {
+        const zone = Math.round(t.strike_fut / 5) * 5;
+        out.push({
+          name: `MURO-GAMMA${nameSuffix}`,
+          nome_it: `Muro gamma ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})${labelSuffix}`,
+          price: zone,
+          kind: t.sign === 'long' ? 'barrier' : 'trigger',
+          source: 'options',
+          dist_pts: Math.round(zone - spot),
+          gamma: t.sign === 'long' ? 'pin' : 'trigger',
+        } as DayPlanLevel);
+      }
+    };
+    if (chain !== 'index') addGammaWalls(plan.top_gamma, '', '');
+    if (chain !== 'etf') addGammaWalls(plan.top_gamma_index, '-IDX', ` · ${idxName}`);
     return out;
-  }, [plan, spot]);
+  }, [plan, spot, chain, idxName]);
 
-  const gexFlip = plan?.levels.find(l => l.name === 'GEX-FLIP');
-  const flip0 = plan?.gex_flip_0dte;
-  const regime = plan?.levels.find(l => l.name === 'GEX-FLIP');
-  // Il regime esiste ANCHE senza flip: quando il profilo entro ±10% è
-  // tutto positivo/negativo non c'è zero-crossing (flip assente) ma il
-  // segno del GEX sullo spot resta definito — così il badge non sfarfalla.
+  // Flip e regime SECONDO LA FONTE selezionata. Il regime esiste ANCHE senza
+  // flip: quando il profilo entro ±10% è tutto positivo/negativo non c'è
+  // zero-crossing (flip assente) ma il segno del GEX sullo spot resta
+  // definito — così il badge non sfarfalla.
+  const flipEtf = plan?.levels.find(l => l.name === 'GEX-FLIP');
+  const flipIdx = plan?.levels.find(l => l.name === 'GEX-FLIP-IDX');
+  const gexFlip = chain === 'index' ? flipIdx : flipEtf;
+  const flipOther = chain === 'both' ? flipIdx : null;
+  const flip0 = chain === 'index' ? plan?.gex_flip_0dte_index : plan?.gex_flip_0dte;
+  const flip0Other = chain === 'both' ? plan?.gex_flip_0dte_index : null;
   const regimeNow: 'long' | 'short' | null =
     gexFlip ? (spot > gexFlip.price ? 'long' : 'short')
-            : (plan?.gamma_regime ?? null);
+            : (chain === 'index' ? (plan?.gamma_regime_index ?? null)
+                                 : (plan?.gamma_regime ?? null));
+
+  // Profilo gamma da mostrare (barre GEX della scala) secondo la fonte.
+  const topGammaSel = useMemo(() => {
+    if (!plan) return undefined;
+    if (chain === 'etf') return plan.top_gamma;
+    if (chain === 'index') return plan.top_gamma_index;
+    return [...(plan.top_gamma ?? []), ...(plan.top_gamma_index ?? [])];
+  }, [plan, chain]);
 
   // Lettura operativa: i due livelli adiacenti allo spot (sopra/sotto) e cosa
   // ci si aspetta da ciascuno in base al meccanismo. maxPerSide alto: voglio
   // il VERO adiacente, non il top-ranked.
   // Tutte le zone della scala (raggio pieno): usate dalla lettura e dallo scenario.
   const ladderAll = useMemo(
-    () => (plan ? buildLadderForPlan(optLevels, spot, plan.top_gamma, 99) : null),
-    [plan, spot, optLevels],
+    () => (plan ? buildLadderForPlan(optLevels, spot, topGammaSel, 99) : null),
+    [plan, spot, optLevels, topGammaSel],
   );
 
   const lettura = useMemo(() => {
@@ -136,7 +160,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
     const NEAR_MP_PCT = 0.004;  // "vicino" al max pain: entro lo 0,4%
     const parts: string[] = [];
     let tag: 'compressione' | 'trend' | 'ibrido' | null = null;
-    const mp = plan.max_pain_nearest;
+    const mp = chain === 'index' ? plan.max_pain_nearest_index : plan.max_pain_nearest;
     const regimeLong = regimeNow;
     const fmtDist = (d: number) => `${d > 0 ? '+' : ''}${Math.round(d).toLocaleString('it-IT')} pt`;
 
@@ -162,20 +186,20 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
         .filter(z => z.kind === 'barrier' && z.price > lo && z.price < hi)
         .sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot))[0] ?? null;
       if (wall) parts.push(`checkpoint verso il max pain: ${wall.label} a ${Math.round(wall.price).toLocaleString('it-IT')} — la rotura apre il riallineamento`);
-      if (plan.gex_flip_0dte && regimeLong) parts.push('scadenza oggi: la convergenza verso il max pain tende ad accelerare in chiusura');
+      if (flip0 && regimeLong) parts.push('scadenza oggi: la convergenza verso il max pain tende ad accelerare in chiusura');
     }
 
-    // Divergenza SPY/QQQ: i due regimi sono d'accordo?
+    // Divergenza SPY/QQQ (catene ETF): i due regimi sono d'accordo?
     const oFlip = otherPlan?.levels.find(l => l.name === 'GEX-FLIP');
-    if (gexFlip && oFlip && otherPlan?.last_price) {
-      const mineLong = spot > gexFlip.price;
+    if (flipEtf && oFlip && otherPlan?.last_price) {
+      const mineLong = spot > flipEtf.price;
       const otherLong = otherPlan.last_price > oFlip.price;
       if (mineLong !== otherLong) {
         parts.push(`divergenza SPY/QQQ: ES ${mineLong ? 'long' : 'short'} gamma contro NQ ${otherLong ? 'long' : 'short'} — rotazione fra indici, conviction direzionale ridotta`);
       }
     }
     return { tag, parts };
-  }, [plan, spot, regimeNow, otherPlan, ladderAll]);
+  }, [plan, spot, regimeNow, otherPlan, ladderAll, chain, flipEtf, flip0]);
 
   if (!plan) {
     return (
@@ -209,7 +233,15 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
             ) : '—'}
             {gexFlip && (
               <span className="text-[11px] font-mono text-gray-400 tnum">
-                Flip {futures} {gexFlip.price.toLocaleString()}
+                Flip {futures}{chain !== 'etf' && ` · ${idxName}`} {gexFlip.price.toLocaleString()}
+              </span>
+            )}
+            {flipOther && (
+              <span className={`text-[11px] font-mono tnum ${gexFlip && (spot > gexFlip.price) !== (spot > flipOther.price) ? 'font-semibold text-amber-300' : 'text-gray-400'}`}
+                    title={gexFlip && (spot > gexFlip.price) !== (spot > flipOther.price)
+                      ? `Il flip derivato dalla catena ${idxName} DIVERGE da quello ETF: le due fonti leggono regimi opposti`
+                      : `Flip derivato dalla catena ${idxName} (opzioni indici), allineato alla fonte ETF`}>
+                Flip {idxName} {flipOther.price.toLocaleString()}
               </span>
             )}
             {flip0 && (
@@ -220,7 +252,13 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
                 title={gexFlip && ((spot > gexFlip.price) === (spot > flip0))
                   ? 'Flip 0DTE: allineato al regime strutturale'
                   : 'Flip 0DTE DIVERGENTE dal regime aggregato: il libro che scade oggi spinge in direzione opposta alla struttura — probabili scatti intraday'}>
-                0DTE {futures} {flip0.toLocaleString()}
+                0DTE {futures}{chain !== 'etf' && ` · ${idxName}`} {flip0.toLocaleString()}
+              </span>
+            )}
+            {flip0Other && (
+              <span className="text-[11px] font-mono text-gray-400 tnum"
+                    title={`Flip 0DTE derivato dalla catena ${idxName} (scadenze di oggi, opzioni indici)`}>
+                0DTE {idxName} {flip0Other.toLocaleString()}
               </span>
             )}
           </div>
@@ -272,12 +310,27 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ' }> = ({ futures }) => {
       {/* LA SCALA — solo opzioni */}
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-200">🎯 La scala — livelli opzioni</h3>
+          <h3 className="text-sm font-bold text-slate-200">
+            🎯 La scala — livelli opzioni
+            <span className="ml-2 text-[10px] font-semibold text-gray-500">
+              {chain === 'etf' ? 'da ETF (SPY/QQQ)' : chain === 'index' ? `da indici (${idxName})` : `ETF + indici (SPY/QQQ + ${idxName})`}
+            </span>
+          </h3>
           <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger · barra GEX 🟢 pin / 🔴 trigger · ★★★ zona grossa, confermata e vicina</span>
         </div>
-        <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={plan.top_gamma} />
+        {optLevels.length === 0 ? (
+          <p className="text-[11px] text-amber-300/90 py-4 leading-relaxed">
+            Nessun livello opzioni da questa fonte in questo snapshot —
+            {chain === 'index' ? ` la catena ${idxName}` : ' la catena'} è degradata o i dati sono in arrivo.
+            Prova un'altra fonte dal menu in alto o attendi il prossimo giro della pipeline (ogni 5 minuti in seduta).
+          </p>
+        ) : (
+          <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={topGammaSel} />
+        )}
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
-          Solo livelli derivati da opzioni: GEX flip, muri gamma, max pain.
+          Fonte selezionabile nel menu in alto: <b>ETF</b> (SPY/QQQ, esercizio americano fisico) ·
+          <b> Indici</b> ({idxName}, europee a regolamento in contanti, hedge dei dealer sui futures) ·
+          <b> Entrambi</b> (le coincidenze delle due fonti emergono come confluenza ★).
           Pin = gamma lunga (respinge) · Trg = gamma corta (accelera) · Magnete = il prezzo tende a tornarci.
           La barra a destra di ogni zona è il GEX netto degli strike lì caduti:
           più è lunga più il muro è denso, verde respinge / rossa amplifica.

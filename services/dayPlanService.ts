@@ -20,6 +20,10 @@ export interface DayPlanLevel {
   side?: 'call' | 'put';
   /** Open Interest del muro (contratti) — solo per i walls. */
   oi?: number;
+  /** Catena che genera il livello (solo fonti opzioni):
+   *  'etf' = SPY/QQQ (default anche se assente, piani legacy)
+   *  'index' = SPX/NDX (opzioni europee, hedge sui futures). */
+  chain?: 'etf' | 'index';
 }
 
 export interface DayPlan {
@@ -37,6 +41,13 @@ export interface DayPlan {
   /** Regime dal segno del GEX sullo spot: presente anche senza flip. */
   gamma_regime?: 'long' | 'short' | null;
   top_gamma?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
+  /** Stessi aggregati ma dalla catena INDICE (SPX per ES, NDX per NQ):
+   *  assenti se la catena indice è degradata o mancante nello snapshot. */
+  gamma_regime_index?: 'long' | 'short' | null;
+  top_gamma_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
+  gex_flip_0dte_index?: number;
+  max_pain_nearest_index?: number;
+  max_pain_all_index?: number;
   vwap?: number;
   vwap_sigma?: number;
   ib?: { high: number | null; low: number | null };

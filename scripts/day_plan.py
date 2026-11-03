@@ -297,15 +297,48 @@ def max_pain(expiries: list, spot: float) -> dict:
 # Costruzione del piano
 # ---------------------------------------------------------------------------
 
+def dedupe_levels(levels: list) -> list:
+    """Dedup a 3 pt: livelli quasi-coincidenti = la stessa zona, tiene il
+    primo (ordine di inserimento = priorità: AMT/magneti prima dei pivot).
+
+    I livelli da catena INDICE (chain='index') NON vengono soppressi dai
+    livelli opzioni ETF: le due fonti sono visualizzabili separatamente e
+    la loro coincidenza è informazione (confluenza). Un livello indice è
+    assorbito solo da un livello prezzo/AMT (zona già occupata da altra
+    lettura) o da un altro livello indice.
+    """
+    base = [lv for lv in levels if lv.get("chain") != "index"]
+    idx_lvs = [lv for lv in levels if lv.get("chain") == "index"]
+    deduped: list = []
+    for lv in base:
+        if any(abs(lv["price"] - d["price"]) < 3.0 for d in deduped):
+            continue
+        deduped.append(lv)
+    for lv in idx_lvs:
+        # solo price/amt (non-opzioni) o altri livelli indice lo assorbono
+        if any(abs(lv["price"] - d["price"]) < 3.0
+               for d in deduped if d.get("source") != "options"):
+            continue
+        if any(abs(lv["price"] - d["price"]) < 3.0
+               for d in deduped if d.get("chain") == "index"):
+            continue
+        deduped.append(lv)
+    return deduped
+
+
 def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: float,
                gex_flip_etf: float | None, spot_fut_ratio: float,
                index_to_fut: float | None = None,
-               gex_flip0_etf: float | None = None) -> dict:
+               gex_flip0_etf: float | None = None,
+               index_opts: dict | None = None) -> dict:
     """
     walls_etf: i muri già calcolati dal pipeline opzioni, in scala ETF/strike
                [{"strike":..., "type": "put_wall|call_wall", "net_gex":...,
                  "score":...}, ...]
     spot_fut_ratio: fattore ETF→futures (ES spot / SPY spot, live).
+    index_opts: SECONDA FONTE (catena SPX/NDX), in scala indice/strike nativa:
+                {"walls": [...], "flip": ..., "flip0": ..., "ratio": indice→fut}.
+                None/assente = catena indice degradata o mancante.
     """
     rth, on = split_sessions(idx_et, list(h), list(l), list(o), list(c), v)
     for d, bars in rth.items():
@@ -436,18 +469,52 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
                 add("PWH", "Max sett. scorsa", max(b["h"] for b in pb), "pivot", "price")
                 add("PWL", "Min sett. scorsa", min(b["l"] for b in pb), "pivot", "price")
 
-    # --- GEX flip (opzioni) ---
+    # --- GEX flip (opzioni ETF) ---
     if gex_flip_etf:
         add("GEX-FLIP", "GEX flip (cambio regime gamma)",
-            gex_flip_etf * spot_fut_ratio, "pivot", "options")
+            gex_flip_etf * spot_fut_ratio, "pivot", "options", chain="etf")
     # Flip 0DTE: solo le scadenze di oggi (daily + weekly + mensile che
     # cadono oggi). Regime intraday: è il libro che i dealer coprono entro
     # la chiusura. Può divergere dall'aggregato → info, non rumore.
     if gex_flip0_etf:
         add("GEX-FLIP-0DTE", "GEX flip 0DTE (scade oggi)",
-            gex_flip0_etf * spot_fut_ratio, "pivot", "options")
+            gex_flip0_etf * spot_fut_ratio, "pivot", "options", chain="etf")
 
-    # --- muri da opzioni: pin (gamma lunga) = barriera; trigger = accelerano ---
+    # --- muri da catena INDICE (SPX/NDX): stessa logica, fonte separata ---
+    # Strike in scala indice, convertiti col fattore indice→futures (ES/SPX).
+    # Nomi con suffisso -IDX: il track record li accumula separatamente
+    # (ES:PIN vs ES:PIN-IDX) — è la misura che dice nel tempo quale fonte
+    # produce livelli più affidabili.
+    if index_opts and index_opts.get("ratio"):
+        i_ratio = float(index_opts["ratio"])
+        i_src = "SPX" if futures == "ES" else "NDX"
+        if index_opts.get("flip"):
+            add("GEX-FLIP-IDX", f"GEX flip da {i_src} (cambio regime gamma)",
+                index_opts["flip"] * i_ratio, "pivot", "options", chain="index")
+        if index_opts.get("flip0"):
+            add("GEX-FLIP-0DTE-IDX", f"GEX flip 0DTE da {i_src} (scade oggi)",
+                index_opts["flip0"] * i_ratio, "pivot", "options", chain="index")
+        pin_wi, trg_wi = [], []
+        for w in index_opts.get("walls") or []:
+            strike = w.get("strike")
+            if not strike:
+                continue
+            price_fut = strike * i_ratio
+            net = w.get("net_gex", 0.0) or 0.0
+            (pin_wi if net >= 0 else trg_wi).append((price_fut, w))
+        for price_fut, w in sorted(pin_wi, key=lambda x: -abs(x[1].get("net_gex", 0)))[:3]:
+            side_pos = "sopra" if price_fut > last else "sotto"
+            wall_side = w["type"].replace("_wall", "")
+            add("PIN-IDX", f"Muro {wall_side} in pin ({side_pos}, {i_src})",
+                price_fut, "barrier", "options", chain="index", gamma="pin",
+                side=wall_side, oi=round(float(w.get("oi", 0) or 0)))
+        for price_fut, w in sorted(trg_wi, key=lambda x: -abs(x[1].get("net_gex", 0)))[:2]:
+            wall_side = w["type"].replace("_wall", "")
+            add("TRIGGER-IDX", f"Trigger {wall_side} ({i_src})",
+                price_fut, "trigger", "options", chain="index", gamma="trigger",
+                side=wall_side, oi=round(float(w.get("oi", 0) or 0)))
+
+    # --- muri da opzioni ETF: pin (gamma lunga) = barriera; trigger = accelerano ---
     # Le walls sono in scala ETF (SPY/QQQ): stesso fattore di tutti gli altri
     # livelli non-opzioni. (calculate_walls lavora sulle catene ETF.)
     pin_walls, trigger_walls = [], []
@@ -467,12 +534,12 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         side_pos = "sopra" if price_fut > last else "sotto"
         wall_side = w["type"].replace("_wall", "")
         add("PIN", f"Muro {wall_side} in pin ({side_pos})",
-            price_fut, "barrier", "options", gamma="pin", side=wall_side,
+            price_fut, "barrier", "options", chain="etf", gamma="pin", side=wall_side,
             oi=round(float(w.get("oi", 0) or 0)))
     for price_fut, w in sorted(trigger_walls, key=lambda x: -abs(x[1].get("net_gex", 0)))[:2]:
         wall_side = w["type"].replace("_wall", "")
         add("TRIGGER", f"Trigger {wall_side}",
-            price_fut, "trigger", "options", gamma="trigger", side=wall_side,
+            price_fut, "trigger", "options", chain="etf", gamma="trigger", side=wall_side,
             oi=round(float(w.get("oi", 0) or 0)))
 
     # NOTA scala: price/amt derivano da barre futures (già in scala ES/NQ);
@@ -483,14 +550,7 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         lv["dist_pts"] = round(lv["price"] - last_fut, 1)
 
     levels.sort(key=lambda x: -x["price"])
-    # dedup: livelli a meno di 3 pt tra loro = la stessa zona; tiene il primo
-    # (ordine di inserimento = priorità: AMT/magneti prima dei pivot price)
-    deduped: list = []
-    for lv in levels:
-        if any(abs(lv["price"] - d["price"]) < 3.0 for d in deduped):
-            continue
-        deduped.append(lv)
-    levels = deduped
+    levels = dedupe_levels(levels)
     levels.sort(key=lambda x: -x["price"])
 
     # --- lettura del giorno (3 frasi AMT) ---
@@ -725,12 +785,51 @@ def main() -> None:
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
         index_to_fut = (es_spot / spx_spot) if spx_spot else None
+
+        # --- catena INDICE (SPX/NDX): seconda fonte di livelli opzioni ---
+        # Opzioni europee a regolamento in contanti: i dealer coprono la gamma
+        # direttamente sui futures ES/NQ. Stessa soglia OI e stesso scarto
+        # della catena ETF: se degradata, la fonte indice resta assente e la
+        # UI continua a mostrare gli ETF.
+        index_opts = None
+        index_aggr: dict = {}
+        if index_to_fut and spx.get("expiries"):
+            oi_idx = sum(int(o.get("oi", 0) or 0)
+                         for e in spx.get("expiries", [])
+                         for o in (e.get("options") or []))
+            deg_idx = (spx.get("data_quality") == "degraded" or oi_idx < MIN_CHAIN_OI)
+            if deg_idx:
+                print(f"day_plan: catena {('SPX' if fut == 'ES' else 'NDX')} degradata "
+                      f"(OI tot {oi_idx:,}) → livelli da indici saltati")
+            else:
+                walls_i, flip_i, flip0_i, tg_i, reg_i = compute_option_levels(
+                    spx.get("expiries", []), spx_spot)
+                mp_i = max_pain(spx.get("expiries", []), spx_spot)
+                i_ratio = index_to_fut
+                index_opts = {"walls": walls_i, "flip": flip_i, "flip0": flip0_i,
+                              "ratio": i_ratio}
+                index_aggr = {
+                    "gamma_regime_index": reg_i,
+                    "top_gamma_index": [
+                        {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_i
+                    ],
+                    "gex_flip_0dte_index": (round(flip0_i * i_ratio, 1) if flip0_i else None),
+                    "max_pain_nearest_index": (
+                        round(mp_i["nearest"]["strike"] * i_ratio, 1)
+                        if mp_i.get("nearest", {}).get("strike") else None),
+                    "max_pain_all_index": (
+                        round(mp_i["all"]["strike"] * i_ratio, 1)
+                        if mp_i.get("all", {}).get("strike") else None),
+                }
+
         plan = build_plan(idx_et, hist["Open"].values, h, l,
                           hist["Close"].values,
                           hist["Volume"].values.astype(float),
                           futures=fut, walls_etf=walls, spot_etf=spot_etf,
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
-                          index_to_fut=index_to_fut, gex_flip0_etf=flip0)
+                          index_to_fut=index_to_fut, gex_flip0_etf=flip0,
+                          index_opts=index_opts)
+        plan.update(index_aggr)
         plan["spot_etf"] = spot_etf
         plan["gamma_regime"] = gex_regime
         if flip0:
@@ -799,17 +898,30 @@ def main() -> None:
                                        "nome_it": "Max Pain (tutte le scadenze)",
                                        "price": float(old_plan["max_pain_all"]),
                                        "kind": "magnet"})
+                # sintetici da catena INDICE: track record separato per fonte
+                if old_plan.get("max_pain_nearest_index"):
+                    old_levels.append({"name": "MAXPAIN-0DTE-IDX",
+                                       "nome_it": "Max Pain scadenza vicina (indici)",
+                                       "price": float(old_plan["max_pain_nearest_index"]),
+                                       "kind": "magnet"})
+                if old_plan.get("max_pain_all_index"):
+                    old_levels.append({"name": "MAXPAIN-ALL-IDX",
+                                       "nome_it": "Max Pain (tutte le scadenze, indici)",
+                                       "price": float(old_plan["max_pain_all_index"]),
+                                       "kind": "magnet"})
                 spot_ref = float(old_plan.get("last_price") or 0)
-                tg = sorted(old_plan.get("top_gamma") or [],
-                            key=lambda t: -abs(t.get("net_gex", 0) or 0))
-                for t in ([x for x in tg if x.get("strike_fut", 0) >= spot_ref][:3]
-                          + [x for x in tg if x.get("strike_fut", 0) < spot_ref][:3]):
-                    zone = round(t["strike_fut"] / 5) * 5
-                    old_levels.append({"name": "MURO-GAMMA",
-                                       "nome_it": f"Muro gamma a {zone:.0f}",
-                                       "price": float(zone),
-                                       "kind": ("barrier" if t.get("sign") == "long"
-                                                else "trigger")})
+                for tname, tsrc in (("MURO-GAMMA", old_plan.get("top_gamma")),
+                                    ("MURO-GAMMA-IDX", old_plan.get("top_gamma_index"))):
+                    tg = sorted(tsrc or [],
+                                key=lambda t: -abs(t.get("net_gex", 0) or 0))
+                    for t in ([x for x in tg if x.get("strike_fut", 0) >= spot_ref][:3]
+                              + [x for x in tg if x.get("strike_fut", 0) < spot_ref][:3]):
+                        zone = round(t["strike_fut"] / 5) * 5
+                        old_levels.append({"name": tname,
+                                           "nome_it": f"Muro gamma a {zone:.0f}",
+                                           "price": float(zone),
+                                           "kind": ("barrier" if t.get("sign") == "long"
+                                                    else "trigger")})
 
                 # snapshot dello stato MISURATO SUL PIANO GIUDICATO
                 o_other = (old_all.get("plans") or {}).get("NQ" if fut == "ES" else "ES") or {}
