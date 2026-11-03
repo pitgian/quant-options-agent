@@ -21,7 +21,7 @@ interface Row {
   distPts: number;
   gamma?: string;
   merged?: number;
-  members?: Array<{ nome_it: string; gammaSign?: string }>;
+  members?: Array<{ nome_it: string; gammaSign?: string; label?: string }>;
   importance?: 'alta' | 'media' | 'bassa';
   score?: number;
   held?: number;
@@ -183,12 +183,24 @@ export const Ladder: React.FC<{
             {futures} {r.price.toLocaleString()}
           </span>
           {isSpot && <span className="text-[9px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>}
-          {!isSpot && (r.merged ?? 0) > 1 && (
-            <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 whitespace-nowrap"
-                  title={`${r.merged} livelli distinti confluiscono su questa zona: confluenza alta`}>
-              ★ {r.merged} in confluenza
-            </span>
-          )}
+          {!isSpot && (r.merged ?? 0) > 1 && (() => {
+            // La confluenza conta i livelli distinti sulla stessa zona a 5
+            // punti. Se i membri vengono da DUE catene diverse (ETF+indici)
+            // è la conferma incrociata fra fonti — il segnale più forte della
+            // scala — e il badge diventa viola con l'etichetta esplicita.
+            const chains = new Set((r.members ?? []).map(m => (m.label ?? '').endsWith('-IDX') ? 'index' : 'etf'));
+            const cross = chains.size > 1;
+            return (
+              <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${cross
+                ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
+                : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'}`}
+                    title={cross
+                      ? 'Confluenza ETF × INDICI: un livello della catena ETF e uno della catena indici cadono sulla stessa zona — le due fonti concordano indipendentemente'
+                      : `${r.merged} livelli distinti cadono nella stessa zona a 5 punti (es. max pain e muro gamma che coincidono)`}>
+                ★ {r.merged} in confluenza{cross ? ' ETF+indici' : ''}
+              </span>
+            );
+          })()}
           <span className="text-[11px] text-gray-400 truncate">{r.nome_it}</span>
           {r.importance && (
             <span className={`text-[8px] font-extrabold uppercase px-1 py-0.5 rounded whitespace-nowrap ${
@@ -196,7 +208,7 @@ export const Ladder: React.FC<{
               : r.importance === 'media' ? 'bg-sky-500/15 text-sky-400'
               : 'bg-slate-700/40 text-slate-500'
             }`}
-            title={`Importanza (punteggio ${r.score ?? '—'}): confluenza di fonti, magneti, flip, pin e prossimità allo spot`}>
+            title={`Importanza (punteggio): flip o pin sulla zona, vicinanza allo spot, GEX della zona e numero di livelli in zona — non è la confluenza fra fonti, quella è il badge '★ in confluenza'`}>
               {r.importance === 'alta' ? '★★★' : r.importance === 'media' ? '★★' : '★'}
             </span>
           )}

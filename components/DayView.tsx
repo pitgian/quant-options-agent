@@ -227,6 +227,17 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
     return { tag, parts };
   }, [plan, spot, regimeNow, otherPlan, ladderAll, chain, flipEtf, flip0]);
 
+  // Nota di regime: esiste almeno un pin (gamma lunga) SOTTO lo spot? Se no,
+  // è la firma strutturale del libro (put comprate = dealer short gamma sotto):
+  // va detto nella scala, non lasciato intuire. DEVE stare PRIMA dell'early
+  // return su !plan: un hook dopo il return condizionale cambia l'ordine degli
+  // hook tra il primo render (piano assente) e quello con i dati → crash React
+  // (pagina nera, bug del 03/11).
+  const hasPinBelow = useMemo(() => {
+    if (!topGammaSel || topGammaSel.length === 0) return null;
+    return topGammaSel.some(t => t.sign === 'long' && t.strike_fut < spot);
+  }, [topGammaSel, spot]);
+
   if (!plan) {
     return (
       <Card className="flex flex-col items-center justify-center min-h-[280px] text-center">
@@ -238,14 +249,6 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
       </Card>
     );
   }
-
-  // Nota di regime: esiste almeno un pin (gamma lunga) SOTTO lo spot? Se no,
-  // è la firma strutturale del libro (put comprate = dealer short gamma sotto):
-  // va detto nella scala, non lasciato intuire.
-  const hasPinBelow = useMemo(() => {
-    if (!topGammaSel || topGammaSel.length === 0) return null;
-    return topGammaSel.some(t => t.sign === 'long' && t.strike_fut < spot);
-  }, [topGammaSel, spot]);
 
   return (
     <div className="flex flex-col gap-5">
