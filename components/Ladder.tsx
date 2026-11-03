@@ -128,6 +128,7 @@ export const Ladder: React.FC<{
   /** Profilo gamma per strike (plan.top_gamma): ripescato sulla griglia della scala. */
   topGamma?: Array<{ strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
 }> = ({ levels, spot, futures, stats, maxPerSide = 6, topGamma }) => {
+  const idxName = futures === 'ES' ? 'SPX' : 'NDX';
   const { above: zonesAbove, below: zonesBelow, gammaByZone, maxAbsGex } = useMemo(
     () => buildLadderForPlan(levels, spot, topGamma, maxPerSide),
     [levels, spot, topGamma, maxPerSide],
@@ -184,10 +185,11 @@ export const Ladder: React.FC<{
           </span>
           {isSpot && <span className="text-[9px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>}
           {!isSpot && (r.merged ?? 0) > 1 && (() => {
-            // La confluenza conta i livelli distinti sulla stessa zona a 5
-            // punti. Se i membri vengono da DUE catene diverse (ETF+indici)
-            // è la conferma incrociata fra fonti — il segnale più forte della
-            // scala — e il badge diventa viola con l'etichetta esplicita.
+            // CONFLUENZA (⧉, NON una stella): livelli distinti sulla stessa
+            // zona a 5 punti. Se i membri vengono da DUE catene diverse
+            // (ETF+indici) è la conferma incrociata fra fonti indipendenti —
+            // il segnale più forte della scala — e il badge è viola con la
+            // coppia esplicita ETF×SPX/NDX.
             const chains = new Set((r.members ?? []).map(m => (m.label ?? '').endsWith('-IDX') ? 'index' : 'etf'));
             const cross = chains.size > 1;
             return (
@@ -195,21 +197,18 @@ export const Ladder: React.FC<{
                 ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
                 : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'}`}
                     title={cross
-                      ? 'Confluenza ETF × INDICI: un livello della catena ETF e uno della catena indici cadono sulla stessa zona — le due fonti concordano indipendentemente'
-                      : `${r.merged} livelli distinti cadono nella stessa zona a 5 punti (es. max pain e muro gamma che coincidono)`}>
-                ★ {r.merged} in confluenza{cross ? ' ETF+indici' : ''}
+                      ? `CONFLUENZA TRA FONTI: un livello della catena ETF e uno della catena ${idxName} cadono sulla stessa zona — due libri indipendenti danno lo stesso livello, la conferma più forte`
+                      : `${r.merged} livelli distinti sulla stessa zona a 5 punti (es. max pain e muro gamma che coincidono)`}>
+                ⧉ {cross ? `ETF×${idxName}` : `×${r.merged}`}
               </span>
             );
           })()}
           <span className="text-[11px] text-gray-400 truncate">{r.nome_it}</span>
           {r.importance && (
-            <span className={`text-[8px] font-extrabold uppercase px-1 py-0.5 rounded whitespace-nowrap ${
-              r.importance === 'alta' ? 'bg-emerald-500/15 text-emerald-400'
-              : r.importance === 'media' ? 'bg-sky-500/15 text-sky-400'
-              : 'bg-slate-700/40 text-slate-500'
-            }`}
-            title={`Importanza (punteggio): flip o pin sulla zona, vicinanza allo spot, GEX della zona e numero di livelli in zona — non è la confluenza fra fonti, quella è il badge '★ in confluenza'`}>
-              {r.importance === 'alta' ? '★★★' : r.importance === 'media' ? '★★' : '★'}
+            <span className="text-[10px] font-bold tracking-tight text-sky-400/90 whitespace-nowrap"
+                  title={`PESO del livello (1-3): flip o pin sulla zona, vicinanza allo spot, GEX della zona — NON è la confluenza (⧉)`}>
+              {'●'.repeat(r.importance === 'alta' ? 3 : r.importance === 'media' ? 2 : 1)}
+              <span className="text-slate-600">{'●'.repeat(3 - (r.importance === 'alta' ? 3 : r.importance === 'media' ? 2 : 1))}</span>
             </span>
           )}
         </div>
@@ -241,8 +240,11 @@ export const Ladder: React.FC<{
           <GexBar g={isSpot ? undefined : r.gex} max={maxAbsGex} />
         </div>
         {(r.merged ?? 0) > 1 && r.members && r.members.length > 0 && (
-          <div className="text-[10px] text-gray-500 truncate" title="I livelli che compongono la confluenza">
-            = {r.members.map(m => m.nome_it).join('  +  ')}
+          <div className="text-[10px] text-gray-500 truncate"
+               title="Quali livelli convergono su questa zona, con la loro fonte">
+            ⧉ confluenza di: {r.members.map(m =>
+              `${m.nome_it} [${(m.label ?? '').endsWith('-IDX') ? idxName : 'ETF'}]`
+            ).join('  +  ')}
           </div>
         )}
       </div>

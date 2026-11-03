@@ -372,7 +372,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
               {chain === 'etf' ? 'da ETF (SPY/QQQ)' : chain === 'index' ? `da indici (${idxName})` : `ETF + indici (SPY/QQQ + ${idxName})`}
             </span>
           </div>
-          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 pin · ⚡ trigger · barra GEX 🟢 pin / 🔴 trigger · ★ confluenza</span>
+          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 pin · ⚡ trigger · ⧉ confluenza · ●●● peso · barra GEX 🟢 pin / 🔴 trigger</span>
         </div>
         {optLevels.length === 0 ? (
           <p className="text-[11px] text-amber-300/90 py-4 leading-relaxed">
@@ -389,11 +389,14 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
           </p>
         )}
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
-          La scala mostra SOLO i livelli chiave: i <b>3 muri gamma più grossi</b> per |GEX|
-          (il segno decide il meccanismo: 🛡 pin = respinge, ⚡ trigger = accelera), il
-          <b> Max Pain della scadenza vicina</b> (🧲 magnete) e il <b>flip gamma</b> (confine di regime).
-          Fonte selezionabile nel menu in alto: <b>ETF</b> (SPY/QQQ) · <b>Indici</b> ({idxName}) ·
-          <b> Entrambi</b> (le coincidenze delle due fonti emergono come confluenza ★).
+          La scala mostra SOLO i livelli chiave: i muri gamma più grossi per |GEX| della borsa
+          e della fonte scelte (il segno decide il meccanismo: 🛡 pin = respinge, ⚡ trigger = accelera),
+          il <b>Max Pain della scadenza vicina</b> (🧲 magnete) e il <b>flip gamma</b> (confine di regime).
+          Due indicatori DIVERSI: <b>⧉ CONFLUENZA</b> = più livelli sulla stessa zona a 5 punti —
+          viola “ETF×{idxName}” quando le due fonti indipendenti (catena ETF e catena indici)
+          danno lo stesso livello: la conferma più forte della scala; <b>●●● PESO</b> = importanza
+          del livello (flip/pin, vicinanza allo spot, GEX della zona) — non è confluenza.
+          Sotto ogni zona in confluenza trovi QUALE livelli convergono e da quale fonte.
           La barra a destra di ogni zona è il GEX netto degli strike lì caduti:
           più è lunga più il muro è denso, verde respinge / rossa amplifica.
         </p>
