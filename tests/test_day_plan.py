@@ -139,4 +139,32 @@ assert got == [6000.0, 6001.0, 6005.0, 6010.0], f"dedup multi-fonte errata: {got
 idx_kept = [l for l in out if l.get("chain") == "index"]
 assert {6001.0, 6010.0} <= {l["price"] for l in idx_kept}, "livello indice soppresso da muro ETF"
 
-print("test_day_plan: 12 check OK")
+# --- 9. top_gamma_by_bucket: le borse 0dte/week/all partizionano per scadenza ---
+from day_plan import top_gamma_by_bucket
+from datetime import date, timedelta as _td
+
+SPOT_B = 6000.0
+today_b = date.today()
+def exp_b(offset_days, strike, side, oi, gamma):
+    d = (today_b + _td(days=offset_days)).isoformat()
+    return {"date": d, "options": [{"strike": strike, "side": side, "oi": oi, "gamma": gamma}]}
+# strike 6000: solo 0DTE · strike 6050: +3 giorni (week) · strike 6500: +30 giorni (solo all)
+expiries_b = [
+    exp_b(0, 6000.0, "CALL", 100, 0.01),
+    exp_b(3, 6050.0, "CALL", 100, 0.005),
+    exp_b(30, 6500.0, "CALL", 5000, 0.0002),
+]
+buckets = top_gamma_by_bucket(expiries_b, SPOT_B)
+assert [t["strike"] for t in buckets["0dte"]] == [6000.0], f"0dte: {buckets['0dte']}"
+assert sorted(t["strike"] for t in buckets["week"]) == [6000.0, 6050.0], f"week: {buckets['week']}"
+assert sorted(t["strike"] for t in buckets["all"]) == [6000.0, 6050.0, 6500.0], f"all: {buckets['all']}"
+# scadenza passata: ignorata ovunque
+past = exp_b(-2, 6100.0, "CALL", 999, 0.01)
+buckets2 = top_gamma_by_bucket([past], SPOT_B)
+assert buckets2["all"] == [] and buckets2["week"] == [], "scadenza passata non scartata"
+# lato dominante: call 100 vs put 60 → side call
+mixed = exp_b(0, 6000.0, "PUT", 60, 0.01)
+buckets3 = top_gamma_by_bucket([exp_b(0, 6000.0, "CALL", 100, 0.01), mixed], SPOT_B)
+assert buckets3["0dte"][0]["side"] == "call" and buckets3["0dte"][0]["sign"] == "long"
+
+print("test_day_plan: 14 check OK")

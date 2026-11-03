@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { fetchDayPlanFile, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
 import { buildLadderForPlan } from './Ladder';
 import { Ladder } from './Ladder';
-import { Card, Badge } from './ui';
+import { Card, Badge, Segmented } from './ui';
 
 const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 0 });
 
 export type ChainSource = 'etf' | 'index' | 'both';
+export type GexBucket = 'all' | 'week' | '0dte';
 
 /**
  * DayView — i livelli OPERATIVI DA OPZIONI del giorno.
@@ -22,6 +23,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
   const [otherPlan, setOtherPlan] = useState<DayPlan | null>(null);
   const [stats, setStats] = useState<Record<string, { n: number; held: number; rate: number }>>({});
   const [live, setLive] = useState<LiveSpot | null>(null);
+  const [bucket, setBucket] = useState<GexBucket>('all');
 
   useEffect(() => {
     let alive = true;
@@ -79,17 +81,29 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
     if (chain !== 'index') addMp(plan.max_pain_nearest, 'MAXPAIN-0DTE', 'Max Pain scadenza vicina');
     if (chain !== 'etf') addMp(plan.max_pain_nearest_index, 'MAXPAIN-0DTE-IDX', `Max Pain scadenza vicina (${idxName})`);
 
-    // I 3 muri gamma PIÙ GROSSI per |GEX| della fonte (top_gamma = profilo
-    // per strike; il segno dice pin 🛡 o trigger ⚡). Niente più top-3 PER
-    // LATO: l'utente vuole i grandi, non il quadro completo.
+    // I muri gamma della BORSA selezionata (0dte/week/all), con garanzia
+    // per lato: il migliore sopra + il migliore sotto SEMPRE (se esistono),
+    // poi si riempie fino a 3 col più grosso restante. Così non capita più
+    // che un lato resti vuoto solo perché i |GEX| più grossi stanno tutti
+    // dall'altra parte.
     const addGammaWalls = (
       tg: typeof plan.top_gamma | undefined,
       nameSuffix: string, labelSuffix: string,
     ) => {
-      const top = [...(tg ?? [])]
-        .sort((a, b) => Math.abs(b.net_gex) - Math.abs(a.net_gex))
-        .slice(0, 3);
-      for (const t of top) {
+      const arr = tg ?? [];
+      if (!arr.length) return;
+      const byGex = (a: typeof arr[0], b: typeof arr[0]) => Math.abs(b.net_gex) - Math.abs(a.net_gex);
+      const above = arr.filter(t => t.strike_fut >= spot).sort(byGex);
+      const below = arr.filter(t => t.strike_fut < spot).sort(byGex);
+      const picked = new Set<typeof arr[0]>();
+      if (above[0]) picked.add(above[0]);
+      if (below[0]) picked.add(below[0]);
+      const rest = [...above.slice(1), ...below.slice(1)].sort(byGex);
+      for (const t of rest) {
+        if (picked.size >= 3) break;
+        picked.add(t);
+      }
+      for (const t of picked) {
         const zone = Math.round(t.strike_fut / 5) * 5;
         // Lato dominante dello strike (call vs put): stessa lingua dei
         // 'Call wall / Put wall' di InsiderFinance; il segno della gamma
@@ -126,13 +140,21 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
             : (chain === 'index' ? (plan?.gamma_regime_index ?? null)
                                  : (plan?.gamma_regime ?? null));
 
-  // Profilo gamma da mostrare (barre GEX della scala) secondo la fonte.
+  // Profilo gamma della BORSA selezionata (barre GEX della scala).
   const topGammaSel = useMemo(() => {
     if (!plan) return undefined;
-    if (chain === 'etf') return plan.top_gamma;
-    if (chain === 'index') return plan.top_gamma_index;
-    return [...(plan.top_gamma ?? []), ...(plan.top_gamma_index ?? [])];
-  }, [plan, chain]);
+    const pick = (
+      all: typeof plan.top_gamma,
+      wk: typeof plan.top_gamma_week,
+      zero: typeof plan.top_gamma_0dte,
+    ): typeof plan.top_gamma => (bucket === '0dte' ? zero : bucket === 'week' ? wk : all);
+    if (chain === 'etf') return pick(plan.top_gamma, plan.top_gamma_week, plan.top_gamma_0dte);
+    if (chain === 'index') return pick(plan.top_gamma_index, plan.top_gamma_week_index, plan.top_gamma_0dte_index);
+    return [
+      ...pick(plan.top_gamma, plan.top_gamma_week, plan.top_gamma_0dte),
+      ...pick(plan.top_gamma_index, plan.top_gamma_week_index, plan.top_gamma_0dte_index),
+    ];
+  }, [plan, chain, bucket]);
 
   // Lettura operativa: i due livelli adiacenti allo spot (sopra/sotto) e cosa
   // ci si aspetta da ciascuno in base al meccanismo. maxPerSide alto: voglio
@@ -221,13 +243,9 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
   // è la firma strutturale del libro (put comprate = dealer short gamma sotto):
   // va detto nella scala, non lasciato intuire.
   const hasPinBelow = useMemo(() => {
-    if (!plan) return null;
-    const tgs = chain === 'etf' ? plan.top_gamma
-      : chain === 'index' ? plan.top_gamma_index
-      : [...(plan.top_gamma ?? []), ...(plan.top_gamma_index ?? [])];
-    if (!tgs || tgs.length === 0) return null;
-    return tgs.some(t => t.sign === 'long' && t.strike_fut < spot);
-  }, [plan, chain, spot]);
+    if (!topGammaSel || topGammaSel.length === 0) return null;
+    return topGammaSel.some(t => t.sign === 'long' && t.strike_fut < spot);
+  }, [topGammaSel, spot]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -326,13 +344,23 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
       {/* LA SCALA — solo opzioni */}
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-200">
-            🎯 La scala — livelli opzioni
-            <span className="ml-2 text-[10px] font-semibold text-gray-500">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-sm font-bold text-slate-200">🎯 La scala</h3>
+            <Segmented
+              size="xs"
+              value={bucket}
+              onChange={(v) => setBucket(v as GexBucket)}
+              options={[
+                { value: 'all', label: 'Tutte', title: 'Tutte le scadenze del libro: i muri strutturali' },
+                { value: 'week', label: '≤7gg', title: 'Scadenze entro 7 giorni: i muri della settimana' },
+                { value: '0dte', label: '0DTE', title: 'Solo le scadenze di oggi: i pin attorno allo spot' },
+              ]}
+            />
+            <span className="text-[10px] font-semibold text-gray-500">
               {chain === 'etf' ? 'da ETF (SPY/QQQ)' : chain === 'index' ? `da indici (${idxName})` : `ETF + indici (SPY/QQQ + ${idxName})`}
             </span>
-          </h3>
-          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 barriera · ⚡ trigger · barra GEX 🟢 pin / 🔴 trigger · ★★★ zona grossa, confermata e vicina</span>
+          </div>
+          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 pin · ⚡ trigger · barra GEX 🟢 pin / 🔴 trigger · ★ confluenza</span>
         </div>
         {optLevels.length === 0 ? (
           <p className="text-[11px] text-amber-300/90 py-4 leading-relaxed">

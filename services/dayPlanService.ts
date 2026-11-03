@@ -49,6 +49,12 @@ export interface DayPlan {
   gamma_regime_index?: 'long' | 'short' | null;
   top_gamma_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   gex_flip_0dte_index?: number;
+  /** Profili gamma per borsa di scadenza (selettore maturità della scala):
+   *  0dte = solo scadenze di oggi · week = entro 7 giorni · all = top_gamma. */
+  top_gamma_0dte?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
+  top_gamma_week?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
+  top_gamma_0dte_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
+  top_gamma_week_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   max_pain_nearest_index?: number;
   max_pain_all_index?: number;
   vwap?: number;
