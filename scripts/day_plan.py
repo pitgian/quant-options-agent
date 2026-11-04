@@ -1013,10 +1013,25 @@ def main() -> None:
                 spot_ref = float(old_plan.get("last_price") or 0)
                 for tname, tsrc in (("MURO-GAMMA", old_plan.get("top_gamma")),
                                     ("MURO-GAMMA-IDX", old_plan.get("top_gamma_index"))):
-                    tg = sorted(tsrc or [],
-                                key=lambda t: -abs(t.get("net_gex", 0) or 0))
-                    for t in ([x for x in tg if x.get("strike_fut", 0) >= spot_ref][:3]
-                              + [x for x in tg if x.get("strike_fut", 0) < spot_ref][:3]):
+                    # STESSA selezione della scala (addGammaWalls): migliore
+                    # sopra + migliore sotto SEMPRE, riempimento fino a 4 —
+                    # il track record misura ciò che la UI mostra davvero.
+                    tg = [x for x in (tsrc or []) if x.get("strike_fut")]
+                    above = sorted([x for x in tg if x.get("strike_fut", 0) >= spot_ref],
+                                   key=lambda t: -abs(t.get("net_gex", 0) or 0))
+                    below = sorted([x for x in tg if x.get("strike_fut", 0) < spot_ref],
+                                   key=lambda t: -abs(t.get("net_gex", 0) or 0))
+                    picked: list = []
+                    if above:
+                        picked.append(above[0])
+                    if below:
+                        picked.append(below[0])
+                    for x in sorted(above[1:] + below[1:],
+                                    key=lambda t: -abs(t.get("net_gex", 0) or 0)):
+                        if len(picked) >= 4:
+                            break
+                        picked.append(x)
+                    for t in picked:
                         zone = round(t["strike_fut"] / 5) * 5
                         old_levels.append({"name": tname,
                                            "nome_it": f"Muro gamma a {zone:.0f}",
