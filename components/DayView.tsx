@@ -83,9 +83,9 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
 
     // I muri gamma della BORSA selezionata (0dte/week/all), con garanzia
     // per lato: il migliore sopra + il migliore sotto SEMPRE (se esistono),
-    // poi si riempie fino a 3 col più grosso restante. Così non capita più
+    // poi si riempie fino a 4 col più grosso restante. Così non capita più
     // che un lato resti vuoto solo perché i |GEX| più grossi stanno tutti
-    // dall'altra parte.
+    // dall'altra parte, e il 4° livello per |GEX| non si perde.
     const addGammaWalls = (
       tg: typeof plan.top_gamma | undefined,
       nameSuffix: string, labelSuffix: string,
@@ -100,7 +100,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
       if (below[0]) picked.add(below[0]);
       const rest = [...above.slice(1), ...below.slice(1)].sort(byGex);
       for (const t of rest) {
-        if (picked.size >= 3) break;
+        if (picked.size >= 4) break;
         picked.add(t);
       }
       for (const t of picked) {
