@@ -151,3 +151,5 @@ Configured for Vercel via `vercel.json`:
 ## License
 
 MIT License — see the `LICENSE` file for details.
+
+> 05/11: aggiunti selettore metrica Γ GEX/OI e istogramma strike profile (vedi CONTESTO.md).
