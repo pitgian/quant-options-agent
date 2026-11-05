@@ -1022,21 +1022,36 @@ def main() -> None:
                                  "i livelli prezzo/AMT. I muri gamma torneranno "
                                  "appena la sorgente OI torna disponibile.")
         # max pain + top gamma in scala futures (+ borse 0dte/week per il
-        # selettore maturità della scala) + profilo GEX completo per l'istogramma
+        # selettore maturità della scala) + profilo GEX completo per l'istogramma.
+        # I profili ETF (griglia a $1 di SPY/QQQ) vengono AGGREGATI in bin da
+        # 25 pt ES: senza aggregazione l'istogramma è rado (centinaia di
+        # barrette da pochi contratti). La catena indici ha strike nativi da
+        # 5/25/100 pt: resta a griglia nativa.
+        def _bin_profile(entries: list, step: float) -> list:
+            out: dict = {}
+            for e in entries:
+                z = round(e["s"] / step) * step
+                cur = out.setdefault(z, {"s": z, "c": 0.0, "p": 0.0, "co": 0, "po": 0})
+                cur["c"] += e["c"]
+                cur["p"] += e["p"]
+                cur["co"] += e.get("co", 0)
+                cur["po"] += e.get("po", 0)
+            return sorted(out.values(), key=lambda x: x["s"])
+
+        plan["gex_profile"] = _bin_profile([
+            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["all"]
+        ], 25)
+        plan["gex_profile_0dte"] = _bin_profile([
+            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["0dte"]
+        ], 25)
+        plan["gex_profile_week"] = _bin_profile([
+            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["week"]
+        ], 25)
         plan["top_gamma_0dte"] = [
             {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in tg_b["0dte"]
         ]
         plan["top_gamma_week"] = [
             {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in tg_b["week"]
-        ]
-        plan["gex_profile"] = [
-            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["all"]
-        ]
-        plan["gex_profile_0dte"] = [
-            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["0dte"]
-        ]
-        plan["gex_profile_week"] = [
-            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["week"]
         ]
         if mp.get("nearest", {}).get("strike"):
             plan["max_pain_nearest"] = round(mp["nearest"]["strike"] * ratio, 1)
