@@ -231,12 +231,12 @@ def top_gamma_by_bucket(expiries: list, spot: float) -> dict:
 
 
 def gex_profile_by_bucket(expiries: list, spot: float) -> dict:
-    """Profilo GEX COMPLETO per strike per borsa (0dte/week/all) — l'istogramma
-    della UI. Per strike DUE valori: c = GEX lato call (≥0), p = GEX lato put
-    (≤0); net = c + p. Stessa formula di compute_option_levels (gamma × OI ×
-    100 × spot²) ma su TUTTI gli strike della finestra ±10% e in Mld (1e9$),
-    arrotondati a 3 decimali. Gli strike con contributo < 0,01 Mld scartati
-    (barre invisibili: non valgono il peso nel JSON)."""
+    """Profilo COMPLETO per strike per borsa (0dte/week/all) — l'istogramma
+    della UI. Per strike QUATTRO valori: c = GEX lato call (≥0), p = GEX
+    lato put (≤0) [net = c + p], co/po = open interest call/put. Stessa
+    formula di compute_option_levels (gamma × OI × 100 × spot²) ma su
+    TUTTI gli strike della finestra ±10% e in Mld (1e9$), arrotondati a
+    3 decimali. Gli strike senza né GEX né OI scartati."""
     CONTRACT = 100.0
     today = datetime.now(ET).date()
     horizon = (today + timedelta(days=7)).isoformat()
@@ -255,25 +255,36 @@ def gex_profile_by_bucket(expiries: list, spot: float) -> dict:
     lo, hi = spot * 0.9, spot * 1.1
     out: dict = {}
     for name, exps in buckets.items():
-        agg: dict = {}
+        agg: dict = {}   # strike -> [call_gex, put_gex, call_oi, put_oi]
         for e in exps:
             for o in e.get("options") or []:
                 s = float(o.get("strike", -1))
-                if not (lo <= s <= hi) or not o.get("gamma") or not o.get("oi"):
+                if not (lo <= s <= hi):
                     continue
-                sign = 1.0 if o["side"] == "CALL" else -1.0
-                v = o["oi"] * o["gamma"] * CONTRACT * spot * spot * sign
-                cell = agg.setdefault(round(s, 1), [0.0, 0.0])
-                if sign > 0:
-                    cell[0] += v
-                else:
-                    cell[1] += v
+                g = o.get("gamma") or 0
+                oi = int(o.get("oi") or 0)
+                cell = agg.setdefault(round(s, 1), [0.0, 0.0, 0, 0])
+                is_call = o["side"] == "CALL"
+                if g and oi:
+                    sign = 1.0 if is_call else -1.0
+                    v = oi * g * CONTRACT * spot * spot * sign
+                    if sign > 0:
+                        cell[0] += v
+                    else:
+                        cell[1] += v
+                if oi:
+                    if is_call:
+                        cell[2] += oi
+                    else:
+                        cell[3] += oi
         prof = []
         for s in sorted(agg):
-            c, pp = agg[s]
-            if abs(c) + abs(pp) < 1e7:  # < 0,01 Mld
+            c, pp, co, po = agg[s]
+            # scarta solo gli strike davvero vuoti: senza GEX E senza OI
+            if abs(c) + abs(pp) < 1e7 and co + po == 0:
                 continue
-            prof.append({"s": round(s, 1), "c": round(c / 1e9, 3), "p": round(pp / 1e9, 3)})
+            prof.append({"s": round(s, 1), "c": round(c / 1e9, 3), "p": round(pp / 1e9, 3),
+                         "co": int(co), "po": int(po)})
         out[name] = prof
     return out
 

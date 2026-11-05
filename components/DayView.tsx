@@ -163,11 +163,13 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
     if (chain === 'index') return pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index);
     const a = pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte) ?? [];
     const b = pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index) ?? [];
-    const merged = new Map<number, { s: number; c: number; p: number }>();
+    const merged = new Map<number, { s: number; c: number; p: number; co: number; po: number }>();
     for (const e of [...a, ...b]) {
-      const cur = merged.get(e.s) ?? { s: e.s, c: 0, p: 0 };
+      const cur = merged.get(e.s) ?? { s: e.s, c: 0, p: 0, co: 0, po: 0 };
       cur.c += e.c;
       cur.p += e.p;
+      cur.co += e.co ?? 0;
+      cur.po += e.po ?? 0;
       merged.set(e.s, cur);
     }
     return [...merged.values()].sort((x, y) => x.s - y.s);
@@ -430,7 +432,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
       {/* ISTOGRAMMA GEX — tutti gli strike della borsa selezionata */}
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-200">📊 Istogramma GEX — tutti gli strike</h3>
+          <h3 className="text-sm font-bold text-slate-200">📊 Istogramma — GEX e Open Interest, tutti gli strike</h3>
           <span className="text-[10px] text-gray-500">
             borsa: {bucket === 'all' ? 'Tutte' : bucket === 'week' ? '≤7gg' : '0DTE'} ·
             fonte: {chain === 'etf' ? 'ETF (SPY/QQQ)' : chain === 'index' ? `indici (${idxName})` : 'ETF + indici'} ·
