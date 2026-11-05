@@ -717,6 +717,11 @@ def score_plan_against(plan: dict, idx_et, highs, lows, closes=None, only_date=N
         idx_et = [idx_et[k] for k in keep]
         highs = [highs[k] for k in keep]
         lows = [lows[k] for k in keep]
+        if closes is not None:
+            # le chiusure vanno filtrate COME le barre: senza questo, con
+            # only_date il magnete confrontava la chiusura dell'ULTIMO giorno
+            # della finestra (o l'overnight) invece della giornata giudicata
+            closes = [closes[k] for k in keep]
     out = []
     for lv in plan.get("levels", []):
         P = lv["price"]
@@ -736,7 +741,9 @@ def score_plan_against(plan: dict, idx_et, highs, lows, closes=None, only_date=N
         # livello — il pinning dei dealer avviene in chiusura, non a 2h dal
         # tocco (lezione 24/10). Non richiede il tocco: la giornata chiude
         # sul livello o no. Il close è quello dell'ULTIMA barra del giorno.
-        if kind == "magnet" and closes is not None and closes:
+        # len() e non verità: closes è un array numpy — `if closes:` su più
+        # di un elemento solleva ValueError e abbatte TUTTO lo scoring
+        if kind == "magnet" and closes is not None and len(closes):
             held = abs(closes[-1] - P) <= band
             touched = True
         elif touched:
@@ -843,11 +850,21 @@ def main() -> None:
             continue
         idx = hist.index
         idx_et = idx.tz_convert(ET) if idx.tz is not None else idx.tz_localize(ET)
-        es_spot = float(hist["Close"].iloc[-1])
-        ratio = es_spot / spot_etf if spot_etf else 10.0
         h = hist["High"].to_numpy(float)
         l = hist["Low"].to_numpy(float)
         cl = hist["Close"].to_numpy(float)
+        es_spot = float(cl[-1])
+        # Nei giro NOTTURNI (02:45 ET) i futures quotano live ma lo spot
+        # indice è CONGELATO alla chiusura: il rapporto futures/indice
+        # calcolato così è distorto (sta mattina dava 0,9944 → la strike
+        # 28000 NDX mappata a NQ 27843 invece di ~28128). La coppia
+        # coerente è chiusura RTH futures / spot indice alla STESSA chiusura:
+        # uso l'ultima barra RTH. Di giorno è identica all'ultima barra.
+        mask_rth = ((idx_et.hour > 9) | ((idx_et.hour == 9) & (idx_et.minute >= 30))) & (idx_et.hour < 16)
+        rth_closes = cl[mask_rth]
+        if len(rth_closes):
+            es_spot = float(rth_closes[-1])
+        ratio = es_spot / spot_etf if spot_etf else 10.0
 
         # Catena sana? OI aggregata oltre la soglia e nessun flag degraded:
         # con la catena rotta il flip esce a +17% dallo spot e il max pain a
@@ -1088,6 +1105,8 @@ def main() -> None:
                 print(f"day_plan: track record +{n_new} verdetti (giornata {target})")
                 scored_target = target
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"day_plan: scoring saltato ({e})")
 
     os.makedirs(os.path.dirname(PLAN_PATH), exist_ok=True)
