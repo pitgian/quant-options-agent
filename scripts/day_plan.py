@@ -230,6 +230,54 @@ def top_gamma_by_bucket(expiries: list, spot: float) -> dict:
     return out
 
 
+def gex_profile_by_bucket(expiries: list, spot: float) -> dict:
+    """Profilo GEX COMPLETO per strike per borsa (0dte/week/all) — l'istogramma
+    della UI. Per strike DUE valori: c = GEX lato call (≥0), p = GEX lato put
+    (≤0); net = c + p. Stessa formula di compute_option_levels (gamma × OI ×
+    100 × spot²) ma su TUTTI gli strike della finestra ±10% e in Mld (1e9$),
+    arrotondati a 3 decimali. Gli strike con contributo < 0,01 Mld scartati
+    (barre invisibili: non valgono il peso nel JSON)."""
+    CONTRACT = 100.0
+    today = datetime.now(ET).date()
+    horizon = (today + timedelta(days=7)).isoformat()
+    today_iso = today.isoformat()
+    buckets: dict = {"0dte": [], "week": [], "all": []}
+    for e in expiries:
+        d = e.get("date", "")
+        if d and d < today_iso:
+            continue
+        buckets["all"].append(e)
+        if d == today_iso:
+            buckets["0dte"].append(e)
+        if today_iso <= d <= horizon:
+            buckets["week"].append(e)
+
+    lo, hi = spot * 0.9, spot * 1.1
+    out: dict = {}
+    for name, exps in buckets.items():
+        agg: dict = {}
+        for e in exps:
+            for o in e.get("options") or []:
+                s = float(o.get("strike", -1))
+                if not (lo <= s <= hi) or not o.get("gamma") or not o.get("oi"):
+                    continue
+                sign = 1.0 if o["side"] == "CALL" else -1.0
+                v = o["oi"] * o["gamma"] * CONTRACT * spot * spot * sign
+                cell = agg.setdefault(round(s, 1), [0.0, 0.0])
+                if sign > 0:
+                    cell[0] += v
+                else:
+                    cell[1] += v
+        prof = []
+        for s in sorted(agg):
+            c, pp = agg[s]
+            if abs(c) + abs(pp) < 1e7:  # < 0,01 Mld
+                continue
+            prof.append({"s": round(s, 1), "c": round(c / 1e9, 3), "p": round(pp / 1e9, 3)})
+        out[name] = prof
+    return out
+
+
 def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, float | None, list, str | None]:
     """Restituisce (walls, gex_flip, gex_flip_0dte, top_gamma, gex_regime).
 
@@ -878,12 +926,14 @@ def main() -> None:
                   f"livelli opzioni saltati")
             walls, flip, flip0, top_gamma, gex_regime = [], None, [], [], None
             tg_b = {"0dte": [], "week": [], "all": []}
+            prof_b = {"0dte": [], "week": [], "all": []}
             mp = {"nearest": {}, "all": {}}
         else:
             walls, flip, flip0, top_gamma, gex_regime = compute_option_levels(
                 sd.get("expiries", []), spot_etf)
             mp = max_pain(sd.get("expiries", []), spot_etf)
             tg_b = top_gamma_by_bucket(sd.get("expiries", []), spot_etf)
+            prof_b = gex_profile_by_bucket(sd.get("expiries", []), spot_etf)
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
@@ -913,10 +963,20 @@ def main() -> None:
                 index_opts = {"walls": walls_i, "flip": flip_i, "flip0": flip0_i,
                               "ratio": i_ratio}
                 tg_bi = top_gamma_by_bucket(spx.get("expiries", []), spx_spot)
+                prof_bi = gex_profile_by_bucket(spx.get("expiries", []), spx_spot)
                 index_aggr = {
                     "gamma_regime_index": reg_i,
                     "top_gamma_index": [
                         {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_i
+                    ],
+                    "gex_profile_index": [
+                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["all"]
+                    ],
+                    "gex_profile_0dte_index": [
+                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["0dte"]
+                    ],
+                    "gex_profile_week_index": [
+                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["week"]
                     ],
                     "top_gamma_0dte_index": [
                         {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_bi["0dte"]
@@ -951,12 +1011,21 @@ def main() -> None:
                                  "i livelli prezzo/AMT. I muri gamma torneranno "
                                  "appena la sorgente OI torna disponibile.")
         # max pain + top gamma in scala futures (+ borse 0dte/week per il
-        # selettore maturità della scala)
+        # selettore maturità della scala) + profilo GEX completo per l'istogramma
         plan["top_gamma_0dte"] = [
             {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in tg_b["0dte"]
         ]
         plan["top_gamma_week"] = [
             {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in tg_b["week"]
+        ]
+        plan["gex_profile"] = [
+            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["all"]
+        ]
+        plan["gex_profile_0dte"] = [
+            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["0dte"]
+        ]
+        plan["gex_profile_week"] = [
+            {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["week"]
         ]
         if mp.get("nearest", {}).get("strike"):
             plan["max_pain_nearest"] = round(mp["nearest"]["strike"] * ratio, 1)

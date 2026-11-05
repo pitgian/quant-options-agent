@@ -80,6 +80,17 @@ separato futuro con modelli decisionali dedicati.
    nell'indice le put sotto sono comprate → dealer short gamma → le
    discese accelerano (struttura, non filtro: verificato 0 pin sotto su
    ES e NQ nel libro reale).
+   **Istogramma GEX** (05/11): nuova card "📊 Istogramma GEX — tutti gli
+   strike" sotto la scala (GexHistogram.tsx, SVG) — replica lo Strike
+   Profile di InsiderFinance: barre verdi call sopra / rosse put sotto
+   lo zero per OGNI strike, linea spot tratteggiata, toggle Tutte
+   (±10%) / Vicine (±1,5%), segue borsa+fonte della scala (in Entrambi
+   le due fonti si sommano per strike). Backend: gex_profile_by_bucket
+   emette gex_profile[_0dte/_week][(_index)] in Mld (s/c/p), strike
+   < 0,01 Mld scartati. day_plan.json ~160KB.
+   **BASE dati in dev** (05/11): dayPlanService usa /data locale in
+   sviluppo (middleware vite) e GitHub raw in produzione — si testa il
+   pipeline locale senza pushare.
    **Scenario GEX×MaxPain** (08/10): configura A compressione (long gamma
    + max pain entro 0,4%), B trend (short gamma + max pain lontano), C
    checkpoint (muro barriera frapposto), clausola OPEX, divergenza SPY/QQQ

@@ -55,6 +55,14 @@ export interface DayPlan {
   top_gamma_week?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   top_gamma_0dte_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   top_gamma_week_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
+  /** Profilo GEX COMPLETO per strike per borsa (0dte/week/all): l'istogramma.
+   *  s = strike in scala NQ · c = GEX lato call (≥0, Mld) · p = GEX lato put (≤0, Mld). */
+  gex_profile?: Array<{ s: number; c: number; p: number }>;
+  gex_profile_0dte?: Array<{ s: number; c: number; p: number }>;
+  gex_profile_week?: Array<{ s: number; c: number; p: number }>;
+  gex_profile_index?: Array<{ s: number; c: number; p: number }>;
+  gex_profile_0dte_index?: Array<{ s: number; c: number; p: number }>;
+  gex_profile_week_index?: Array<{ s: number; c: number; p: number }>;
   max_pain_nearest_index?: number;
   max_pain_all_index?: number;
   vwap?: number;
@@ -96,7 +104,12 @@ export interface LiveSpot {
   NQ: number | null;
 }
 
-const BASE = 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data';
+// In produzione il piano vive sul data branch (raw.githubusercontent);
+// in SVILUPPO usa i file locali /data serviti dal middleware vite — così
+// si testa il pipeline rigenerato localmente senza pushare.
+const BASE = import.meta.env.DEV
+  ? '/data'
+  : 'https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data';
 const TTL = 60 * 1000;
 
 let statsCache: { ts: number; data: Record<string, LevelStat> } | null = null;

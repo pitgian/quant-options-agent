@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { fetchDayPlanFile, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
 import { buildLadderForPlan } from './Ladder';
 import { Ladder } from './Ladder';
+import { GexHistogram, type GexProfileEntry } from './GexHistogram';
 import { Card, Badge, Segmented } from './ui';
 
 const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 0 });
@@ -147,6 +148,30 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
     gexFlip ? (spot > gexFlip.price ? 'long' : 'short')
             : (chain === 'index' ? (plan?.gamma_regime_index ?? null)
                                  : (plan?.gamma_regime ?? null));
+
+  // Profilo GEX COMPLETO (istogramma) della borsa selezionata; in 'Entrambi'
+  // le due fonti si SOMMANO per strike (libro aggregato).
+  const profileSel = useMemo<Array<GexProfileEntry> | undefined>(() => {
+    if (!plan) return undefined;
+    const pick = (
+      all: Array<GexProfileEntry> | undefined,
+      wk: Array<GexProfileEntry> | undefined,
+      zero: Array<GexProfileEntry> | undefined,
+    ): Array<GexProfileEntry> | undefined =>
+      bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
+    if (chain === 'etf') return pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte);
+    if (chain === 'index') return pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index);
+    const a = pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte) ?? [];
+    const b = pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index) ?? [];
+    const merged = new Map<number, { s: number; c: number; p: number }>();
+    for (const e of [...a, ...b]) {
+      const cur = merged.get(e.s) ?? { s: e.s, c: 0, p: 0 };
+      cur.c += e.c;
+      cur.p += e.p;
+      merged.set(e.s, cur);
+    }
+    return [...merged.values()].sort((x, y) => x.s - y.s);
+  }, [plan, chain, bucket]);
 
   // Profilo gamma della BORSA selezionata (barre GEX della scala).
   const topGammaSel = useMemo(() => {
@@ -399,6 +424,26 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
           Sotto ogni zona in confluenza trovi QUALE livelli convergono e da quale fonte.
           La barra a destra di ogni zona è il GEX netto degli strike lì caduti:
           più è lunga più il muro è denso, verde respinge / rossa amplifica.
+        </p>
+      </Card>
+
+      {/* ISTOGRAMMA GEX — tutti gli strike della borsa selezionata */}
+      <Card className="!p-4">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h3 className="text-sm font-bold text-slate-200">📊 Istogramma GEX — tutti gli strike</h3>
+          <span className="text-[10px] text-gray-500">
+            borsa: {bucket === 'all' ? 'Tutte' : bucket === 'week' ? '≤7gg' : '0DTE'} ·
+            fonte: {chain === 'etf' ? 'ETF (SPY/QQQ)' : chain === 'index' ? `indici (${idxName})` : 'ETF + indici'} ·
+            cambia dal selettore della scala
+          </span>
+        </div>
+        <GexHistogram profile={profileSel} spot={spot} idxName={idxName} />
+        <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
+          TUTTI gli strike della finestra ±10% (borsa "Tutte") o del perimetro scelto — non solo i
+          top della scala. Barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
+          sotto = gamma corta delle put (amplifica). La linea blu tratteggiata è lo spot: le barre più
+          alte vicino alla linea sono i pin di scadenza, le code rosse lontane sono l'assicurazione
+          anti-crollo. Toggle Vicine per restringere alla zona del denaro.
         </p>
       </Card>
     </div>
