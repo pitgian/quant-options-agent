@@ -3,7 +3,7 @@ import { fetchDayPlanFile, fetchLevelStats, fetchLiveSpot, type DayPlan, type Da
 import { buildLadderForPlan } from './Ladder';
 import { Ladder } from './Ladder';
 import { GexHistogram, type GexProfileEntry } from './GexHistogram';
-import { Card, Badge, Segmented } from './ui';
+import { Card, Badge } from './ui';
 
 const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 0 });
 
@@ -19,12 +19,11 @@ export type GexBucket = 'all' | 'week' | '0dte';
  * indici (SPX/NDX) o entrambe — i livelli indice arrivano con chain='index'
  * e nomi suffissati -IDX (track record separato per fonte).
  */
-export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = ({ futures, chain }) => {
+export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucket: GexBucket }> = ({ futures, chain, bucket }) => {
   const [plan, setPlan] = useState<DayPlan | null>(null);
   const [otherPlan, setOtherPlan] = useState<DayPlan | null>(null);
   const [stats, setStats] = useState<Record<string, { n: number; held: number; rate: number }>>({});
   const [live, setLive] = useState<LiveSpot | null>(null);
-  const [bucket, setBucket] = useState<GexBucket>('all');
 
   useEffect(() => {
     let alive = true;
@@ -385,16 +384,9 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-sm font-bold text-slate-200">🎯 La scala</h3>
-            <Segmented
-              size="xs"
-              value={bucket}
-              onChange={(v) => setBucket(v as GexBucket)}
-              options={[
-                { value: 'all', label: 'Tutte', title: 'Tutte le scadenze del libro: i muri strutturali' },
-                { value: 'week', label: '≤7gg', title: 'Scadenze entro 7 giorni: i muri della settimana' },
-                { value: '0dte', label: '0DTE', title: 'Solo le scadenze di oggi: i pin attorno allo spot' },
-              ]}
-            />
+            <span className="text-[10px] font-semibold text-gray-500" title="Cambia dal selettore nella barra in alto">
+              borsa: {bucket === 'all' ? 'Tutte' : bucket === 'week' ? '≤7gg' : '0DTE'}
+            </span>
             <span className="text-[10px] font-semibold text-gray-500">
               {chain === 'etf' ? 'da ETF (SPY/QQQ)' : chain === 'index' ? `da indici (${idxName})` : `ETF + indici (SPY/QQQ + ${idxName})`}
             </span>
@@ -436,7 +428,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource }> = (
           <span className="text-[10px] text-gray-500">
             borsa: {bucket === 'all' ? 'Tutte' : bucket === 'week' ? '≤7gg' : '0DTE'} ·
             fonte: {chain === 'etf' ? 'ETF (SPY/QQQ)' : chain === 'index' ? `indici (${idxName})` : 'ETF + indici'} ·
-            cambia dal selettore della scala
+            cambia dalla barra superiore
           </span>
         </div>
         <GexHistogram profile={profileSel} spot={spot} idxName={idxName} />

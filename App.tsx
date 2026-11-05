@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { DayView, type ChainSource } from './components/DayView';
+import { DayView, type ChainSource, type GexBucket } from './components/DayView';
 import { StatsPanel } from './components/StatsPanel';
 import { SeparationPanel } from './components/SeparationPanel';
 import { Segmented, Collapsible } from './components/ui';
@@ -8,20 +8,32 @@ import { fetchLevelStats, type LevelStat } from './services/dayPlanService';
 type Fut = 'ES' | 'NQ';
 
 const CHAIN_SRC_KEY = 'qf-chain-source';
+const BUCKET_KEY = 'qf-bucket';
 
 function loadChainSrc(): ChainSource {
   const v = localStorage.getItem(CHAIN_SRC_KEY);
   return v === 'index' || v === 'both' ? v : 'etf';
 }
 
+function loadBucket(): GexBucket {
+  const v = localStorage.getItem(BUCKET_KEY);
+  return v === 'week' || v === '0dte' ? v : 'all';
+}
+
 export default function App() {
   const [futures, setFutures] = useState<Fut>('ES');
   const [chainSrc, setChainSrc] = useState<ChainSource>(loadChainSrc);
+  const [bucket, setBucket] = useState<GexBucket>(loadBucket);
   const [stats, setStats] = useState<Record<string, LevelStat>>({});
 
   const changeChainSrc = (v: ChainSource) => {
     setChainSrc(v);
     try { localStorage.setItem(CHAIN_SRC_KEY, v); } catch { /* private mode */ }
+  };
+
+  const changeBucket = (v: GexBucket) => {
+    setBucket(v);
+    try { localStorage.setItem(BUCKET_KEY, v); } catch { /* private mode */ }
   };
 
   useEffect(() => {
@@ -47,6 +59,16 @@ export default function App() {
               ]}
             />
             <Segmented
+              size="xs"
+              value={bucket}
+              onChange={changeBucket}
+              options={[
+                { value: 'all', label: 'Tutte', title: 'Tutte le scadenze del libro: i muri strutturali' },
+                { value: 'week', label: '≤7gg', title: 'Scadenze entro 7 giorni: i muri della settimana' },
+                { value: '0dte', label: '0DTE', title: 'Solo le scadenze di oggi: i pin attorno allo spot' },
+              ]}
+            />
+            <Segmented
               value={futures}
               onChange={(f) => setFutures(f)}
               options={[
@@ -60,7 +82,7 @@ export default function App() {
 
       <main className="flex-1 px-4 py-6">
         <div className="max-w-[1100px] mx-auto flex flex-col gap-5 w-full animate-fadeIn">
-          <DayView futures={futures} chain={chainSrc} />
+          <DayView futures={futures} chain={chainSrc} bucket={bucket} />
           <Collapsible title="Affidabilità storica dei livelli" icon="📐"
                        hint="quante volte ogni livello ha retto, su quante occorrenze">
             <StatsPanel stats={stats} />
