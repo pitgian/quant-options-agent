@@ -30,8 +30,13 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     const load = async () => {
       const [file, s] = await Promise.all([fetchDayPlanFile(), fetchLevelStats()]);
       if (!alive) return;
-      setPlan(file?.plans?.[futures] ?? null);
-      setOtherPlan(file?.plans?.[futures === 'ES' ? 'NQ' : 'ES'] ?? null);
+      // Tolleranza ai fetch falliti: se il piano non arriva (republish del
+      // data branch, CDN, rete) si CONSERVA l'ultimo piano valido invece di
+      // svuotare la pagina — un buco di 60-90 secondi durante il republish
+      // non deve cancellare la scala (lezione del 06/11).
+      if (file?.plans?.[futures]) setPlan(file.plans[futures]);
+      const otherFut = futures === 'ES' ? 'NQ' : 'ES';
+      if (file?.plans?.[otherFut]) setOtherPlan(file.plans[otherFut]);
       setStats(s ?? {});
     };
     load();
