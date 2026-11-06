@@ -81,7 +81,7 @@ export const GexHistogram: React.FC<{
       barTop: (c: number) => yZero - (Math.min(c, yMax) / yMax) * half,
       barBottom: (p: number) => yZero + (Math.min(-p, yMax) / yMax) * half,
       val };
-  }, [bars, metric]);
+  }, [bars, metric, view]);
 
   if (!profile || profile.length === 0) {
     return (
