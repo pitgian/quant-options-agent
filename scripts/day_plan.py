@@ -52,7 +52,14 @@ MIN_CHAIN_OI = 100_000
 # porta OI): con la soglia assoluta 100k la catena NDX risultava sempre
 # "degradata" → niente livelli indice per NQ. La soglia ridotta (~44%
 # del normale) scatta solo se Yahoo perde metà dei dati.
-MIN_CHAIN_OI_BY_SYMBOL = {"NDX": 25_000}
+MIN_CHAIN_OI_BY_SYMBOL = {"NDX": 10_000}
+# Nota (05/11): la soglia va tenuta BASSA per NDX perché l'OI ENTRO la
+# finestra ±10% varia col mercato: nei giorni di crollo la finestra
+# scivola su zone a OI minore e una soglia troppo alta scarterebbe la
+# catena a torto (bug del 05/11: 24,2k < 25k → catena 'degradata' durante
+# un -5%, livelli indici assenti). Il vero segnale di rottura resta
+# l'OI ~0 (fetch parziale/rotto), che 10k (~40% del normale ~25-35k)
+# coglie comunque.
 
 
 def min_chain_oi(symbol: str) -> int:

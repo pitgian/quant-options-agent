@@ -175,13 +175,17 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
   }, [plan, chain, bucket]);
 
   // Profilo gamma della BORSA selezionata (barre GEX della scala).
+  // pick non restituisce MAI undefined: i campi possono mancare nel piano
+  // (catena degradata o piano vecchio) — lo spread qui sotto altrimenti
+  // abbatte la pagina (bug del 05/11, vista indici + borsa 0DTE).
   const topGammaSel = useMemo(() => {
     if (!plan) return undefined;
     const pick = (
       all: typeof plan.top_gamma,
       wk: typeof plan.top_gamma_week,
       zero: typeof plan.top_gamma_0dte,
-    ): typeof plan.top_gamma => (bucket === '0dte' ? zero : bucket === 'week' ? wk : all);
+    ): NonNullable<typeof plan.top_gamma> =>
+      bucket === '0dte' ? (zero ?? []) : bucket === 'week' ? (wk ?? []) : (all ?? []);
     if (chain === 'etf') return pick(plan.top_gamma, plan.top_gamma_week, plan.top_gamma_0dte);
     if (chain === 'index') return pick(plan.top_gamma_index, plan.top_gamma_week_index, plan.top_gamma_0dte_index);
     return [
