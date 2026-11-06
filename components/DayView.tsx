@@ -440,7 +440,13 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
             cambia dalla barra superiore
           </span>
         </div>
-        <GexHistogram profile={profileSel} spot={spot} idxName={idxName} />
+        <GexHistogram
+          profile={profileSel}
+          spot={spot}
+          idxName={idxName}
+          maxPain={chain === 'index' ? plan?.max_pain_nearest_index : plan?.max_pain_nearest}
+          flip={gexFlip?.price}
+        />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           TUTTI gli strike della finestra ±10% (borsa "Tutte") o del perimetro scelto — non solo i
           top della scala. Barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse

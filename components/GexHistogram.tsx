@@ -39,7 +39,10 @@ export const GexHistogram: React.FC<{
   profile: Array<GexProfileEntry> | undefined;
   spot: number;
   idxName: string;
-}> = ({ profile, spot, idxName }) => {
+  /** Linee di riferimento in scala NQ: max pain e flip gamma della fonte selezionata. */
+  maxPain?: number;
+  flip?: number;
+}> = ({ profile, spot, idxName, maxPain, flip }) => {
   const [mode, setMode] = useState<'all' | 'near'>('all');
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
@@ -82,6 +85,16 @@ export const GexHistogram: React.FC<{
       barBottom: (p: number) => yZero + (Math.min(-p, yMax) / yMax) * half,
       val };
   }, [bars, metric, view]);
+
+  const refLines = useMemo(() => {
+    const defs = [
+      { v: spot > 0 ? spot : undefined, label: 'Spot', color: '#60a5fa', dash: '4 3' },
+      { v: maxPain && maxPain > 0 ? maxPain : undefined, label: 'Max Pain', color: '#fbbf24', dash: '6 3' },
+      { v: flip && flip > 0 ? flip : undefined, label: 'Flip', color: '#c084fc', dash: '6 3' },
+    ];
+    if (!geom) return [];
+    return defs.filter(l => l.v !== undefined && geom.x0 <= l.v && l.v <= geom.x1);
+  }, [geom, spot, maxPain, flip]);
 
   if (!profile || profile.length === 0) {
     return (
@@ -185,13 +198,16 @@ export const GexHistogram: React.FC<{
             );
           })}
 
-          {spot > 0 && geom.x0 <= spot && spot <= geom.x1 && (
-            <g>
-              <line x1={geom.x(spot)} x2={geom.x(spot)} y1={M.top - 4} y2={M.top + PLOT_H}
-                    stroke="#60a5fa" strokeWidth={1.2} strokeDasharray="4 3" />
-              <text x={geom.x(spot)} y={M.top - 8} textAnchor="middle" fontSize={10} fontWeight="bold" fill="#60a5fa">Spot</text>
+          {/* linee di riferimento: spot, max pain, flip */}
+          {refLines.map((l, i) => (
+            <g key={l.label}>
+              <line x1={geom.x(l.v!)} x2={geom.x(l.v!)} y1={M.top - 4} y2={M.top + PLOT_H}
+                    stroke={l.color} strokeWidth={1.2} strokeDasharray={l.dash} />
+              <text x={geom.x(l.v!)} y={M.top - 8} textAnchor="middle" fontSize={9.5} fontWeight="bold" fill={l.color}>
+                {l.label}
+              </text>
             </g>
-          )}
+          ))}
 
           {ticksX.map((s, i) => (
             <text key={i} x={geom.x(s)} y={H - 8} textAnchor="middle" fontSize={9} fill="#64748b">
@@ -211,6 +227,11 @@ export const GexHistogram: React.FC<{
         <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
           <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400" />
           {view === 'net' ? 'Net ≤ 0 (put-dominato)' : `Put ${metric === 'oi' ? 'OI' : 'GEX'}`}
+        </span>
+        <span className="text-[10px] text-gray-500 flex items-center gap-2 flex-wrap">
+          <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-blue-400" /> Spot</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> Max Pain</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-purple-400" /> Flip</span>
         </span>
         <span className="text-[10px] text-gray-500">
           strike in scala {idxName} (NQ) · passa il mouse sopra le barre per i valori
