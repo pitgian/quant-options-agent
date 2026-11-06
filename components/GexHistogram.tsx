@@ -42,6 +42,7 @@ export const GexHistogram: React.FC<{
 }> = ({ profile, spot, idxName }) => {
   const [mode, setMode] = useState<'all' | 'near'>('all');
   const [metric, setMetric] = useState<Metric>('gex');
+  const [view, setView] = useState<'split' | 'net'>('split');
 
   const bars = useMemo(() => {
     const arr = profile ?? [];
@@ -53,10 +54,17 @@ export const GexHistogram: React.FC<{
 
   const geom = useMemo(() => {
     if (!bars.length) return null;
-    const val = (b: GexProfileEntry): [number, number] =>
-      metric === 'oi'
-        ? [b.co ?? 0, -(b.po ?? 0)]
+    const val = (b: GexProfileEntry): [number, number] => {
+      if (metric === 'oi') {
+        const co = b.co ?? 0, po = b.po ?? 0;
+        return view === 'net'
+          ? [Math.max(0, co - po), Math.min(0, co - po)]
+          : [co, -po];
+      }
+      return view === 'net'
+        ? [Math.max(0, b.c + b.p), Math.min(0, b.c + b.p)]
         : [b.c, b.p];
+    };
     const vals = bars.map(val);
     const maxPos = Math.max(0, ...vals.map(v => v[0]));
     const maxNeg = Math.max(0, ...vals.map(v => -v[1]));
@@ -97,8 +105,12 @@ export const GexHistogram: React.FC<{
       <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
         <span className="text-[10px] text-gray-500">
           {metric === 'gex'
-            ? 'GEX per strike · valori in Mld $ · verde = call (gamma lunga) · rossa = put (gamma corta)'
-            : 'Open Interest per strike · contratti · verde = call · rossa = put'}
+            ? view === 'net'
+              ? 'Net GEX per strike (call−put) · sopra zero gamma lunga, sotto gamma corta · Mld $'
+              : 'GEX per strike · valori in Mld $ · verde = call (gamma lunga) · rossa = put (gamma corta)'
+            : view === 'net'
+              ? 'Net OI per strike (call−put) · sopra zero call-dominato, sotto put-dominato · contratti'
+              : 'Open Interest per strike · contratti · verde = call · rossa = put'}
         </span>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
@@ -107,6 +119,15 @@ export const GexHistogram: React.FC<{
                 className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${metric === m ? 'bg-sky-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
                 title={m === 'gex' ? 'Gamma Exposure in dollari (Mld)' : 'Open Interest in contratti'}>
                 {m === 'gex' ? 'Γ GEX' : 'OI'}
+              </button>
+            ))}
+          </div>
+          <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
+            {(['split', 'net'] as const).map(v => (
+              <button key={v} onClick={() => setView(v)}
+                className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${view === v ? 'bg-indigo-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
+                title={v === 'split' ? 'Due barre: lato call (verde) e lato put (rosso)' : 'Una barra per strike: netto call−put (verde sopra = call-dominato, rosso sotto = put-dominato)'}>
+                {v === 'split' ? 'Call/Put' : 'Net'}
               </button>
             ))}
           </div>
@@ -184,10 +205,12 @@ export const GexHistogram: React.FC<{
 
       <div className="flex items-center gap-4 mt-1">
         <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400" /> Call {metric === 'oi' ? 'OI' : 'GEX'}
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400" />
+          {view === 'net' ? 'Net ≥ 0 (call-dominato)' : `Call ${metric === 'oi' ? 'OI' : 'GEX'}`}
         </span>
         <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400" /> Put {metric === 'oi' ? 'OI' : 'GEX'}
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400" />
+          {view === 'net' ? 'Net ≤ 0 (put-dominato)' : `Put ${metric === 'oi' ? 'OI' : 'GEX'}`}
         </span>
         <span className="text-[10px] text-gray-500">
           strike in scala {idxName} (NQ) · passa il mouse sopra le barre per i valori
