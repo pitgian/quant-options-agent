@@ -611,9 +611,12 @@ def get_spot_price(symbol: str, ticker: yf.Ticker) -> Optional[float]:
 # JSON che alimenta cboe.com) danno il libro completo: OI reale, gamma, IV,
 # volume per serie — in UN solo HTTP per simbolo, senza chiavi. Il redirect
 # Cloudflare (307) va seguito; serve uno User-Agent realistico.
-# SPY/QQQ non sono su CBOE delayed quotes (solo indici CBOE-listed): restano
-# su Yahoo, dove l'OI è abbondante e affidabile.
-CBOE_CHAIN_SYMBOLS = {"SPX": "_SPX", "NDX": "_NDX"}
+# Anche SPY/QQQ sono serviti dall'endpoint (contrariamente a quanto creduto
+# in precedenza): stesso formato degli indici, OI identico a Yahoo ma volume
+# CONSOLIDATO tutte le borse (Yahoo ne perde ~90%) e gamma/IV ufficiali per
+# serie. Verifica 2026-11-09 su SPY 0DTE: OI Yahoo=CBOE al 100%, volume
+# Yahoo 39.8k vs CBOE 492k. Le catene ETF restano su Yahoo solo come fallback.
+CBOE_CHAIN_SYMBOLS = {"SPX": "_SPX", "NDX": "_NDX", "SPY": "SPY", "QQQ": "QQQ"}
 CBOE_DELAYED_QUOTES_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options/{sym}.json"
 CBOE_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -625,7 +628,8 @@ CBOE_TIMEOUT_S = 60
 CBOE_STRIKE_WINDOW_PCT = 0.10
 
 # "SPXW261106P05000000" → root 'SPXW', scadenza 261106 (YYMMDD), PUT, 5000.0
-CBOE_SYMBOL_RE = re.compile(r"^([A-Z]+)(\d{6})([CP])(\d{8})$")
+# Il root può contenere cifre: CBOE usa 'B1SPY' per una parte delle serie SPY.
+CBOE_SYMBOL_RE = re.compile(r"^([A-Z0-9]+?)(\d{6})([CP])(\d{8})$")
 
 
 def parse_cboe_option_symbol(code: str) -> Optional[Tuple[str, str, str, float]]:
@@ -1776,9 +1780,10 @@ def fetch_symbol_data(
 
     ticker = yf.Ticker(yf_symbol)
 
-    # 1-3. Catena opzioni — SPX/NDX via CBOE (fonte ufficiale: OI reale,
-    #      gamma e IV per serie, un solo HTTP); tutte le altre via Yahoo.
-    #      Se CBOE fallisce si ripiega sul percorso Yahoo esistente.
+    # 1-3. Catena opzioni — tutti e quattro i simboli via CBOE (fonte
+    #      ufficiale: OI reale, volume consolidato, gamma e IV per serie, un
+    #      solo HTTP per simbolo). Se CBOE fallisce si ripiega sul percorso
+    #      Yahoo esistente (per gli ETF: OI ok ma volume/gamma parziali).
     fetched_chains: Dict[str, Dict[str, Any]] = {}
     expiry_contract_counts: List[Tuple[str, int]] = []
     failed_expirations: List[str] = []

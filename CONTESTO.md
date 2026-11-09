@@ -55,8 +55,12 @@ separato futuro con modelli decisionali dedicati.
    SPX/NDX (parse simbolo OCC-like, strike filtrati ±10%, stesse colonne
    DataFrame del percorso Yahoo → tutto il downstream invariato), con
    fallback automatico a Yahoo se CBOE non risponde. Per simbolo nel JSON:
-   chain_source: 'cboe'|'yahoo'. SPY/QQQ restano su Yahoo (non sono su
-   CBOE delayed quotes). Bug scope trovato in test e2e: len(expirations)
+   chain_source: 'cboe'|'yahoo'. SPY/QQQ passati a CBOE anche loro (09/11:
+   l'endpoint li serve come gli indici, contrariamente a quanto creduto —
+   verifica empirica su SPY 0DTE: OI Yahoo=CBOE identico al 100%, volume
+   Yahoo perde ~90% del consolidato 492k→39k, gamma assente su Yahoo;
+   root con cifre tipo 'B1SPY' gestiti dalla regex OCC-like). Bug scope
+   trovato in test e2e: len(expirations)
    nel percorso CBOE (fissato con expirations = sorted(fetched_chains)).
    Validazione esterna: l'OI per strike CBOE coincide CONTRATTO PER
    CONTRATTO con InsiderFinance sia sul perimetro front-week (9/9 strike)
