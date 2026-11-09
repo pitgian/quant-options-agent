@@ -1855,8 +1855,14 @@ def fetch_symbol_data(
                 f"{'...' if len(failed_expirations) > 5 else ''}"
             )
     else:
-        spot = float(cboe_chain["spot"])
-        logger.info(f"💰 {symbol} spot price (CBOE): ${spot:.2f}")
+        # Spot: preferisci la fonte live (ETF diretti real-time, indici
+        # derivati dagli ETF) e usa CBOE solo come fallback. Il current_price
+        # CBOE per gli INDICI resta congelato al close precedente (verificato
+        # 09/11 in seduta: _SPX = 7376.86 = close venerdì mentre il mercato
+        # era a ~7480) e per gli ETF è delayed ~15 min → pubblicarlo come
+        # spot rendeva il JSON indietro di ~1% in seduta.
+        spot = get_spot_price(symbol, ticker) or float(cboe_chain["spot"])
+        logger.info(f"💰 {symbol} spot price: ${spot:.2f}")
         # il log di selezione più sotto usa len(expirations): nel percorso CBOE
         # lo scan Yahoo non c'è — il totale è quello delle scadenze CBOE
         expirations = sorted(fetched_chains)

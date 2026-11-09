@@ -50,6 +50,10 @@ const YAHOO_UA =
  *  platform timeout even when Yahoo is slow to respond. */
 const FETCH_TIMEOUT_MS = 3500;
 
+/** Un quote è "live" se il suo timestamp è più recente di così. In RTH gli
+ *  ETF e ^NDX battono tick continui, ^SPX su Yahoo è delayed ~15 min. */
+const FRESH_MS = 120_000;
+
 /** Short in-memory cache so repeated requests (the client polls every 30s)
  *  don't re-hit Yahoo 6x each time, reducing rate-limit / timeout risk on the
  *  Vercel serverless IP. */
@@ -99,7 +103,6 @@ async function fetchQuote(symbol: string): Promise<Quote> {
     const meta = result?.meta;
     const closes: (number | null)[] = result?.indicators?.quote?.[0]?.close || [];
     const times: number[] = result?.timestamp || [];
-
     // Prefer the last non-null candle, fall back to regularMarketPrice
     let lastCandlePrice: number | null = null;
     for (let i = closes.length - 1; i >= 0; i--) {
@@ -126,10 +129,10 @@ async function fetchQuote(symbol: string): Promise<Quote> {
       }
     }
 
-    return { live, prevClose };
+    return { live, prevClose, updateTime: meta?.regularMarketTime ? meta.regularMarketTime * 1000 : null };
   } catch (err) {
     console.error(`[spotPrices] Error fetching ${symbol}:`, err);
-    return { live: null, prevClose: null };
+    return { live: null, prevClose: null, updateTime: null };
   }
 }
 
@@ -211,11 +214,40 @@ export async function fetchSpotPrices(): Promise<SpotPrices> {
   const esRatio = esLive !== null && esPrev !== null ? esLive / esPrev : 1.0;
   const nqRatio = nqLive !== null && nqPrev !== null ? nqLive / nqPrev : 1.0;
 
+  // ── Priorità quote (RTH vs pre-market/weekend) ──────────────────────────
+  // La derivazione da futures è inevitabilmente imprecisa in seduta (l'anchor
+  // settlement del futuro e il close dell'indice non sono lo stesso istante e
+  // il basis si muove): a mercato aperto esistono quote live migliori.
+  // Gate di freschezza sul timestamp Yahoo: in RTH ^NDX, SPY e QQQ sono
+  // real-time, ^SPX è delayed ~15 min (→ mai fresco, si usa il bridge SPY);
+  // fuori seduta restano al close di venerdì → gate li scarta e si ripiega
+  // sulla derivazione da futures, che lì è l'unica fonte viva.
+  const isFresh = (sym: string): number | null => {
+    const q = quotes[sym];
+    if (!q || q.live === null || q.updateTime == null) return null;
+    return Date.now() - q.updateTime < FRESH_MS ? q.live : null;
+  };
+
+  const spyLive = isFresh('SPY');
+  const qqqLive = isFresh('QQQ');
+  const spxLive = isFresh('^SPX');
+  const ndxLive = isFresh('^NDX');
+
+  // Bridge ETF→indice: spot ETF live × rapporto tra close completati.
+  const spxViaSpy =
+    spyLive !== null && spyPrev !== null && spxPrev !== null
+      ? spyLive * (spxPrev / spyPrev)
+      : null;
+  const ndxViaQqq =
+    qqqLive !== null && qqqPrev !== null && ndxPrev !== null
+      ? qqqLive * (ndxPrev / qqqPrev)
+      : null;
+
   const data: SpotPrices = {
-    SPX: spxPrev !== null ? round2(spxPrev * esRatio) : null,
-    NDX: ndxPrev !== null ? round2(ndxPrev * nqRatio) : null,
-    SPY: spyPrev !== null ? round2(spyPrev * esRatio) : null,
-    QQQ: qqqPrev !== null ? round2(qqqPrev * nqRatio) : null,
+    SPX: round2(spxLive ?? spxViaSpy ?? (spxPrev !== null ? spxPrev * esRatio : null)),
+    NDX: round2(ndxLive ?? ndxViaQqq ?? (ndxPrev !== null ? ndxPrev * nqRatio : null)),
+    SPY: round2(spyLive ?? (spyPrev !== null ? spyPrev * esRatio : null)),
+    QQQ: round2(qqqLive ?? (qqqPrev !== null ? qqqPrev * nqRatio : null)),
     ES: esLive,
     NQ: nqLive,
     timestamp: new Date().toISOString(),
