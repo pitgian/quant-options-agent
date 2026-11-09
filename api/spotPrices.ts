@@ -32,13 +32,16 @@ const YAHOO_SYMBOLS = ['SPY', 'QQQ', 'ES=F', 'NQ=F', '^SPX', '^NDX'] as const;
 
 const YAHOO_CHART_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 
-/** TradingView public symbol endpoint — serves near real-time futures quotes
- *  (~6 s lag measured) where Yahoo futures run ~10 min behind. Unofficial:
+/** TradingView public symbol endpoint — serves near real-time quotes
+ *  (futures ~6 s lag; cash indices SPX/NDX real-time too; US ETFs delayed
+ *  ~15-25 min without subscription, so they stay on Yahoo). Unofficial:
  *  treat as best-effort and always keep the Yahoo fallback. */
 const TRADINGVIEW_SYMBOL_URL = 'https://scanner.tradingview.com/symbol';
-const TV_FUTURES: Record<'ES' | 'NQ', string> = {
+const TV_SYMBOLS: Record<'ES' | 'NQ' | 'SPX' | 'NDX', string> = {
   ES: 'CME_MINI:ES1!',
   NQ: 'CME_MINI:NQ1!',
+  SPX: 'SP:SPX',
+  NDX: 'NASDAQ:NDX',
 };
 const TV_FIELDS = 'close,change_abs,update_time';
 
@@ -139,7 +142,7 @@ async function fetchQuote(symbol: string): Promise<Quote> {
 /** Fetches one continuous futures contract from TradingView's public symbol
  *  endpoint. `change_abs` is vs the previous daily close, so prevClose can be
  *  recovered as close − change_abs (null early in the session or when flat). */
-async function fetchTradingViewFuture(symbol: string): Promise<Quote> {
+async function fetchTradingViewQuote(symbol: string): Promise<Quote> {
   const url =
     `${TRADINGVIEW_SYMBOL_URL}?symbol=${encodeURIComponent(symbol)}` +
     `&fields=${TV_FIELDS}&no_404=true`;
@@ -187,8 +190,8 @@ export async function fetchSpotPrices(): Promise<SpotPrices> {
     ...YAHOO_SYMBOLS.map(async (symbol) => {
       quotes[symbol] = await fetchQuote(symbol);
     }),
-    ...(['ES', 'NQ'] as const).map(async (k) => {
-      quotes[`TV_${k}`] = await fetchTradingViewFuture(TV_FUTURES[k]);
+    ...(['ES', 'NQ', 'SPX', 'NDX'] as const).map(async (k) => {
+      quotes[`TV_${k}`] = await fetchTradingViewQuote(TV_SYMBOLS[k]);
     }),
   ]);
 
@@ -228,10 +231,16 @@ export async function fetchSpotPrices(): Promise<SpotPrices> {
     return Date.now() - q.updateTime < FRESH_MS ? q.live : null;
   };
 
+  // TradingView: real-time per futures e indici (gate freschezza anche qui:
+  // l'endpoint è unofficial e può restare indietro, es. NDX ha momentaneamente
+  // servito il close venerdì durante l'apertura).
+  const tvSpxLive = isFresh('TV_SPX');
+  const tvNdxLive = isFresh('TV_NDX');
+
   const spyLive = isFresh('SPY');
   const qqqLive = isFresh('QQQ');
-  const spxLive = isFresh('^SPX');
-  const ndxLive = isFresh('^NDX');
+  const spxLive = tvSpxLive ?? isFresh('^SPX');
+  const ndxLive = tvNdxLive ?? isFresh('^NDX');
 
   // Bridge ETF→indice: spot ETF live × rapporto tra close completati.
   const spxViaSpy =
