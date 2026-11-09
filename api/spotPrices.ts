@@ -9,16 +9,20 @@
  * Strategy
  * --------
  * Indices (^SPX, ^NDX) are published with a ~15-minute delay on Yahoo, while
- * ETFs (SPY, QQQ) and futures (ES=F, NQ=F) stream near real-time. To get a
- * fresh index print we derive it from the corresponding futures' intraday
- * return applied to the index's previous close:
+ * ETFs (SPY, QQQ) stream near real-time. Yahoo futures (ES=F, NQ=F) turn out
+ * to lag ~10 minutes too (measured 2026-11: regularMarketTime 10 min behind
+ * wall clock). To get a truly live index print we therefore read ES/NQ from
+ * TradingView's public symbol endpoint (scanner.tradingview.com), which
+ * serves near real-time CME mini futures (~6 s lag measured), and derive:
  *
  *     derived_SPX = prev_SPX × (live_ES / prev_ES)
  *     derived_NDX = prev_NDX × (live_NQ / prev_NQ)
  *
- * ETFs are derived the same way for symmetry (so the dashboard stays coherent
- * with the futures-based regime logic), falling back to the ETF's own previous
- * close when futures are unavailable.
+ * The scanner endpoint is unofficial: if it fails or is rate-limited we fall
+ * back to Yahoo ES=F / NQ=F (delayed ~10 min but reliable). ETFs are derived
+ * the same way for symmetry (so the dashboard stays coherent with the
+ * futures-based regime logic), falling back to the ETF's own previous close
+ * when futures are unavailable.
  *
  * @module lib/spotPrices
  */
@@ -27,6 +31,16 @@
 const YAHOO_SYMBOLS = ['SPY', 'QQQ', 'ES=F', 'NQ=F', '^SPX', '^NDX'] as const;
 
 const YAHOO_CHART_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
+
+/** TradingView public symbol endpoint — serves near real-time futures quotes
+ *  (~6 s lag measured) where Yahoo futures run ~10 min behind. Unofficial:
+ *  treat as best-effort and always keep the Yahoo fallback. */
+const TRADINGVIEW_SYMBOL_URL = 'https://scanner.tradingview.com/symbol';
+const TV_FUTURES: Record<'ES' | 'NQ', string> = {
+  ES: 'CME_MINI:ES1!',
+  NQ: 'CME_MINI:NQ1!',
+};
+const TV_FIELDS = 'close,change_abs,update_time';
 
 /** Browser-like UA — Yahoo blocks requests without one. */
 const YAHOO_UA =
@@ -59,17 +73,22 @@ export interface SpotPrices {
   ES: number | null;
   NQ: number | null;
   timestamp: string;
+  /** Epoch (ms) of the last ES/NQ tick reported by TradingView, when it was
+   *  the source (null → ES/NQ came from Yahoo fallback or are unavailable). */
+  esUpdateTime?: number | null;
+  nqUpdateTime?: number | null;
 }
 
 interface Quote {
   live: number | null;
   prevClose: number | null;
+  updateTime?: number | null;
 }
 
 async function fetchQuote(symbol: string): Promise<Quote> {
-  const url = `${YAHOO_CHART_BASE}/${encodeURIComponent(
-    symbol,
-  )}?interval=1m&range=5m&includePrePost=true`;
+  // Daily candles: meta.regularMarketPrice stays real-time regardless of
+  // interval, and the completed daily candles give a reliable previous close.
+  const url = `${YAHOO_CHART_BASE}/${encodeURIComponent(symbol)}?interval=1d&range=6d`;
 
   try {
     const response = await withTimeout(url);
@@ -79,8 +98,9 @@ async function fetchQuote(symbol: string): Promise<Quote> {
     const result = data?.chart?.result?.[0];
     const meta = result?.meta;
     const closes: (number | null)[] = result?.indicators?.quote?.[0]?.close || [];
+    const times: number[] = result?.timestamp || [];
 
-    // Prefer the last non-null intraday candle, fall back to regularMarketPrice
+    // Prefer the last non-null candle, fall back to regularMarketPrice
     let lastCandlePrice: number | null = null;
     for (let i = closes.length - 1; i >= 0; i--) {
       if (closes[i] !== null && closes[i] !== undefined) {
@@ -90,12 +110,56 @@ async function fetchQuote(symbol: string): Promise<Quote> {
     }
 
     const live = meta?.regularMarketPrice ?? lastCandlePrice;
-    const prevClose = meta?.chartPreviousClose ?? meta?.previousClose ?? lastCandlePrice;
+
+    // Previous close = last completed daily candle (session date strictly
+    // before today in the exchange timezone). meta.chartPreviousClose is NOT
+    // usable: on intraday ranges it proved unreliable (it can point two
+    // sessions back for indices, or to a stale intraday bar for futures).
+    const tz: string = meta?.exchangeTimezoneName ?? 'America/New_York';
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz }); // YYYY-MM-DD
+    const today = fmt.format(new Date());
+    let prevClose: number | null = null;
+    for (let i = times.length - 1; i >= 0; i--) {
+      if (fmt.format(new Date(times[i] * 1000)) < today) {
+        prevClose = closes[i] ?? null;
+        break;
+      }
+    }
 
     return { live, prevClose };
   } catch (err) {
     console.error(`[spotPrices] Error fetching ${symbol}:`, err);
     return { live: null, prevClose: null };
+  }
+}
+
+/** Fetches one continuous futures contract from TradingView's public symbol
+ *  endpoint. `change_abs` is vs the previous daily close, so prevClose can be
+ *  recovered as close − change_abs (null early in the session or when flat). */
+async function fetchTradingViewFuture(symbol: string): Promise<Quote> {
+  const url =
+    `${TRADINGVIEW_SYMBOL_URL}?symbol=${encodeURIComponent(symbol)}` +
+    `&fields=${TV_FIELDS}&no_404=true`;
+
+  try {
+    const response = await withTimeout(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const d = (await response.json()) as {
+      close?: number;
+      change_abs?: number | null;
+      update_time?: number;
+    };
+
+    const live = typeof d.close === 'number' ? d.close : null;
+    const prevClose =
+      live !== null && typeof d.change_abs === 'number' ? live - d.change_abs : null;
+    const updateTime = typeof d.update_time === 'number' ? d.update_time * 1000 : null;
+
+    return { live, prevClose, updateTime };
+  } catch (err) {
+    console.error(`[spotPrices] TradingView error for ${symbol}:`, err);
+    return { live: null, prevClose: null, updateTime: null };
   }
 }
 
@@ -116,20 +180,29 @@ export async function fetchSpotPrices(): Promise<SpotPrices> {
   }
 
   const quotes: Record<string, Quote> = {};
-  await Promise.all(
-    YAHOO_SYMBOLS.map(async (symbol) => {
+  await Promise.all([
+    ...YAHOO_SYMBOLS.map(async (symbol) => {
       quotes[symbol] = await fetchQuote(symbol);
     }),
-  );
+    ...(['ES', 'NQ'] as const).map(async (k) => {
+      quotes[`TV_${k}`] = await fetchTradingViewFuture(TV_FUTURES[k]);
+    }),
+  ]);
 
   const spyPrev = quotes['SPY']?.prevClose ?? null;
   const qqqPrev = quotes['QQQ']?.prevClose ?? null;
 
-  const esLive = quotes['ES=F']?.live ?? null;
-  const esPrev = quotes['ES=F']?.prevClose ?? null;
+  // Live futures: prefer TradingView (real-time, ~6 s lag), fall back to the
+  // ~10-min-delayed Yahoo futures quote. Previous close: prefer the anchor
+  // implied by TV's change_abs (same source as the live tick), then the
+  // last-completed-daily-candle close from Yahoo.
+  const esLive = quotes['TV_ES']?.live ?? quotes['ES=F']?.live ?? null;
+  const esPrev = quotes['TV_ES']?.prevClose ?? quotes['ES=F']?.prevClose ?? null;
+  const esTime = quotes['TV_ES']?.live != null ? quotes['TV_ES']?.updateTime ?? null : null;
 
-  const nqLive = quotes['NQ=F']?.live ?? null;
-  const nqPrev = quotes['NQ=F']?.prevClose ?? null;
+  const nqLive = quotes['TV_NQ']?.live ?? quotes['NQ=F']?.live ?? null;
+  const nqPrev = quotes['TV_NQ']?.prevClose ?? quotes['NQ=F']?.prevClose ?? null;
+  const nqTime = quotes['TV_NQ']?.live != null ? quotes['TV_NQ']?.updateTime ?? null : null;
 
   const spxPrev = quotes['^SPX']?.prevClose ?? null;
   const ndxPrev = quotes['^NDX']?.prevClose ?? null;
@@ -146,6 +219,8 @@ export async function fetchSpotPrices(): Promise<SpotPrices> {
     ES: esLive,
     NQ: nqLive,
     timestamp: new Date().toISOString(),
+    esUpdateTime: esTime,
+    nqUpdateTime: nqTime,
   };
 
   // Only cache a payload that actually carries live data, so a transient
