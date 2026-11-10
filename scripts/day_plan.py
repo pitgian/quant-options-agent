@@ -296,6 +296,24 @@ def gex_profile_by_bucket(expiries: list, spot: float) -> dict:
     return out
 
 
+def _bin_profile(entries: list, step: float) -> list:
+    """Aggrega il profilo GEX su bin da `step` pt in scala futures: strike
+    arrotondati al bin più vicino, valori (c/p/co/po) sommati. Serve perché
+    in modalità 'Entrambi' la UI somma ETF+indice per strike IDENTICO — le
+    due fonti devono quindi stare sulla stessa griglia (verifica 09/11:
+    indice non-binnato → 0 strike comuni → istogramma doppio invece che
+    sommato)."""
+    out: dict = {}
+    for e in entries:
+        z = round(e["s"] / step) * step
+        cur = out.setdefault(z, {"s": z, "c": 0.0, "p": 0.0, "co": 0, "po": 0})
+        cur["c"] += e["c"]
+        cur["p"] += e["p"]
+        cur["co"] += e.get("co", 0)
+        cur["po"] += e.get("po", 0)
+    return sorted(out.values(), key=lambda x: x["s"])
+
+
 def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, float | None, list, str | None]:
     """Restituisce (walls, gex_flip, gex_flip_0dte, top_gamma, gex_regime).
 
@@ -987,15 +1005,12 @@ def main() -> None:
                     "top_gamma_index": [
                         {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_i
                     ],
-                    "gex_profile_index": [
-                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["all"]
-                    ],
-                    "gex_profile_0dte_index": [
-                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["0dte"]
-                    ],
-                    "gex_profile_week_index": [
-                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["week"]
-                    ],
+                    "gex_profile_index": _bin_profile(
+                        [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["all"]], 25),
+                    "gex_profile_0dte_index": _bin_profile(
+                        [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["0dte"]], 25),
+                    "gex_profile_week_index": _bin_profile(
+                        [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["week"]], 25),
                     "top_gamma_0dte_index": [
                         {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_bi["0dte"]
                     ],
@@ -1034,17 +1049,6 @@ def main() -> None:
         # 25 pt ES: senza aggregazione l'istogramma è rado (centinaia di
         # barrette da pochi contratti). La catena indici ha strike nativi da
         # 5/25/100 pt: resta a griglia nativa.
-        def _bin_profile(entries: list, step: float) -> list:
-            out: dict = {}
-            for e in entries:
-                z = round(e["s"] / step) * step
-                cur = out.setdefault(z, {"s": z, "c": 0.0, "p": 0.0, "co": 0, "po": 0})
-                cur["c"] += e["c"]
-                cur["p"] += e["p"]
-                cur["co"] += e.get("co", 0)
-                cur["po"] += e.get("po", 0)
-            return sorted(out.values(), key=lambda x: x["s"])
-
         plan["gex_profile"] = _bin_profile([
             {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["all"]
         ], 25)
