@@ -458,12 +458,12 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
             : gexFlip?.price}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
-          TUTTI gli strike della finestra selezionata (da ±1,5% a ±20%, con bin di aggregazione
-          crescenti: 5 pt vicino allo spot, 50 pt sulle code) — non solo i
-          top della scala. Barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
+          Ogni barra è uno strike reale della catena (niente aggregazione):
+          barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
           sotto = gamma corta delle put (amplifica). La linea blu tratteggiata è lo spot: le barre più
           alte vicino alla linea sono i pin di scadenza, le code rosse lontane sono l'assicurazione
-          anti-crollo. Usa ±5% o ±10% per la zona operativa, Tutte ±20% per il libro completo.
+          anti-crollo. Il selettore qui sopra cambia la finestra di zoom (±1,5% zona del denaro,
+          ±20% libro completo).
         </p>
       </Card>
     </div>
