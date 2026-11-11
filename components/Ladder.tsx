@@ -6,8 +6,9 @@ import type { DayPlanLevel } from '../services/dayPlanService';
  * Ladder — la scala verticale dei livelli di oggi.
  *
  * Una riga per livello, ordinate per prezzo (resistenze sopra, supporti
- * sotto), il prezzo live al centro. Ogni riga: prezzo (grosso), nome,
- * distanza in PUNTI, chip meccanismo e affidabilità storica.
+ * sotto), il prezzo live al centro. Ogni riga: DOPPIO PREZZO (futures +
+ * nativo SPY/QQQ o SPX/NDX), nome, distanza in PUNTI, chip meccanismo e
+ * affidabilità storica.
  *
  * @module components/Ladder
  */
@@ -38,6 +39,10 @@ interface Row {
 
 const fmtGex = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 1 });
 const fmtOi = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 1 });
+/** Prezzo nativo: intero senza decimali (strike SPX/SPY), altrimenti 1 decimale
+ *  (equivalenti calcolati via ratio, tipici di SPY/QQQ). */
+const fmtNat = (v: number): string =>
+  (Math.round(v * 10) / 10).toLocaleString('it-IT', { maximumFractionDigits: 1 });
 
 /** Colonna GEX della scala: barra orizzontale ancorata a destra, lunghezza
  *  = |gex netto| della zona sul muro più grande di TUTTI gli strike.
@@ -133,8 +138,14 @@ export const Ladder: React.FC<{
   maxPerSide?: number;
   /** Profilo gamma per strike (plan.top_gamma): ripescato sulla griglia della scala. */
   topGamma?: Array<{ strike_fut: number; net_gex: number; sign: 'long' | 'short' }>;
-}> = ({ levels, spot, futures, stats, maxPerSide = 6, topGamma }) => {
+  /** Fattori NATIVO→futures (dal piano): per il DOPPIO PREZZO di ogni riga —
+   *  prezzo futures + corrispondente nativo (SPY/QQQ o SPX/NDX). Le righe con
+   *  strike nativo esatto lo mostrano; le altre (spot, livelli prezzo) mostrano
+   *  l'equivalente indice ricavato dal ratio. */
+  ratios?: { etf?: number; idx?: number };
+}> = ({ levels, spot, futures, stats, maxPerSide = 6, topGamma, ratios }) => {
   const idxName = futures === 'ES' ? 'SPX' : 'NDX';
+  const etfName = futures === 'ES' ? 'SPY' : 'QQQ';
   const { above: zonesAbove, below: zonesBelow, gammaByZone, maxAbsGex } = useMemo(
     () => buildLadderForPlan(levels, spot, topGamma, maxPerSide),
     [levels, spot, topGamma, maxPerSide],
@@ -191,12 +202,35 @@ export const Ladder: React.FC<{
           <span className={`font-mono font-extrabold tnum ${isSpot ? 'text-xl text-amber-300' : 'text-base text-slate-100'}`}>
             {futures} {r.price.toLocaleString()}
           </span>
-          {r.native != null && (
-            <span className="text-[10px] font-mono text-slate-500 tnum"
-                  title={`Strike nativo della fonte: ${r.nativeSource ?? ''} ${r.native.toLocaleString('it-IT')}`}>
-              · {r.nativeSource ?? ''} {r.native.toLocaleString('it-IT')}
-            </span>
-          )}
+          {(() => {
+            // DOPPIO PREZZO: strike nativo esatto della fonte se il livello lo
+            // porta (muri/max pain/flip opzioni), altrimenti equivalente indice
+            // ricavato dal ratio (livelli prezzo). Lo SPOT mostra ENTRAMBI i
+            // nativi (indice + ETF): è il punto di riferimento di entrambi i
+            // libri. Il title incrocia sempre tutte le scale.
+            if (isSpot && ratios?.idx && ratios?.etf) {
+              const sx = fmtNat(r.price / ratios.idx), sy = fmtNat(r.price / ratios.etf);
+              return (
+                <span className="text-[10px] font-mono text-slate-400 tnum whitespace-nowrap"
+                      title={`Doppio prezzo — ${futures} ${r.price.toLocaleString('it-IT')} pt ≈ ${idxName} ${sx} · ${etfName} ${sy}`}>
+                  · {idxName} {sx} · {etfName} {sy}
+                </span>
+              );
+            }
+            const nat = r.native != null
+              ? { src: r.nativeSource ?? '', val: r.native }
+              : ratios?.idx ? { src: idxName, val: r.price / ratios.idx } : null;
+            if (!nat) return null;
+            const cross = ratios?.idx && ratios?.etf
+              ? `${idxName} ${fmtNat(r.price / ratios.idx)} · ${etfName} ${fmtNat(r.price / ratios.etf)}`
+              : `${nat.src} ${fmtNat(nat.val)}`;
+            return (
+              <span className="text-[10px] font-mono text-slate-400 tnum whitespace-nowrap"
+                    title={`Doppio prezzo — ${futures} ${r.price.toLocaleString('it-IT')} pt ≈ ${cross}`}>
+                · {nat.src} {fmtNat(nat.val)}
+              </span>
+            );
+          })()}
           {isSpot && <span className="text-[9px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>}
           {!isSpot && (r.merged ?? 0) > 1 && (() => {
             // CONFLUENZA (⧉, NON una stella): livelli distinti sulla stessa

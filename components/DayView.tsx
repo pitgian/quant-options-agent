@@ -6,6 +6,10 @@ import { GexHistogram, type GexProfileEntry } from './GexHistogram';
 import { Card, Badge } from './ui';
 
 const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 0 });
+/** Prezzo nativo: intero senza decimali (strike SPX/SPY), altrimenti 1 decimale
+ *  (equivalenti calcolati via ratio, tipici di SPY/QQQ). */
+const fmtNat = (v: number): string =>
+  (Math.round(v * 10) / 10).toLocaleString('it-IT', { maximumFractionDigits: 1 });
 
 export type ChainSource = 'etf' | 'index' | 'both';
 export type GexBucket = 'all' | 'week' | '0dte';
@@ -57,6 +61,17 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
 
   const spot = (futures === 'ES' ? live?.ES : live?.NQ) ?? plan?.last_price ?? 0;
   const idxName = futures === 'ES' ? 'SPX' : 'NDX';
+  const etfName = futures === 'ES' ? 'SPY' : 'QQQ';
+  // DOPPIO PREZZO: fattori NATIVO→futures pubblicati dal pipeline. Con questi
+  // ogni livello della scala e ogni barra dell'istogramma mostra il prezzo in
+  // punti futures E il corrispondente nativo (SPY/QQQ o SPX/NDX).
+  const etfRatio = plan?.etf_to_fut_ratio;
+  const idxRatio = plan?.idx_to_fut_ratio;
+
+  // Strike della vista corrente → segmento "≈ ES 7670 · SPX 7646" per il
+  // tooltip dell'istogramma. Direzione in base alla fonte: vista ETF gli
+  // strike sono GIÀ nativi (→ futuro via ratio ETF), vista indici/'Entrambi'
+  // sono in scala futures (→ nativi dividendo per il ratio).
 
   // LA SCALA SEMPLIFICATA — solo i livelli che contano, per fonte selezionata:
   //   1. i 3 muri gamma PIÙ GROSSI per |GEX| (independentemente dal lato:
@@ -71,20 +86,31 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     if (!plan) return [];
     const out: DayPlanLevel[] = [];
 
-    // flip gamma della fonte (regime boundary, pivot)
+    // flip gamma della fonte (regime boundary, pivot) — con doppio prezzo:
+    // nativo esatto se pubblicato dal pipeline, altrimenti ricavato dal ratio.
     const flipName = chain === 'index' ? 'GEX-FLIP-IDX' : 'GEX-FLIP';
     const flip = plan.levels.find(l => l.name === flipName);
-    if (flip) out.push(flip);
+    if (flip) out.push({
+      ...flip,
+      native: chain === 'index'
+        ? (idxRatio ? Math.round(flip.price / idxRatio * 10) / 10 : undefined)
+        : (plan.gex_flip_native ?? (etfRatio ? Math.round(flip.price / etfRatio * 10) / 10 : undefined)),
+      nativeSource: chain === 'index' ? idxName : etfName,
+    });
 
     // Max Pain della scadenza vicina (magnete intraday)
-    const addMp = (price: number | undefined, name: string, nome: string) => {
+    const addMp = (price: number | undefined, name: string, nome: string,
+                   native?: number, nativeSource?: string) => {
       if (price) out.push({
         name, nome_it: nome, price, kind: 'magnet', source: 'options',
         dist_pts: Math.round(price - spot),
+        native, nativeSource,
       } as DayPlanLevel);
     };
-    if (chain !== 'index') addMp(plan.max_pain_nearest, 'MAXPAIN-0DTE', 'Max Pain scadenza vicina');
-    if (chain !== 'etf') addMp(plan.max_pain_nearest_index, 'MAXPAIN-0DTE-IDX', `Max Pain scadenza vicina (${idxName})`);
+    if (chain !== 'index') addMp(plan.max_pain_nearest, 'MAXPAIN-0DTE', 'Max Pain scadenza vicina',
+      plan.max_pain_nearest_native, etfName);
+    if (chain !== 'etf') addMp(plan.max_pain_nearest_index, 'MAXPAIN-0DTE-IDX', `Max Pain scadenza vicina (${idxName})`,
+      plan.max_pain_nearest_index && idxRatio ? Math.round(plan.max_pain_nearest_index / idxRatio * 10) / 10 : undefined, idxName);
 
     // I muri gamma della BORSA selezionata (0dte/week/all), con garanzia
     // per lato: il migliore sopra + il migliore sotto SEMPRE (se esistono),
@@ -93,7 +119,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     // dall'altra parte, e il 4° livello per |GEX| non si perde.
     const addGammaWalls = (
       tg: typeof plan.top_gamma | undefined,
-      nameSuffix: string, labelSuffix: string,
+      nameSuffix: string,
     ) => {
       const arr = tg ?? [];
       if (!arr.length) return;
@@ -116,12 +142,17 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
         const wallLabel = t.side === 'call' ? 'Call wall' : t.side === 'put' ? 'Put wall' : 'Muro gamma';
         out.push({
           name: `MURO-GAMMA${nameSuffix}`,
-          nome_it: `${wallLabel} ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})${labelSuffix}`,
+          nome_it: `${wallLabel} ${fmtGexCompact.format(t.net_gex)} (${t.sign === 'long' ? 'pin' : 'trigger'})`,
           price: zone,
           kind: t.sign === 'long' ? 'barrier' : 'trigger',
           source: 'options',
           dist_pts: Math.round(zone - spot),
           gamma: t.sign === 'long' ? 'pin' : 'trigger',
+          // DOPPIO PREZZO: lo strike nativo della catena (SPY/QQQ o SPX/NDX)
+          // arriva esatto dal pipeline accanto a strike_fut — la fonte
+          // ('SPY'/'SPX') la mostra il chip nativo della scala.
+          native: t.strike,
+          nativeSource: nameSuffix ? idxName : etfName,
         } as DayPlanLevel);
       }
     };
@@ -133,10 +164,10 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     const tgIdx = bucket === '0dte' ? plan.top_gamma_0dte_index
       : bucket === 'week' ? plan.top_gamma_week_index
       : plan.top_gamma_index;
-    if (chain !== 'index') addGammaWalls(tgEtf, '', '');
-    if (chain !== 'etf') addGammaWalls(tgIdx, '-IDX', ` · ${idxName}`);
+    if (chain !== 'index') addGammaWalls(tgEtf, '');
+    if (chain !== 'etf') addGammaWalls(tgIdx, '-IDX');
     return out;
-  }, [plan, spot, chain, idxName, bucket]);
+  }, [plan, spot, chain, idxName, etfName, etfRatio, idxRatio, bucket]);
 
   // Flip e regime SECONDO LA FONTE selezionata. Il regime esiste ANCHE senza
   // flip: quando il profilo entro ±10% è tutto positivo/negativo non c'è
@@ -152,6 +183,16 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     gexFlip ? (spot > gexFlip.price ? 'long' : 'short')
             : (chain === 'index' ? (plan?.gamma_regime_index ?? null)
                                  : (plan?.gamma_regime ?? null));
+
+  // Doppio prezzo nel tooltip dell'istogramma (vedi commento sopra idxRatio).
+  const futEq = useMemo(() => {
+    if (chain === 'etf') {
+      if (!etfRatio) return undefined;
+      return (s: number) => `≈ ${futures} ${fmtNat(s * etfRatio)}${idxRatio ? ` · ${idxName} ${fmtNat(s * etfRatio / idxRatio)}` : ''}`;
+    }
+    if (!idxRatio) return undefined;
+    return (s: number) => `${idxName} ${fmtNat(s / idxRatio)}${etfRatio ? ` · ${etfName} ${fmtNat(s / etfRatio)}` : ''}`;
+  }, [chain, futures, idxName, etfName, etfRatio, idxRatio]);
 
   // Profilo GEX COMPLETO (istogramma) della borsa selezionata; in 'Entrambi'
   // le due fonti si SOMMANO per strike (libro aggregato).
@@ -415,7 +456,8 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
             Prova un'altra fonte dal menu in alto o attendi il prossimo giro della pipeline (ogni 5 minuti in seduta).
           </p>
         ) : (
-          <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={topGammaSel} />
+          <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={topGammaSel}
+                  ratios={{ etf: etfRatio, idx: idxRatio }} />
         )}
         {hasPinBelow === false && optLevels.length > 0 && (
           <p className="text-[10px] text-amber-400/80 leading-relaxed mt-2" title="Sotto lo spot tutto il libro è put comprate: i dealer sono short gamma e il loro hedging vende mentre il prezzo scende">
@@ -449,14 +491,15 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
         <GexHistogram
           profile={profileSel}
           spot={chain === 'etf' ? (plan?.spot_etf ?? spot) : spot}
-          idxName={chain === 'etf' ? (futures === 'ES' ? 'SPY' : 'QQQ') : idxName}
+          idxName={chain === 'etf' ? etfName : idxName}
+          futName={futures}
           maxPain={chain === 'index' ? plan?.max_pain_nearest_index
             : chain === 'etf' ? (plan?.max_pain_nearest_native ?? plan?.max_pain_nearest)
             : plan?.max_pain_nearest}
           flip={chain === 'etf'
             ? (bucket === '0dte' ? (plan?.gex_flip_0dte_native ?? gexFlip?.price) : (plan?.gex_flip_native ?? gexFlip?.price))
             : gexFlip?.price}
-          futRatio={chain === 'etf' && plan ? (plan.last_price && plan.spot_etf ? plan.last_price / plan.spot_etf : undefined) : undefined}
+          futEq={futEq}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           Ogni barra è uno strike reale della catena (niente aggregazione):

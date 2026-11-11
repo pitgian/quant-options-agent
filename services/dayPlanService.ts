@@ -90,6 +90,11 @@ export interface DayPlan {
   vwap_sigma?: number;
   ib?: { high: number | null; low: number | null };
   spot_etf?: number;
+  /** Fattori di conversione NATIVO→futures pubblicati dal pipeline:
+   *  ETF (SPY/QQQ)→futures e indice (SPX/NDX)→futures. Il client li usa per
+   *  il doppio prezzo (futures ↔ nativo) sulla scala e nel tooltip dell'istogramma. */
+  etf_to_fut_ratio?: number;
+  idx_to_fut_ratio?: number;
 }
 
 export interface LevelHistoryEntry {

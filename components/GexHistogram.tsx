@@ -52,11 +52,14 @@ export const GexHistogram: React.FC<{
   /** Linee di riferimento in scala NQ: max pain e flip gamma della fonte selezionata. */
   maxPain?: number;
   flip?: number;
-  /** Convenzione native→futures per il tooltip: moltiplica lo strike della
-   *  fonte per ottenere il livello equivalente in punti futures (1 = già in
-   *  scala futures, es. fonte 'Entrambi'). */
-  futRatio?: number;
-}> = ({ profile, spot, idxName, maxPain, flip, futRatio = 1 }) => {
+  /** DOPPIO PREZZO nel tooltip: strike della vista → segmento con le altre
+   *  scale, es. "≈ ES 7670 · SPX 7646" (vista ETF, strike nativi) oppure
+   *  "SPX 7646 · SPY 762" (vista indici/'Entrambi', strike in scala futures).
+   *  Il padre decide le conversioni in base alla fonte; assente = nessun incrocio. */
+  futEq?: (s: number) => string;
+  /** Nome dei futures (ES/NQ) per i testi e la legenda. */
+  futName?: string;
+}> = ({ profile, spot, idxName, maxPain, flip, futEq, futName }) => {
   const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
@@ -195,15 +198,12 @@ export const GexHistogram: React.FC<{
             const x = geom.x(b.s) - geom.bw / 2;
             const yTop = geom.barTop(cVal);
             const hBot = geom.barBottom(pVal) - geom.yZero;
-            // equivalente futures: utile per incrociare i livelli ETF/indice
-            // con la scala operativa dei futures (spot della scala = b.s,
-            // futRatio = fut/native della fonte)
-            const futEq = futRatio && futRatio !== 1
-              ? ` · ≈ fut ${Math.round(b.s * futRatio).toLocaleString('it-IT')}`
-              : '';
+            // DOPPIO PREZZO: il strike della vista + le scale corrispondenti
+            // (futures ↔ nativo) secondo la fonte, calcolate dal padre.
+            const eq = futEq?.(b.s) ?? '';
             const tip = metric === 'gex'
-              ? `Strike ${b.s.toFixed(0)}${futEq} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
-              : `Strike ${b.s.toFixed(0)}${futEq} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
+              ? `Strike ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
+              : `Strike ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
             return (
               <g key={b.s}>
                 {cVal > 0 && (
@@ -256,7 +256,7 @@ export const GexHistogram: React.FC<{
           <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-purple-400" /> Flip</span>
         </span>
         <span className="text-[10px] text-gray-500">
-          strike in scala {idxName} (NQ) · passa il mouse sopra le barre per i valori
+          strike in scala {idxName} · doppio prezzo nel tooltip: {futName ?? 'futures'} ↔ nativo · passa il mouse sopra le barre per i valori
         </span>
       </div>
     </div>
