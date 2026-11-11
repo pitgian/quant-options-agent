@@ -949,9 +949,34 @@ def main() -> None:
         # uso l'ultima barra RTH. Di giorno è identica all'ultima barra.
         mask_rth = ((idx_et.hour > 9) | ((idx_et.hour == 9) & (idx_et.minute >= 30))) & (idx_et.hour < 16)
         rth_closes = cl[mask_rth]
-        if len(rth_closes):
-            es_spot = float(rth_closes[-1])
-        ratio = es_spot / spot_etf if spot_etf else 10.0
+        # Ratio di conversione strike → scala futures: serve lo spot futures
+        # LIVE, coerente con spot_etf/spx_spot (anch'essi live). Col vecchio
+        # es_spot (=ultima chiusura RTH, ieri 16:00) il ratio mescolava ieri
+        # con oggi: dopo un +2% intraday valeva 0.986 invece di ~1.000 →
+        # strike dell'istogramma/spia spostati del -1,4% e livelli che
+        # scivolano ad ogni giro del pipeline (bug dell'11/11).
+        fut_spot = None
+        try:
+            fut_spot = float(fut_t.fast_info["last_price"])
+        except Exception:
+            pass
+        if not fut_spot or fut_spot <= 0 and not hist.empty:
+            fut_spot = float(hist["Close"].iloc[-1])
+        if not fut_spot or fut_spot <= 0:
+            fut_spot = es_spot  # ultima risorsa: chiusura RTH
+        # Coppia coerente in ogni momento:
+        #  - 4:00–20:00 ET: QQQ/NDX quotano (spot live) → futures LIVE.
+        #  - notte: lo spot indice è congelato al close → chiusura RTH futures
+        #    (coppia es_spot/spx_spot al close: è il fix storico del rapporto
+        #    distorto dei giri notturni, da mantenere).
+        now_et = datetime.now(ET).time()
+        index_live = dtime(4, 0) <= now_et <= dtime(20, 0)
+        if index_live and fut_spot:
+            ratio = fut_spot / spot_etf if spot_etf else 10.0
+            index_to_fut = (fut_spot / spx_spot) if spx_spot else None
+        else:
+            ratio = es_spot / spot_etf if spot_etf else 10.0
+            index_to_fut = (es_spot / spx_spot) if spx_spot else None
 
         # Catena sana? OI aggregata oltre la soglia e nessun flag degraded:
         # con la catena rotta il flip esce a +17% dallo spot e il max pain a
@@ -976,7 +1001,6 @@ def main() -> None:
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
-        index_to_fut = (es_spot / spx_spot) if spx_spot else None
 
         # --- catena INDICE (SPX/NDX): seconda fonte di livelli opzioni ---
         # Opzioni europee a regolamento in contanti: i dealer coprono la gamma
