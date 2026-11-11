@@ -237,13 +237,16 @@ def top_gamma_by_bucket(expiries: list, spot: float) -> dict:
     return out
 
 
-def gex_profile_by_bucket(expiries: list, spot: float) -> dict:
+def gex_profile_by_bucket(expiries: list, spot: float, window_pct: float = 0.10) -> dict:
     """Profilo COMPLETO per strike per borsa (0dte/week/all) — l'istogramma
     della UI. Per strike QUATTRO valori: c = GEX lato call (≥0), p = GEX
     lato put (≤0) [net = c + p], co/po = open interest call/put. Stessa
     formula di compute_option_levels (gamma × OI × 100 × spot²) ma su
-    TUTTI gli strike della finestra ±10% e in Mld (1e9$), arrotondati a
-    3 decimali. Gli strike senza né GEX né OI scartati."""
+    TUTTI gli strike della finestra ±window_pct e in Mld (1e9$), arrotondati
+    a 3 decimali. Gli strike senza né GEX né OI scartati.
+    Dall'11/11 la UI passa window_pct=0.20 per il confronto con
+    InsiderFinance, che mostra l'intera catena (prima ±10%: gli strike
+    lontani sparivano e l'OI non combaciava più)."""
     CONTRACT = 100.0
     today = datetime.now(ET).date()
     horizon = (today + timedelta(days=7)).isoformat()
@@ -259,7 +262,7 @@ def gex_profile_by_bucket(expiries: list, spot: float) -> dict:
         if today_iso <= d <= horizon:
             buckets["week"].append(e)
 
-    lo, hi = spot * 0.9, spot * 1.1
+    lo, hi = spot * (1 - window_pct), spot * (1 + window_pct)
     out: dict = {}
     for name, exps in buckets.items():
         agg: dict = {}   # strike -> [call_gex, put_gex, call_oi, put_oi]
@@ -969,7 +972,7 @@ def main() -> None:
                 sd.get("expiries", []), spot_etf)
             mp = max_pain(sd.get("expiries", []), spot_etf)
             tg_b = top_gamma_by_bucket(sd.get("expiries", []), spot_etf)
-            prof_b = gex_profile_by_bucket(sd.get("expiries", []), spot_etf)
+            prof_b = gex_profile_by_bucket(sd.get("expiries", []), spot_etf, window_pct=0.20)
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
         spx_spot = float(spx.get("spot", 0) or 0)
@@ -999,7 +1002,7 @@ def main() -> None:
                 index_opts = {"walls": walls_i, "flip": flip_i, "flip0": flip0_i,
                               "ratio": i_ratio}
                 tg_bi = top_gamma_by_bucket(spx.get("expiries", []), spx_spot)
-                prof_bi = gex_profile_by_bucket(spx.get("expiries", []), spx_spot)
+                prof_bi = gex_profile_by_bucket(spx.get("expiries", []), spx_spot, window_pct=0.20)
                 index_aggr = {
                     "gamma_regime_index": reg_i,
                     "top_gamma_index": [

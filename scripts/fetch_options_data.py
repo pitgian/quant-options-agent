@@ -57,7 +57,7 @@ DEFAULT_OUTPUT = "data/options_data.json"
 LASTGOOD_OI_NAME = "options_oi_lastgood.json"
 DATA_VERSION = "3.0"
 
-MAX_EXPIRATIONS_TO_PROCESS = 25  # Max expirations to process, selected by highest contract count
+MAX_EXPIRATIONS_TO_PROCESS = 25  # Max expirations to process (percorso Yahoo: rate-limit)
 CHAIN_FETCH_DELAY = 0.3  # seconds between individual chain fetches to avoid rate limiting
 TOP_N_WALLS = 999  # Show all walls, no artificial limit
 MIN_COMBINED_OI_VOL = 1  # Include all strikes with any activity
@@ -623,9 +623,13 @@ CBOE_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 CBOE_TIMEOUT_S = 60
-# Finestra strike conservata attorno allo spot: fuori, non servono mai (il
-# day plan rileva ±10% con RELEVANCE_WINDOW_PCT) e tagliano il JSON ~4×.
-CBOE_STRIKE_WINDOW_PCT = 0.10
+# Finestra strike conservata attorno allo spot AL FETCH. Da 11/11 è ±25%:
+# col vecchio ±10% le catene CBOE perdono tutti gli strike lontani e l'OI
+# "tutte le scadenze" smette di combaciare con InsiderFinance (che copre
+# l'intera catena: verificato 11/11 su NDX — oltre ±10% noi 0 vs IF migliaia;
+# i mensili lontani portano il grosso dell'OI oltre ±3%). Il day-plan
+# applica le sue finestre (±10% livelli, ±20% profilo) a valle.
+CBOE_STRIKE_WINDOW_PCT = 0.25
 
 # "SPXW261106P05000000" → root 'SPXW', scadenza 261106 (YYMMDD), PUT, 5000.0
 # Il root può contenere cifre: CBOE usa 'B1SPY' per una parte delle serie SPY.
@@ -1875,6 +1879,13 @@ def fetch_symbol_data(
     expiry_contract_counts.sort(key=lambda x: x[0])
 
     # Select top N nearest expirations
+    # Sul percorso CBOE il cap scadenze NON si applica: la catena arriva in un
+    # solo HTTP già completa (il cap 25 esiste per il rate-limit di yfinance).
+    # Tagliare le scadenze lontane eliminava i mensili (dic/gen/feb/mar/giu)
+    # che portano il grosso dell'OI lontano dallo spot.
+    if cboe_chain is not None:
+        max_expirations = len(expiry_contract_counts)
+
     selected_counts = expiry_contract_counts[:max_expirations]
 
     logger.info(
