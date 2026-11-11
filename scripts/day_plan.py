@@ -1079,6 +1079,10 @@ def main() -> None:
         plan["gamma_regime"] = gex_regime
         if flip0:
             plan["gex_flip_0dte"] = round(flip0 * ratio, 1)
+        if flip0 is not None:
+            plan["gex_flip_0dte_native"] = round(flip0, 4)
+        if flip is not None:
+            plan["gex_flip_native"] = round(flip, 4)
         if degraded:
             plan["read"].insert(0, "⚠️ Catena opzioni non disponibile in questo "
                                  "snapshot (OI assente): la scala mostra solo "
@@ -1090,13 +1094,20 @@ def main() -> None:
         # 25 pt ES: senza aggregazione l'istogramma è rado (centinaia di
         # barrette da pochi contratti). La catena indici ha strike nativi da
         # 5/25/100 pt: resta a griglia nativa.
-        plan["gex_profile"] = _bin_profile([
+        # Profili ETF in scala NATIVA (SPY/QQQ): confronto 1:1 con
+        # InsiderFinance (che lista gli strike in scala ETF). La variante
+        # _binned (convertita in scala futures + bin 25) serve SOLO alla
+        # modalità 'Entrambi', che somma ETF+indici per strike identico.
+        plan["gex_profile"] = prof_b["all"]
+        plan["gex_profile_0dte"] = prof_b["0dte"]
+        plan["gex_profile_week"] = prof_b["week"]
+        plan["gex_profile_binned"] = _bin_profile([
             {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["all"]
         ], 25)
-        plan["gex_profile_0dte"] = _bin_profile([
+        plan["gex_profile_0dte_binned"] = _bin_profile([
             {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["0dte"]
         ], 25)
-        plan["gex_profile_week"] = _bin_profile([
+        plan["gex_profile_week_binned"] = _bin_profile([
             {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["week"]
         ], 25)
         plan["top_gamma_0dte"] = [
@@ -1107,8 +1118,10 @@ def main() -> None:
         ]
         if mp.get("nearest", {}).get("strike"):
             plan["max_pain_nearest"] = round(mp["nearest"]["strike"] * ratio, 1)
+            plan["max_pain_nearest_native"] = round(mp["nearest"]["strike"], 2)
         if mp.get("all", {}).get("strike"):
             plan["max_pain_all"] = round(mp["all"]["strike"] * ratio, 1)
+            plan["max_pain_all_native"] = round(mp["all"]["strike"], 2)
         plan["top_gamma"] = [
             {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in top_gamma
         ]

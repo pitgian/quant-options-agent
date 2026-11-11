@@ -48,6 +48,12 @@ export interface DayPlan {
    *  assenti se la catena indice è degradata o mancante nello snapshot. */
   gamma_regime_index?: 'long' | 'short' | null;
   top_gamma_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
+  /** Max pain e flip della catena ETF in scala NATIVA (SPY/QQQ): per
+   *  l'istogramma fonte 'etf', i cui strike sono in scala nativa. */
+  max_pain_nearest_native?: number;
+  max_pain_all_native?: number;
+  gex_flip_native?: number;
+  gex_flip_0dte_native?: number;
   gex_flip_0dte_index?: number;
   /** Profili gamma per borsa di scadenza (selettore maturità della scala):
    *  0dte = solo scadenze di oggi · week = entro 7 giorni · all = top_gamma. */
@@ -60,11 +66,17 @@ export interface DayPlan {
   gex_profile?: Array<{ s: number; c: number; p: number }>;
   gex_profile_0dte?: Array<{ s: number; c: number; p: number }>;
   gex_profile_week?: Array<{ s: number; c: number; p: number }>;
+  /** Profili ETF convertiti in scala futures + bin 25pt: solo per la
+   *  modalità 'Entrambi' (somma per strike identico con il libro indice). */
+  gex_profile_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
+  gex_profile_0dte_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
+  gex_profile_week_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
   gex_profile_index?: Array<{ s: number; c: number; p: number }>;
   gex_profile_0dte_index?: Array<{ s: number; c: number; p: number }>;
   gex_profile_week_index?: Array<{ s: number; c: number; p: number }>;
   /** Stessi profili indice aggregati su bin 25pt (stessa griglia del profilo
-   *  ETF): serve solo alla modalità 'Entrambi', che somma per strike identico. */
+   *  ETF convertito): serve solo alla modalità 'Entrambi', che somma per
+   *  strike identico. */
   gex_profile_index_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
   gex_profile_0dte_index_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
   gex_profile_week_index_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;

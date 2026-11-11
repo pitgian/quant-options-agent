@@ -165,11 +165,12 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
       bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
     if (chain === 'etf') return pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte);
     // Vista 'indice': profilo RAW per strike (5 pt, confrontabile 1:1 con
-    // InsiderFinance). Per la somma 'Entrambi' si usano i _binned (griglia
-    // 25pt condivisa con gli ETF — altrimenti 0 strike comuni e la merge
-    // affianca i due libri invece di sommarli).
+    // InsiderFinance). Per la somma 'Entrambi' si usano le varianti _binned
+    // (griglia 25pt in scala futures condivisa da ETF e indice — altrimenti
+    // 0 strike comuni e la merge affianca i due libri invece di sommarli).
     if (chain === 'index') return pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index);
-    const a = pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte) ?? [];
+    const a = pick(plan.gex_profile_binned, plan.gex_profile_week_binned, plan.gex_profile_0dte_binned)
+      ?? pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte) ?? [];
     const b = pick(plan.gex_profile_index_binned, plan.gex_profile_week_index_binned, plan.gex_profile_0dte_index_binned)
       ?? pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index) ?? [];
     const merged = new Map<number, { s: number; c: number; p: number; co: number; po: number }>();
@@ -447,10 +448,14 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
         </div>
         <GexHistogram
           profile={profileSel}
-          spot={spot}
-          idxName={idxName}
-          maxPain={chain === 'index' ? plan?.max_pain_nearest_index : plan?.max_pain_nearest}
-          flip={gexFlip?.price}
+          spot={chain === 'etf' ? (plan?.spot_etf ?? spot) : spot}
+          idxName={chain === 'etf' ? (futures === 'ES' ? 'SPY' : 'QQQ') : idxName}
+          maxPain={chain === 'index' ? plan?.max_pain_nearest_index
+            : chain === 'etf' ? (plan?.max_pain_nearest_native ?? plan?.max_pain_nearest)
+            : plan?.max_pain_nearest}
+          flip={chain === 'etf'
+            ? (bucket === '0dte' ? (plan?.gex_flip_0dte_native ?? gexFlip?.price) : (plan?.gex_flip_native ?? gexFlip?.price))
+            : gexFlip?.price}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           TUTTI gli strike della finestra selezionata (da ±1,5% a ±20%, con bin di aggregazione
