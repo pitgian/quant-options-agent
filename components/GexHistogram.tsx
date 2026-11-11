@@ -26,15 +26,17 @@ const W = 900, H = 300;
 const M = { left: 56, right: 16, top: 26, bottom: 26 };
 const PLOT_W = W - M.left - M.right;
 const PLOT_H = H - M.top - M.bottom;
-/** Finestre di zoom: ognuna con il suo bin di aggregazione — binBase dipende
- *  dalla scala del profilo (25 pt futuri per indici/'Entrambi', 5 pt nativi
- *  SPY/QQQ per la fonte ETF) × fattore di zoom. Ogni vista resta leggibile. */
+/** Finestre di zoom (limitano SOLO l'asse X): il profilo pubblicato è già
+ *  per-strike raw in scala nativa della fonte — nessuna aggregazione client,
+ *  così ogni barra è uno strike reale e il confronto 1:1 con InsiderFinance
+ *  è diretto. */
 const WINDOWS = [
-  { label: 'Vicine ±1,5%', pct: 0.015, k: 1 },
-  { label: '±5%', pct: 0.05, k: 2 },
-  { label: '±10%', pct: 0.10, k: 5 },
-  { label: 'Tutte ±20%', pct: 0.20, k: 10 },
+  { label: 'Vicine ±1,5%', pct: 0.015 },
+  { label: '±5%', pct: 0.05 },
+  { label: '±10%', pct: 0.10 },
+  { label: 'Tutte ±20%', pct: 0.20 },
 ] as const;
+const DEFAULT_WIN = 1; // ±5%
 
 type Metric = 'gex' | 'oi';
 
@@ -50,33 +52,17 @@ export const GexHistogram: React.FC<{
   /** Linee di riferimento in scala NQ: max pain e flip gamma della fonte selezionata. */
   maxPain?: number;
   flip?: number;
-  /** Granularità naturale del profilo (25 pt futuri per indici/'Entrambi',
-   *  5 pt nativi SPY/QQQ per la fonte ETF). Moltiplicata per il fattore di
-   *  zoom della finestra selezionata. Default 25. */
-  binBase?: number;
-}> = ({ profile, spot, idxName, maxPain, flip, binBase = 25 }) => {
-  const [winIdx, setWinIdx] = useState(1); // default ±5%
+}> = ({ profile, spot, idxName, maxPain, flip }) => {
+  const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
 
   const bars = useMemo(() => {
     const arr = profile ?? [];
     const win = WINDOWS[winIdx];
-    const bin = binBase * win.k;
     const lo = spot * (1 - win.pct), hi = spot * (1 + win.pct);
-    const inWin = arr.filter(d => d.s >= lo && d.s <= hi);
-    const merged = new Map<number, { s: number; c: number; p: number; co: number; po: number }>();
-    for (const e of inWin) {
-      const z = Math.round(e.s / bin) * bin;
-      const cur = merged.get(z) ?? { s: z, c: 0, p: 0, co: 0, po: 0 };
-      cur.c += e.c;
-      cur.p += e.p;
-      cur.co += e.co ?? 0;
-      cur.po += e.po ?? 0;
-      merged.set(z, cur);
-    }
-    return [...merged.values()].sort((a, b) => a.s - b.s);
-  }, [profile, winIdx, spot, binBase]);
+    return arr.filter(d => d.s >= lo && d.s <= hi).slice().sort((a, b) => a.s - b.s);
+  }, [profile, winIdx, spot]);
 
   const hasOi = useMemo(() => bars.some(b => (b.co ?? 0) + (b.po ?? 0) > 0), [bars]);
 
@@ -173,7 +159,7 @@ export const GexHistogram: React.FC<{
             {WINDOWS.map((w, i) => (
               <button key={w.label} onClick={() => setWinIdx(i)}
                 className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${winIdx === i ? 'bg-blue-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
-                title={`Strike entro ±${(w.pct * 100).toLocaleString('it-IT')}%${binBase * w.k > 5 ? `, aggregati in bin da ${binBase * w.k} pt` : ''}`}>
+                title={`Strike entro ±${(w.pct * 100).toLocaleString('it-IT')}%`}>
                 {w.label}
               </button>
             ))}
