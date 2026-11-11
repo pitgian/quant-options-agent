@@ -195,10 +195,6 @@ export const GexHistogram: React.FC<{
             const x = geom.x(b.s) - geom.bw / 2;
             const yTop = geom.barTop(cVal);
             const hBot = geom.barBottom(pVal) - geom.yZero;
-            const [cVal, pVal] = geom.val(b);
-            const x = geom.x(b.s) - geom.bw / 2;
-            const yTop = geom.barTop(cVal);
-            const hBot = geom.barBottom(pVal) - geom.yZero;
             // equivalente futures: utile per incrociare i livelli ETF/indice
             // con la scala operativa dei futures (spot della scala = b.s,
             // futRatio = fut/native della fonte)
