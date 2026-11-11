@@ -52,7 +52,11 @@ export const GexHistogram: React.FC<{
   /** Linee di riferimento in scala NQ: max pain e flip gamma della fonte selezionata. */
   maxPain?: number;
   flip?: number;
-}> = ({ profile, spot, idxName, maxPain, flip }) => {
+  /** Convenzione native→futures per il tooltip: moltiplica lo strike della
+   *  fonte per ottenere il livello equivalente in punti futures (1 = già in
+   *  scala futures, es. fonte 'Entrambi'). */
+  futRatio?: number;
+}> = ({ profile, spot, idxName, maxPain, flip, futRatio = 1 }) => {
   const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
@@ -191,9 +195,19 @@ export const GexHistogram: React.FC<{
             const x = geom.x(b.s) - geom.bw / 2;
             const yTop = geom.barTop(cVal);
             const hBot = geom.barBottom(pVal) - geom.yZero;
+            const [cVal, pVal] = geom.val(b);
+            const x = geom.x(b.s) - geom.bw / 2;
+            const yTop = geom.barTop(cVal);
+            const hBot = geom.barBottom(pVal) - geom.yZero;
+            // equivalente futures: utile per incrociare i livelli ETF/indice
+            // con la scala operativa dei futures (spot della scala = b.s,
+            // futRatio = fut/native della fonte)
+            const futEq = futRatio && futRatio !== 1
+              ? ` · ≈ fut ${Math.round(b.s * futRatio).toLocaleString('it-IT')}`
+              : '';
             const tip = metric === 'gex'
-              ? `Strike ${b.s.toFixed(0)} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
-              : `Strike ${b.s.toFixed(0)} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
+              ? `Strike ${b.s.toFixed(0)}${futEq} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
+              : `Strike ${b.s.toFixed(0)}${futEq} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
             return (
               <g key={b.s}>
                 {cVal > 0 && (
