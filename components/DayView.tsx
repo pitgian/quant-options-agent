@@ -456,6 +456,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           flip={chain === 'etf'
             ? (bucket === '0dte' ? (plan?.gex_flip_0dte_native ?? gexFlip?.price) : (plan?.gex_flip_native ?? gexFlip?.price))
             : gexFlip?.price}
+          futRatio={chain === 'etf' && plan ? (plan.last_price && plan.spot_etf ? plan.last_price / plan.spot_etf : undefined) : undefined}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           Ogni barra è uno strike reale della catena (niente aggregazione):

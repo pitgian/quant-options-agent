@@ -28,6 +28,10 @@ interface Row {
   n?: number;
   side?: 'call' | 'put';
   oi?: number;
+  /** Prezzo in scala nativa della fonte (SPY/QQQ o SPX/NDX): null/assente
+   *  per i livelli non-opzioni (prezzo/AMT). */
+  native?: number;
+  nativeSource?: string;
   /** GEX netto aggregato sugli strike caduti in questa zona (dal profilo gamma). */
   gex?: { net: number; parts: string[] };
 }
@@ -183,6 +187,12 @@ export const Ladder: React.FC<{
           <span className={`font-mono font-extrabold tnum ${isSpot ? 'text-xl text-amber-300' : 'text-base text-slate-100'}`}>
             {futures} {r.price.toLocaleString()}
           </span>
+          {r.native != null && (
+            <span className="text-[10px] font-mono text-slate-500 tnum"
+                  title={`Strike nativo della fonte: ${r.nativeSource ?? ''} ${r.native.toLocaleString('it-IT')}`}>
+              · {r.nativeSource ?? ''} {r.native.toLocaleString('it-IT')}
+            </span>
+          )}
           {isSpot && <span className="text-[9px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>}
           {!isSpot && (r.merged ?? 0) > 1 && (() => {
             // CONFLUENZA (⧉, NON una stella): livelli distinti sulla stessa
