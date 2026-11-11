@@ -27,6 +27,10 @@ export interface DayPlanLevel {
    *  'etf' = SPY/QQQ (default anche se assente, piani legacy)
    *  'index' = SPX/NDX (opzioni europee, hedge sui futures). */
   chain?: 'etf' | 'index';
+  /** Strike in scala nativa della fonte (SPY/QQQ o SPX/NDX): per il
+   *  confronto 1:1 con InsiderFinance accanto al prezzo in scala futures. */
+  native?: number;
+  nativeSource?: string;
 }
 
 export interface DayPlan {

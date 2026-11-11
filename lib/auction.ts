@@ -109,6 +109,9 @@ export interface LadderLevel {
   importance: 'alta' | 'media' | 'bassa';
   /** I livelli che compongono la zona (per dire DI QUALE confluenza si tratta). */
   members: LadderMember[];
+  /** Strike in scala nativa della fonte dominante (SPY/QQQ o SPX/NDX). */
+  native?: number;
+  nativeSource?: string;
 }
 
 export interface LadderInput {
@@ -126,6 +129,10 @@ export interface LadderInput {
   side?: 'call' | 'put';
   /** Open Interest del muro (contratti), se disponibile. */
   oi?: number;
+  /** Strike in scala nativa della fonte (SPY/QQQ o SPX/NDX) — doppia scala
+   *  accanto al prezzo futures sulla scala. */
+  native?: number;
+  nativeSource?: string;
   /** Peso del GEX netto della zona (0..1, frazione del muro massimo del giorno):
    *  alimenta il punteggio d'importanza — il muro più grosso vale 3 punti. */
   gexWeight?: number;
@@ -209,6 +216,8 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
       // altro membro del cluster — il chip deve sempre dire call/put
       side: best.side ?? members.find(m => m.side)?.side,
       oi: best.oi,
+      native: best.native ?? members.find(m => m.native != null)?.native,
+      nativeSource: best.nativeSource ?? members.find(m => m.nativeSource)?.nativeSource,
       members: members.map(m => ({
         nome_it: m.nome_it ?? LADDER_LABEL_IT[m.label] ?? m.label,
         label: m.label,

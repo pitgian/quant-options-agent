@@ -113,6 +113,8 @@ export function buildLadderForPlan(
         gammaSign: l.gamma === 'pin' ? 'pin' as const : l.gamma === 'trigger' ? 'trigger' as const : undefined,
         side: l.side,
         oi: l.oi,
+        native: l.native,
+        nativeSource: l.nativeSource,
         isFlip: ['GEX-FLIP', 'GEX-FLIP-0DTE', 'GEX-FLIP-IDX', 'GEX-FLIP-0DTE-IDX'].includes(l.name),
         isNaked: l.name.startsWith('NAKED'),
         gexWeight: g ? Math.min(1, Math.abs(g.net) / maxAbsGex) : undefined,
@@ -156,6 +158,8 @@ export const Ladder: React.FC<{
       n: stats[statsKey]?.n,
       side: z.side,
       oi: z.oi,
+      native: z.native,
+      nativeSource: z.nativeSource,
       gex: gammaByZone.get(z.price),
     };
   };

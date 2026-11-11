@@ -678,12 +678,14 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
             wall_side = w["type"].replace("_wall", "")
             add("PIN-IDX", f"Muro {wall_side} in pin ({side_pos}, {i_src})",
                 price_fut, "barrier", "options", chain="index", gamma="pin",
-                side=wall_side, oi=round(float(w.get("oi", 0) or 0)))
+                side=wall_side, oi=round(float(w.get("oi", 0) or 0)),
+                native=round(strike, 2), nativeSource=i_src)
         for price_fut, w in sorted(trg_wi, key=lambda x: -abs(x[1].get("net_gex", 0)))[:2]:
             wall_side = w["type"].replace("_wall", "")
             add("TRIGGER-IDX", f"Trigger {wall_side} ({i_src})",
                 price_fut, "trigger", "options", chain="index", gamma="trigger",
-                side=wall_side, oi=round(float(w.get("oi", 0) or 0)))
+                side=wall_side, oi=round(float(w.get("oi", 0) or 0)),
+                native=round(strike, 2), nativeSource=i_src)
 
     # --- muri da opzioni ETF: pin (gamma lunga) = barriera; trigger = accelerano ---
     # Le walls sono in scala ETF (SPY/QQQ): stesso fattore di tutti gli altri
@@ -706,12 +708,14 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         wall_side = w["type"].replace("_wall", "")
         add("PIN", f"Muro {wall_side} in pin ({side_pos})",
             price_fut, "barrier", "options", chain="etf", gamma="pin", side=wall_side,
-            oi=round(float(w.get("oi", 0) or 0)))
+            oi=round(float(w.get("oi", 0) or 0)),
+            native=round(strike, 2), nativeSource=sym)
     for price_fut, w in sorted(trigger_walls, key=lambda x: -abs(x[1].get("net_gex", 0)))[:2]:
         wall_side = w["type"].replace("_wall", "")
         add("TRIGGER", f"Trigger {wall_side}",
             price_fut, "trigger", "options", chain="etf", gamma="trigger", side=wall_side,
-            oi=round(float(w.get("oi", 0) or 0)))
+            oi=round(float(w.get("oi", 0) or 0)),
+            native=round(strike, 2), nativeSource=sym)
 
     # NOTA scala: price/amt derivano da barre futures (già in scala ES/NQ);
     # le opzioni sono convertite al momento dell'add() — nessuna doppia conversione.
