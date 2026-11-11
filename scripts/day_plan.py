@@ -1059,6 +1059,7 @@ def main() -> None:
                         {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_bi["week"]
                     ],
                     "gex_flip_0dte_index": (round(flip0_i * i_ratio, 1) if flip0_i else None),
+                    "idx_to_fut_ratio": (round(index_to_fut, 6) if index_to_fut else None),
                     "max_pain_nearest_index": (
                         round(mp_i["nearest"]["strike"] * i_ratio, 1)
                         if mp_i.get("nearest", {}).get("strike") else None),
@@ -1079,6 +1080,7 @@ def main() -> None:
         plan["gamma_regime"] = gex_regime
         if flip0:
             plan["gex_flip_0dte"] = round(flip0 * ratio, 1)
+            plan["etf_to_fut_ratio"] = round(ratio, 6)
         if flip0 is not None:
             plan["gex_flip_0dte_native"] = round(flip0, 4)
         if flip is not None:
