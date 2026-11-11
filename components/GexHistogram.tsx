@@ -26,7 +26,14 @@ const W = 900, H = 300;
 const M = { left: 56, right: 16, top: 26, bottom: 26 };
 const PLOT_W = W - M.left - M.right;
 const PLOT_H = H - M.top - M.bottom;
-const NEAR_PCT = 0.015;
+/** Finestre di zoom: ognuna con il suo bin di aggregazione (strike raw 5pt
+ *  su ±1,5%; bin crescenti allargando) per mantenere le barre leggibili. */
+const WINDOWS = [
+  { label: 'Vicine ±1,5%', pct: 0.015, bin: 5 },
+  { label: '±5%', pct: 0.05, bin: 10 },
+  { label: '±10%', pct: 0.10, bin: 25 },
+  { label: 'Tutte ±20%', pct: 0.20, bin: 50 },
+] as const;
 
 type Metric = 'gex' | 'oi';
 
@@ -43,15 +50,27 @@ export const GexHistogram: React.FC<{
   maxPain?: number;
   flip?: number;
 }> = ({ profile, spot, idxName, maxPain, flip }) => {
-  const [mode, setMode] = useState<'all' | 'near'>('all');
+  const [winIdx, setWinIdx] = useState(1); // default ±5%
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
 
   const bars = useMemo(() => {
     const arr = profile ?? [];
-    const lo = spot * (1 - NEAR_PCT), hi = spot * (1 + NEAR_PCT);
-    return (mode === 'near' ? arr.filter(d => d.s >= lo && d.s <= hi) : arr).slice().sort((a, b) => a.s - b.s);
-  }, [profile, mode, spot]);
+    const win = WINDOWS[winIdx];
+    const lo = spot * (1 - win.pct), hi = spot * (1 + win.pct);
+    const inWin = arr.filter(d => d.s >= lo && d.s <= hi);
+    const merged = new Map<number, { s: number; c: number; p: number; co: number; po: number }>();
+    for (const e of inWin) {
+      const z = Math.round(e.s / win.bin) * win.bin;
+      const cur = merged.get(z) ?? { s: z, c: 0, p: 0, co: 0, po: 0 };
+      cur.c += e.c;
+      cur.p += e.p;
+      cur.co += e.co ?? 0;
+      cur.po += e.po ?? 0;
+      merged.set(z, cur);
+    }
+    return [...merged.values()].sort((a, b) => a.s - b.s);
+  }, [profile, winIdx, spot]);
 
   const hasOi = useMemo(() => bars.some(b => (b.co ?? 0) + (b.po ?? 0) > 0), [bars]);
 
@@ -145,10 +164,11 @@ export const GexHistogram: React.FC<{
             ))}
           </div>
           <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
-            {(['all', 'near'] as const).map(m => (
-              <button key={m} onClick={() => setMode(m)}
-                className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${mode === m ? 'bg-blue-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}>
-                {m === 'all' ? ' Tutte (±10%)' : ' Vicine (±1,5%)'}
+            {WINDOWS.map((w, i) => (
+              <button key={w.label} onClick={() => setWinIdx(i)}
+                className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${winIdx === i ? 'bg-blue-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
+                title={`Strike entro ±${(w.pct * 100).toLocaleString('it-IT')}%${w.bin > 5 ? `, aggregati in bin da ${w.bin} pt` : ''}`}>
+                {w.label}
               </button>
             ))}
           </div>
