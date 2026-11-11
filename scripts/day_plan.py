@@ -953,31 +953,61 @@ def main() -> None:
         # uso l'ultima barra RTH. Di giorno è identica all'ultima barra.
         mask_rth = ((idx_et.hour > 9) | ((idx_et.hour == 9) & (idx_et.minute >= 30))) & (idx_et.hour < 16)
         rth_closes = cl[mask_rth]
-        # Ratio di conversione strike → scala futures = premio dei futures,
-        # calcolato dalle CHIUSURE coerenti di ieri 16:00 ET (futures, indice
-        # ed ETF: tutte alla stessa ora). È stabile per tutta la seduta — il
-        # premio fut/indice varia ~0.05% al giorno — e corretto. Le versioni
-        # precedenti abbinavano quote di momenti diversi (chiusura futures di
-        # ieri vs spot live di oggi → 0.986 col +2% di oggi; fast_info
-        # RITARDATO 10-15' vs spot live → 0.983) e i livelli scivolavano di
-        # continuo ad ogni giro del pipeline.
-        def prev_close(tkr: str) -> float | None:
+        # Ratio di conversione strike → scala futures = PREMIO dei futures
+        # CONGELATO PER SEDUTA: chiusure RTH dell'ultima seduta COMPLETATA
+        # (futures ÷ indice ÷ ETF, tutte alla stessa ora di chiusura). Gli
+        # input non cambiano durante il giorno → stesso ratio a ogni giro
+        # della pipeline: muri, flip e istogramma indice restano FERMI (un
+        # muro è un livello, non una media mobile). Costo noto e accettato:
+        # il premio reale deriva ~0.05%/giorno → il mapping può essere stanco
+        # di 3-5 punti a fine seduta; il tooltip mostra comunque lo strike
+        # nativo esatto. NON fare il pairing live: barra futures 5m LIVE ÷
+        # close 1d Yahoo RITARDATO 10-15' abbinava momenti diversi e l'11/11
+        # lo strike 28000 NDX è scivolato +37 NQ in 40 minuti di rally.
+        def close_on(tkr: str, want) -> float | None:
+            """Close giornaliero dell'ultima seduta con data ≤ `want`.
+            Durante RTH l'ultima barra 1d è il close di OGGI in corso:
+            scartarla è esattamente ciò che evita il ratio che scivola."""
             try:
-                h = yf.Ticker(tkr).history(period="5d", interval="1d")["Close"].dropna()
-                if len(h):
-                    return float(h.iloc[-1])
+                hh = yf.Ticker(tkr).history(period="7d", interval="1d")["Close"].dropna()
+                if hh.empty or want is None:
+                    return None
+                ix_et = hh.index.tz_convert(ET) if hh.index.tz is not None else hh.index.tz_localize(ET)
+                ok = [i for i in range(len(hh)) if ix_et[i].date() <= want]
+                if ok:
+                    return float(hh.iloc[ok[-1]])
             except Exception:
                 pass
             return None
 
+        # Data dell'ultima seduta RTH completata: oggi dopo le 16:00 ET
+        # (chiusure fresche per la sessione Globex), altrimenti il precedente
+        # giorno con barre. Una sola variazione al giorno, alla chiusura.
+        now_et = datetime.now(ET)
+        today_et = now_et.date()
+        bar_dates = sorted({ts.date() for ts in idx_et})
+        prev_dates = [d for d in bar_dates if d < today_et]
+        basis_date = (today_et if (now_et.hour >= 16 and today_et in bar_dates)
+                      else (prev_dates[-1] if prev_dates else None))
+        fut_basis_close = None
+        if basis_date is not None:
+            m_basis = np.array([ts.date() == basis_date for ts in idx_et]) & mask_rth
+            if m_basis.any():
+                fut_basis_close = float(cl[m_basis][-1])
+
         idx_hist_tkr = "^SPX" if fut == "ES" else "^NDX"
-        idx_close = prev_close(idx_hist_tkr)
-        etf_close = prev_close(sym)
-        if es_spot and idx_close and etf_close and spot_etf:
-            ratio = es_spot / etf_close
-            index_to_fut = es_spot / idx_close
+        idx_sym = "SPX" if fut == "ES" else "NDX"
+        spx = options_data.get("symbols", {}).get(idx_sym, {})
+        spx_spot = float(spx.get("spot", 0) or 0)
+        idx_close = close_on(idx_hist_tkr, basis_date)
+        etf_close = close_on(sym, basis_date)
+        if fut_basis_close and idx_close and etf_close:
+            ratio = fut_basis_close / etf_close
+            index_to_fut = fut_basis_close / idx_close
         else:
-            # fallback: chiusura RTH futures vs spot indice live (meglio di niente)
+            # fallback (storia quotidiana mancante): abbinamento live — meglio
+            # di niente, ma i livelli indice possono scivolare di qualche
+            # punto fra i giri finché le chiusure non tornano disponibili.
             ratio = es_spot / spot_etf if spot_etf else 10.0
             index_to_fut = (es_spot / spx_spot) if spx_spot else None
 
@@ -1002,8 +1032,7 @@ def main() -> None:
             tg_b = top_gamma_by_bucket(sd.get("expiries", []), spot_etf)
             prof_b = gex_profile_by_bucket(sd.get("expiries", []), spot_etf, window_pct=0.20)
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
-        spx = options_data.get("symbols", {}).get("SPX" if fut == "ES" else "NDX", {})
-        spx_spot = float(spx.get("spot", 0) or 0)
+        # (spx/spx_spot definiti nel blocco ratio, prima della catena indice)
 
         # --- catena INDICE (SPX/NDX): seconda fonte di livelli opzioni ---
         # Opzioni europee a regolamento in contanti: i dealer coprono la gamma
