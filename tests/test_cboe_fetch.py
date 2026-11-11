@@ -60,10 +60,13 @@ fixture = {"data": {
     "options": [
         opt("SPX", tomorrow_yy, "C", 6000.0, oi=1000),
         opt("SPX", tomorrow_yy, "P", 5950.0, oi=800),
+        opt("SPX", tomorrow_yy, "P", 5200.0, oi=700),   # -13.3%: rientra col ±25%
+        opt("SPX", tomorrow_yy, "C", 6800.0, oi=700),   # +13.3%: rientra col ±25%
         opt("SPXW", next_week_yy, "P", 5700.0, oi=300),
-        # strike fuori ±10% (5400 < 5400) → scartato
-        opt("SPX", tomorrow_yy, "P", 5200.0, oi=999),
-        opt("SPX", tomorrow_yy, "C", 6800.0, oi=999),  # +13% → scartato
+        # strike fuori ±25% (4500–7500) → scartati; 5200/6800 dal 11/11
+        # RIENTRANO (con il vecchio ±10% erano scartati)
+        opt("SPX", tomorrow_yy, "P", 4400.0, oi=999),
+        opt("SPX", tomorrow_yy, "C", 7600.0, oi=999),  # +26.7% → scartato
         # scadenza passata → scartata
         opt("SPX", yesterday, "C", 6000.0, oi=500),
         # codice irregolare → scartato senza crash
@@ -93,10 +96,13 @@ assert tomorrow_yy and cboe_expiry_to_iso(tomorrow_yy) in chains
 
 exp_t = chains[cboe_expiry_to_iso(tomorrow_yy)]
 assert isinstance(exp_t["calls"], pd.DataFrame) and isinstance(exp_t["puts"], pd.DataFrame)
-# strike fuori finestra scartati, giusti dentro
-assert len(exp_t["calls"]) == 1 and len(exp_t["puts"]) == 1
+# strike fuori finestra ±25% scartati, quelli dentro presenti (5200 e 6800
+# rientrano dal 11/11: prima della finestra larga erano 1+1)
+assert len(exp_t["calls"]) == 2 and len(exp_t["puts"]) == 2
 c0 = exp_t["calls"].iloc[0]
-assert float(c0["strike"]) == 6000.0 and int(c0["openInterest"]) == 1000
+assert {float(r["strike"]) for _, r in exp_t["calls"].iterrows()} == {6000.0, 6800.0}
+assert {float(r["strike"]) for _, r in exp_t["puts"].iterrows()} == {5950.0, 5200.0}
+assert int(c0["openInterest"]) == 1000
 assert float(c0["gamma"]) == 0.001 and float(c0["impliedVolatility"]) == 0.2
 # colonne che parse_chain_side legge
 for col in ("strike", "openInterest", "volume", "impliedVolatility", "bid", "ask", "gamma"):
