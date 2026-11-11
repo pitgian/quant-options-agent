@@ -1005,11 +1005,26 @@ def main() -> None:
                     "top_gamma_index": [
                         {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_i
                     ],
-                    "gex_profile_index": _bin_profile(
+                    "gex_profile_index": [
+                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["all"]
+                    ],
+                    "gex_profile_0dte_index": [
+                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["0dte"]
+                    ],
+                    "gex_profile_week_index": [
+                        {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["week"]
+                    ],
+                    # Variante binnata su griglia 25pt (stessa del profilo ETF):
+                    # usata SOLO dalla modalità 'Entrambi' della UI, che somma
+                    # ETF+indice per strike identico (con strike raw 5-pt la
+                    # merge non troverebbe mai corrispondenze). La vista
+                    # 'indice' usa i profili raw qui sopra, confrontabili
+                    # per-strike con InsiderFinance.
+                    "gex_profile_index_binned": _bin_profile(
                         [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["all"]], 25),
-                    "gex_profile_0dte_index": _bin_profile(
+                    "gex_profile_0dte_index_binned": _bin_profile(
                         [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["0dte"]], 25),
-                    "gex_profile_week_index": _bin_profile(
+                    "gex_profile_week_index_binned": _bin_profile(
                         [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["week"]], 25),
                     "top_gamma_0dte_index": [
                         {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_bi["0dte"]

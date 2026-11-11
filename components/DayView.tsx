@@ -164,9 +164,14 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     ): Array<GexProfileEntry> | undefined =>
       bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
     if (chain === 'etf') return pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte);
+    // Vista 'indice': profilo RAW per strike (5 pt, confrontabile 1:1 con
+    // InsiderFinance). Per la somma 'Entrambi' si usano i _binned (griglia
+    // 25pt condivisa con gli ETF — altrimenti 0 strike comuni e la merge
+    // affianca i due libri invece di sommarli).
     if (chain === 'index') return pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index);
     const a = pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte) ?? [];
-    const b = pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index) ?? [];
+    const b = pick(plan.gex_profile_index_binned, plan.gex_profile_week_index_binned, plan.gex_profile_0dte_index_binned)
+      ?? pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index) ?? [];
     const merged = new Map<number, { s: number; c: number; p: number; co: number; po: number }>();
     for (const e of [...a, ...b]) {
       const cur = merged.get(e.s) ?? { s: e.s, c: 0, p: 0, co: 0, po: 0 };

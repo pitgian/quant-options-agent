@@ -63,6 +63,11 @@ export interface DayPlan {
   gex_profile_index?: Array<{ s: number; c: number; p: number }>;
   gex_profile_0dte_index?: Array<{ s: number; c: number; p: number }>;
   gex_profile_week_index?: Array<{ s: number; c: number; p: number }>;
+  /** Stessi profili indice aggregati su bin 25pt (stessa griglia del profilo
+   *  ETF): serve solo alla modalità 'Entrambi', che somma per strike identico. */
+  gex_profile_index_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
+  gex_profile_0dte_index_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
+  gex_profile_week_index_binned?: Array<{ s: number; c: number; p: number; co?: number; po?: number }>;
   max_pain_nearest_index?: number;
   max_pain_all_index?: number;
   vwap?: number;
