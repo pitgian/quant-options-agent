@@ -59,7 +59,13 @@ export const GexHistogram: React.FC<{
   futEq?: (s: number) => string;
   /** Nome dei futures (ES/NQ) per i testi e la legenda. */
   futName?: string;
-}> = ({ profile, spot, idxName, maxPain, flip, futEq, futName }) => {
+  /** Scala dello strike dell'asse X: nel profilo ETF gli strike sono nativi
+   *  (SPY/QQQ), nel profilo indici e 'Entrambi' sono in punti futures (ES/NQ).
+   *  Va ETICHETTATA nel tooltip e nel footer: lo stesso numero senza scala
+   *  fa scambiare NQ per NDX (il libro indice è in NDX ma il profilo è
+   *  già convertito). Default: idxName. */
+  strikeScale?: string;
+}> = ({ profile, spot, idxName, maxPain, flip, futEq, futName, strikeScale }) => {
   const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
@@ -202,8 +208,8 @@ export const GexHistogram: React.FC<{
             // (futures ↔ nativo) secondo la fonte, calcolate dal padre.
             const eq = futEq?.(b.s) ?? '';
             const tip = metric === 'gex'
-              ? `Strike ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
-              : `Strike ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
+              ? `Strike ${strikeScale ?? idxName} ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
+              : `Strike ${strikeScale ?? idxName} ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
             return (
               <g key={b.s}>
                 {cVal > 0 && (
@@ -256,7 +262,7 @@ export const GexHistogram: React.FC<{
           <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-purple-400" /> Flip</span>
         </span>
         <span className="text-[10px] text-gray-500">
-          strike in scala {idxName} · doppio prezzo nel tooltip: {futName ?? 'futures'} ↔ nativo · passa il mouse sopra le barre per i valori
+          strike in scala {strikeScale ?? idxName} · doppio prezzo nel tooltip: {futName ?? 'futures'} ↔ nativo · passa il mouse sopra le barre per i valori
         </span>
       </div>
     </div>

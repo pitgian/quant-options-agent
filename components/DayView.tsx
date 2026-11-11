@@ -493,6 +493,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           spot={chain === 'etf' ? (plan?.spot_etf ?? spot) : spot}
           idxName={chain === 'etf' ? etfName : idxName}
           futName={futures}
+          strikeScale={chain === 'etf' ? etfName : futures}
           maxPain={chain === 'index' ? plan?.max_pain_nearest_index
             : chain === 'etf' ? (plan?.max_pain_nearest_native ?? plan?.max_pain_nearest)
             : plan?.max_pain_nearest}
