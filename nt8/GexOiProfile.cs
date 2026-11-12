@@ -118,6 +118,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				{
 					if ((DateTime.Now - lastFetch).TotalMinutes >= RefreshMinutes)
 					{
+						Log("GexOiProfile: timer tick " + DateTime.Now.ToString("HH:mm:ss") + " -> fetch", LogLevel.Information);
 						FetchPlan();
 						ForceRefresh();
 					}
@@ -161,9 +162,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 				TriggerCustomEvent(o =>
 				{
 					lastFetch = DateTime.Now;
-					if (err != null) { fetchError = "fetch: " + err; fetching = 0; ForceRefresh(); return; }
+					if (err != null)
+					{
+						fetchError = "fetch: " + err;
+						Log("GexOiProfile: FETCH ERROR: " + err, LogLevel.Error);
+						fetching = 0; ForceRefresh(); return;
+					}
 					try { ParsePlan(json); fetchError = ""; }
-					catch (Exception ex) { fetchError = "parse: " + ex.Message; }
+					catch (Exception ex) { fetchError = "parse: " + ex.Message; Log("GexOiProfile: PARSE ERROR: " + ex.Message, LogLevel.Error); }
 					fetching = 0;
 					ForceRefresh();
 				}, null);
@@ -312,7 +318,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 						: "GEX/OI: " + fetchError;
 					using (var bErr = new SolidColorBrush(RenderTarget,
 						string.IsNullOrEmpty(fetchError) ? new Color4(0.55f, 0.60f, 0.66f, 1f) : new Color4(0.95f, 0.55f, 0.35f, 1f)))
+					{
 						DrawTextRight(RenderTarget, tf, bErr, msg, xRight, 6);
+						DrawTextRight(RenderTarget, tf, bErr, msg, xLeft, 26);   // copia visibile anche se l'asse/toolbar copre destra
+					}
 					return;
 				}
 
