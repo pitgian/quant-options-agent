@@ -9,11 +9,14 @@ con ratio congelato per seduta).
 ## Installazione (VM Windows 192.168.68.111)
 
 1. Copia `GexOiProfile.cs` in `Documents\NinjaTrader 8\bin\Custom\Indicators\`.
-2. Apri NinjaTrader → New → NinjaScript Editor → apri `GexOiProfile`.
-   - Se la compilazione dà errore su `Newtonsoft.Json`: tasto destro su
-     **References → Add Reference** → seleziona `Newtonsoft.Json.dll` dalla
-     cartella di installazione NT (`<NT>\bin\`) → OK → ricompila (F5).
+2. Apri NinjaTrader → New → NinjaScript Editor → **F5** (compila tutto).
 3. Su un grafico ES/NQ (o MES/MNQ): tasto destro → Indicators → **GexOiProfile**.
+
+⚠️ **Nessun riferimento extra da aggiungere** — il parsing JSON usa
+`JavaScriptSerializer` (`System.Web.Extensions`, già tra i riferimenti di
+default di NT8). NON aggiungere Newtonsoft.Json a mano nel csproj: NT8
+rigenera il csproj a ogni compilazione e scarta i riferimenti manuali
+(verificato 12/11: la reference aggiunta via SSH spariva a ogni F5).
 
 Il fetch va su `raw.githubusercontent.com` (branch `data`): verificare che la
 VM abbia accesso a internet. HTTP è asincrono: non blocca mai il thread grafico.
@@ -46,8 +49,14 @@ VM abbia accesso a internet. HTTP è asincrono: non blocca mai il thread grafico
 
 ## Note tecniche
 
-- Parsing JSON con Newtonsoft.Json; fetch asincrono con marshal al thread UI
-  via `TriggerCustomEvent`; guard anti-concorrenza con Interlocked.
+- Parsing JSON con `JavaScriptSerializer` (System.Web.Extensions, riferimento
+default NT8 — 584 KB di piano parsed in background, mai sul thread UI);
+  marshal al thread grafico via `TriggerCustomEvent`; guard anti-concorrenza
+  con Interlocked.
+- Qualificazioni esplicite per evitare collisioni NT/SharpDX:
+  `System.ComponentModel.DataAnnotations.Range(...)` (senza, collide con
+  `SharpDX.Range`) e `System.Windows.Media.Brushes` (senza, `SolidColorBrush`
+  è ambiguo tra Media e Direct2D1).
 - Disegno SharpDX in `OnRender`: nessun draw-object persistente (niente spazzatura
   nel workspace), risorse create e smaltite per frame.
 - Il piano fuori seduta resta pubblicato: l'indicatore lo mostra con l'ora e il

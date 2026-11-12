@@ -1,15 +1,15 @@
 #region Using declarations
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Media;
+using System.Web.Script.Serialization;
 using System.Windows.Threading;
-using Newtonsoft.Json.Linq;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.Gui;
@@ -38,8 +38,10 @@ using SharpDX.DirectWrite;
 //  put-dominato/trigger), linee Spot (live dal grafico) / Max Pain / Flip
 //  sempre visibili, badge di freschezza del piano.
 //
-//  RIFERIMENTO COMPILAZIONE: Newtonsoft.Json.dll (se non già referenziata:
-//  NinjaScript Editor → References → Add → <NT>\bin\Newtonsoft.Json.dll).
+//  RIFERIMENTI: NESSUNO extra — il parsing usa JavaScriptSerializer
+//  (System.Web.Extensions, già referenziata di default da NT8). NOTA:
+//  NON usare Newtonsoft + reference manuale nel csproj — NT8 rigenera il
+//  csproj a ogni compilazione e scarta i riferimenti aggiunti a mano.
 //  Tutte le richieste HTTP sono asincrone (mai blocco del thread UI);
 //  il risultato torna al thread grafico via TriggerCustomEvent.
 // ============================================================================
@@ -102,7 +104,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				ProfileWidthPct                = 22;
 				ShowFlip0Dte                   = false;
 
-				AddPlot(Brushes.Transparent, "Void");   // plot fittizio: il disegno è tutto in OnRender
+				AddPlot(System.Windows.Media.Brushes.Transparent, "Void");   // plot fittizio: il disegno è tutto in OnRender
 			}
 			else if (State == State.DataLoaded)
 			{
@@ -167,43 +169,69 @@ namespace NinjaTrader.NinjaScript.Indicators
 			});
 		}
 
+		// --- navigazione JavaScriptSerializer: Dictionary<string,object> / object[]
+		private static string TryStr(Dictionary<string, object> d, string k)
+		{
+			object v;
+			return d != null && d.TryGetValue(k, out v) ? v as string : null;
+		}
+
+		private static double TryNum(Dictionary<string, object> d, string k)
+		{
+			object v;
+			if (d == null || !d.TryGetValue(k, out v) || v == null) return 0;
+			try { return Convert.ToDouble(v, CultureInfo.InvariantCulture); }
+			catch { return 0; }
+		}
+
+		private DateTime ParseDate(string s)
+		{
+			if (string.IsNullOrEmpty(s)) return DateTime.MinValue;
+			DateTimeOffset dto;
+			if (DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out dto))
+				return dto.LocalDateTime;
+			return DateTime.MinValue;
+		}
+
 		private void ParsePlan(string json)
 		{
 			string key = PlanKey();
 			if (key == null) { fetchError = "strumento non ES/NQ: imposta 'Futures' nelle proprietà"; return; }
 
-			JObject root = JObject.Parse(json);
-			JToken plan = root.SelectToken("plans['" + key + "']");
+			var ser  = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+			var root = ser.Deserialize<Dictionary<string, object>>(json);
+			if (root == null) { fetchError = "JSON non valido"; return; }
+
+			var plans = root.TryGetValue("plans", out var plansObj) ? plansObj as Dictionary<string, object> : null;
+			var plan  = plans != null && plans.TryGetValue(key, out var planObj) ? planObj as Dictionary<string, object> : null;
 			if (plan == null) { fetchError = "piano " + key + " assente nel JSON"; return; }
 
-			planTime = DateTime.MinValue;
-			string gen = plan.Value<string>("generated_at");
-			if (!string.IsNullOrEmpty(gen))
-			{
-				DateTimeOffset dto;
-				if (DateTimeOffset.TryParse(gen, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out dto))
-					planTime = dto.LocalDateTime;
-			}
-			planSpot  = plan.Value<double?>("last_price") ?? 0;
-			string rg = plan.Value<string>("gamma_regime");
+			planTime  = ParseDate(TryStr(plan, "generated_at"));
+			planSpot  = TryNum(plan, "last_price");
+			string rg = TryStr(plan, "gamma_regime");
 			regimeTxt = rg == "long" ? "long gamma" : rg == "short" ? "short gamma" : "";
 
 			bool idx = OptSource == GexOiSource.Indice;
 
 			// Max Pain e flip: entrambi già in SCALA FUTURES nel piano
-			maxPain    = plan.Value<double?>(idx ? "max_pain_nearest_index" : "max_pain_nearest") ?? 0;
+			maxPain    = TryNum(plan, idx ? "max_pain_nearest_index" : "max_pain_nearest");
 			hasMaxPain = maxPain > 0;
 
 			hasFlip = hasFlip0 = false;
 			flip = flip0 = 0;
 			string flipName  = idx ? "GEX-FLIP-IDX"      : "GEX-FLIP";
 			string flip0Name = idx ? "GEX-FLIP-0DTE-IDX" : "GEX-FLIP-0DTE";
-			foreach (var lv in plan["levels"] ?? new JArray())
+			if (plan.TryGetValue("levels", out var levelsObj) && levelsObj is object[] levels)
 			{
-				string nm = lv.Value<string>("name") ?? "";
-				double pr = lv.Value<double?>("price") ?? 0;
-				if (nm == flipName)  { flip  = pr; hasFlip  = pr > 0; }
-				if (nm == flip0Name) { flip0 = pr; hasFlip0 = pr > 0; }
+				foreach (var lo in levels)
+				{
+					var lv = lo as Dictionary<string, object>;
+					if (lv == null) continue;
+					string nm = TryStr(lv, "name") ?? "";
+					double pr = TryNum(lv, "price");
+					if (nm == flipName)  { flip  = pr; hasFlip  = pr > 0; }
+					if (nm == flip0Name) { flip0 = pr; hasFlip0 = pr > 0; }
+				}
 			}
 
 			// profilo per strike: ENTRAMBE le fonti sono già in scala futures
@@ -216,19 +244,24 @@ namespace NinjaTrader.NinjaScript.Indicators
 				 : "gex_profile_binned");
 
 			var outBars = new List<ProfileBar>();
-			foreach (var e in plan[profKey] ?? new JArray())
+			if (plan.TryGetValue(profKey, out var profObj) && profObj is object[] prof)
 			{
-				double s = e.Value<double?>("s") ?? 0;
-				if (s <= 0) continue;
-				double net = OptMetric == GexOiMetric.GEX
-					? (e.Value<double?>("c") ?? 0) + (e.Value<double?>("p") ?? 0)
-					: (e.Value<double?>("co") ?? 0) - (e.Value<double?>("po") ?? 0);
-				outBars.Add(new ProfileBar { S = s, Net = net });
+				foreach (var eo in prof)
+				{
+					var e = eo as Dictionary<string, object>;
+					if (e == null) continue;
+					double s = TryNum(e, "s");
+					if (s <= 0) continue;
+					double net = OptMetric == GexOiMetric.GEX
+						? TryNum(e, "c") + TryNum(e, "p")
+						: TryNum(e, "co") - TryNum(e, "po");
+					outBars.Add(new ProfileBar { S = s, Net = net });
+				}
 			}
 
 			outBars = outBars.OrderBy(b => b.S).ToList();
 			bars = outBars.Count > 0 ? outBars : null;
-			if (bars == null) fetchError = "profilo '" + profKey + "' vuoto";
+			fetchError = bars == null ? "profilo '" + profKey + "' assente o vuoto" : "";
 		}
 
 		// ---------------------------------------------------------------- render
@@ -388,22 +421,22 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public GexOiMetric OptMetric { get; set; }
 
 		[NinjaScriptProperty]
-		[Range(0.5, 20.0)]
+		[System.ComponentModel.DataAnnotations.Range(0.5, 20.0)]
 		[Display(Name = "Finestra ±% dallo spot", Order = 5, GroupName = "1. Dati")]
 		public double WindowPct { get; set; }
 
 		[NinjaScriptProperty]
-		[Range(1, 60)]
+		[System.ComponentModel.DataAnnotations.Range(1, 60)]
 		[Display(Name = "Refresh (minuti)", Order = 6, GroupName = "2. Aggiornamento")]
 		public int RefreshMinutes { get; set; }
 
 		[NinjaScriptProperty]
-		[Range(3, 240)]
+		[System.ComponentModel.DataAnnotations.Range(3, 240)]
 		[Display(Name = "Piano stantio dopo (minuti)", Order = 7, GroupName = "2. Aggiornamento")]
 		public int StaleMinutes { get; set; }
 
 		[NinjaScriptProperty]
-		[Range(10, 50)]
+		[System.ComponentModel.DataAnnotations.Range(10, 50)]
 		[Display(Name = "Larghezza pannello %", Order = 8, GroupName = "2. Aggiornamento")]
 		public double ProfileWidthPct { get; set; }
 
