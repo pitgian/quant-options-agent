@@ -95,6 +95,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private sealed class ProfileBar { public double S; public double Net; }
 
+		// JavaScriptSerializer deserializza gli ARRAY JSON come
+		// System.Collections.ArrayList, NON come object[] (verificato 12/11:
+		// is object[] = False su levels e profili → 0 strike e flip=0).
+		private static object[] ToArray(object o)
+		{
+			if (o is object[] arr) return arr;
+			var al = o as System.Collections.ArrayList;
+			return al != null ? al.ToArray() : null;
+		}
+
 		protected override void OnStateChange()
 		{
 			if (State == State.SetDefaults)
@@ -251,7 +261,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			flip = flip0 = 0;
 			string flipName  = idx ? "GEX-FLIP-IDX"      : "GEX-FLIP";
 			string flip0Name = idx ? "GEX-FLIP-0DTE-IDX" : "GEX-FLIP-0DTE";
-			if (plan.TryGetValue("levels", out var levelsObj) && levelsObj is object[] levels)
+			object[] levels = ToArray(plan.TryGetValue("levels", out var levelsObj) ? levelsObj : null);
+			if (levels != null)
 			{
 				foreach (var lo in levels)
 				{
@@ -274,9 +285,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 				 : "gex_profile_binned");
 
 			var outBars = new List<ProfileBar>();
-			if (plan.TryGetValue(profKey, out var profObj) && profObj is object[] prof)
+			object[] profArr = ToArray(plan.TryGetValue(profKey, out var profObj) ? profObj : null);
+			if (profArr != null)
 			{
-				foreach (var eo in prof)
+				foreach (var eo in profArr)
 				{
 					var e = eo as Dictionary<string, object>;
 					if (e == null) continue;
