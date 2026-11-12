@@ -55,13 +55,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 	public class GexOiProfile : Indicator
 	{
-		private static readonly HttpClient Http = new HttpClient
+		// UseProxy=false: NT gira nella sessione utente — se c'è un proxy di
+		// sistema questo può RICACHETTARE le risposte (12/11: dalla VM il piano
+		// fresco arrivava a chi i test SSH, a NT arrivava quello di 5 ore fa).
+		// Headers no-cache + cache-buster sull'URL come doppia cintura.
+		private static readonly HttpClient Http = new HttpClient(new HttpClientHandler
+		{
+			UseProxy = false,
+			UseDefaultCredentials = false
+		})
 		{
 			Timeout = TimeSpan.FromSeconds(20)
 		};
 
 		private const string PlanUrl =
 			"https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/day_plan.json";
+
+		static GexOiProfile()
+		{
+			Http.DefaultRequestHeaders.TryAddWithoutValidation("Cache-Control", "no-cache, no-store, max-age=0");
+			Http.DefaultRequestHeaders.TryAddWithoutValidation("Pragma", "no-cache");
+		}
 
 		// --- stato dati (SOLO thread UI: scritto dentro TriggerCustomEvent) ---
 		private List<ProfileBar> bars;          // profilo netto per strike (scala fut)
@@ -278,8 +292,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			outBars = outBars.OrderBy(b => b.S).ToList();
 			bars = outBars.Count > 0 ? outBars : null;
 			fetchError = bars == null ? "profilo '" + profKey + "' assente o vuoto" : "";
-			Log(string.Format("GexOiProfile[{0}]: piano {1} · {2} strike · mp={3} · flip={4}",
-				key, planTime.ToString("HH:mm"), bars == null ? 0 : bars.Count, maxPain, flip), LogLevel.Information);
+			Log(string.Format("GexOiProfile[{0}]: piano {1} (raw: {2}) · {3} strike · mp={4} · flip={5}",
+				key, planTime.ToString("HH:mm"), TryStr(plan, "generated_at"),
+				bars == null ? 0 : bars.Count, maxPain, flip), LogLevel.Information);
 		}
 
 		// ---------------------------------------------------------------- render
