@@ -9,7 +9,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
-using System.Windows.Threading;
+using System.Timers;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.Gui;
@@ -76,7 +76,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private DateTime lastFetch = DateTime.MinValue;
 
 		private int fetching;                   // 0 = idle, 1 = in volo (Interlocked)
-		private DispatcherTimer timer;
+		private System.Timers.Timer timer;      // thread-pool: non dipende dal dispatcher UI
 		private bool loggedGeom;
 
 		private sealed class ProfileBar { public double S; public double Net; }
@@ -110,24 +110,29 @@ namespace NinjaTrader.NinjaScript.Indicators
 			else if (State == State.DataLoaded)
 			{
 				FetchPlan();
-				timer = new DispatcherTimer(DispatcherPriority.Background)
+				// System.Timers.Timer e NON DispatcherTimer: quest'ultimo nasce sul
+				// dispatcher del thread che esegue DataLoaded — se NT lo chiama su
+				// un thread non-UI il timer non scatta MAI (bug 12/11: zero refresh).
+				// Elapsed arriva su thread-pool: FetchPlan è thread-safe
+				// (Interlocked + TriggerCustomEvent per il ritorno al thread UI).
+				timer = new System.Timers.Timer(30000) { AutoReset = true };
+				timer.Elapsed += (s, e) =>
 				{
-					Interval = TimeSpan.FromSeconds(30)
-				};
-				timer.Tick += (s, e) =>
-				{
-					if ((DateTime.Now - lastFetch).TotalMinutes >= RefreshMinutes)
+					try
 					{
-						Log("GexOiProfile: timer tick " + DateTime.Now.ToString("HH:mm:ss") + " -> fetch", LogLevel.Information);
-						FetchPlan();
-						ForceRefresh();
+						if ((DateTime.Now - lastFetch).TotalMinutes >= RefreshMinutes)
+						{
+							Log("GexOiProfile: timer -> fetch " + DateTime.Now.ToString("HH:mm:ss"), LogLevel.Information);
+							FetchPlan();
+						}
 					}
+					catch { }
 				};
 				timer.Start();
 			}
 			else if (State == State.Terminated)
 			{
-				if (timer != null) { timer.Stop(); timer = null; }
+				if (timer != null) { timer.Stop(); timer.Dispose(); timer = null; }
 			}
 		}
 
@@ -283,6 +288,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			base.OnRender(chartControl, chartScale);
 			if (ChartPanel == null || ChartBars == null) return;
+
+			// SELF-REFRESH di sicurezza: il grafico renderizza continuamente in
+			// seduta → qui il refresh avviene anche se il timer muore. FetchPlan
+			// è protetto da Interlocked e mai bloccante per il thread UI.
+			try
+			{
+				if ((DateTime.Now - lastFetch).TotalMinutes >= RefreshMinutes)
+					FetchPlan();
+			}
+			catch { }
 
 			float panelH = ChartPanel.H;
 			// geometria PANNELLO-relativa (ChartPanel.X/W): CanvasLeft/Right del
