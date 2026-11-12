@@ -121,6 +121,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				BarsRequiredToPlot             = 0;
 
 				Lato                           = GexOiLato.Sinistra;
+				PixelBinSize                   = 8;
 				OptFutures                     = GexOiFutures.Auto;
 				OptSource                      = GexOiSource.Indice;
 				OptBucket                      = GexOiBucket.Tutte;
@@ -129,7 +130,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				RefreshMinutes                 = 5;
 				StaleMinutes                   = 15;
 				ProfileWidthPct                = 18;
-				OffsetDallaDestraPx            = 190;
+				OffsetDallaDestraPx            = 0;
 				ShowFlip0Dte                   = false;
 
 				AddPlot(System.Windows.Media.Brushes.Transparent, "Void");   // plot fittizio: il disegno è tutto in OnRender
@@ -420,22 +421,49 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
-				// ---- barre: spacing REALE fra strike visibili (zero sovrapposizioni)
-				var top3 = vis.OrderByDescending(b => Math.Abs(b.Net)).Take(3)
-					.Select(b => b.S).ToHashSet();
-				float prevY = float.NaN;
+				// ---- BARRE A BIN PIXEL-FISSI: una barra ogni PixelBinSize px (default 8)
+				//      qualunque zoom -> max ~70 barre, ordinate, MAI sovrapposte.
+				//      Ogni bin somma il net degli strike che cadono nella sua fascia
+				//      di prezzo: e la granularita che fa l'istogramma InsiderFinance.
+				int    nBins = Math.Max(1, (int)((panelH - 44) / PixelBinSize));
+				float  yTop  = 22f;
+				var bins = new double[nBins];
+				var binS = new double[nBins];   // prezzo rappresentativo del bin
+				for (int i = 0; i < nBins; i++) { bins[i] = 0; binS[i] = double.NaN; }
 				foreach (var b in vis)
 				{
 					float y = (float)chartScale.GetYByValue(b.S);
-					float colW = xRight - xLeft;
-					float barH = float.IsNaN(prevY) ? 3f : Math.Max(1.5f, Math.Min(12f, Math.Abs(prevY - y) * 0.85f));
-					float len  = Math.Max(2f, (float)(Math.Abs(b.Net) / maxAbs) * colW * 0.75f);
-					var c4 = b.Net >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
+					int i = (int)((y - yTop) / PixelBinSize);
+					if (i < 0 || i >= nBins) continue;
+					bins[i] += b.Net;
+					// prezzo del bin = lo strike piu vicino al centro del bin
+					float yc = yTop + (i + 0.5f) * PixelBinSize;
+					if (double.IsNaN(binS[i]) || Math.Abs(y - yc) < Math.Abs((float)chartScale.GetYByValue(binS[i]) - yc))
+						binS[i] = b.S;
+				}
+				float maxBin = 0.01f;
+				foreach (var v in bins) maxBin = Math.Max(maxBin, (float)Math.Abs(v));
+
+				float colW = xRight - xLeft;
+				for (int i = 0; i < nBins; i++)
+				{
+					if (bins[i] == 0 || double.IsNaN(binS[i])) continue;
+					float y  = yTop + i * PixelBinSize;
+					float bh = PixelBinSize - 2f;                     // barra piu piccola del bin: gap visivo
+					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.92f);
+					var c4 = bins[i] >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
-						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - barH / 2f, xRight, y + barH / 2f), bb);
-					if (top3.Contains(b.S) && barH >= 2.5f)
-						DrawTextRight(RenderTarget, tf, brush, b.S.ToString("0"), Math.Max(xLeft, xRight - len - 34), y - 7);
-					prevY = y;
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y, xRight, y + bh), bb);
+				}
+				// etichette: i 3 bin piu grossi per |net|
+				var topIdx = Enumerable.Range(0, nBins)
+					.Where(i => bins[i] != 0)
+					.OrderByDescending(i => Math.Abs(bins[i])).Take(3);
+				foreach (int i in topIdx)
+				{
+					float y = yTop + i * PixelBinSize;
+					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.92f);
+					DrawTextRight(RenderTarget, tf, brush, binS[i].ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 1);
 				}
 
 				// ---- linee: Spot (tratteggiata blu) / Max Pain (ambra) / Flip (viola)
@@ -504,6 +532,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[NinjaScriptProperty]
 		[Display(Name = "Lato pannello", Order = 1, GroupName = "1. Dati")]
 		public GexOiLato Lato { get; set; }
+
+		[NinjaScriptProperty]
+		[Range(4, 30)]
+		[Display(Name = "Dimensione bin (px) — altezza di ogni barra", Order = 2, GroupName = "1. Dati")]
+		public int PixelBinSize { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name = "Futures (Auto = dal grafico)", Order = 2, GroupName = "1. Dati")]
