@@ -321,7 +321,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				float ySpot = (float)chartScale.GetYByValue(spot);
 
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
-					RenderTarget.DrawLine(bBase, xRight, 4, xRight, panelH - 4, 1f);
+					RenderTarget.DrawLine(bBase, new SharpDX.Vector2(xRight, 4), new SharpDX.Vector2(xRight, panelH - 4), 1f);
 
 				// ---- barre: ogni strike alla SUA quota di prezzo
 				var top3 = inWin.OrderByDescending(b => Math.Abs(b.Net)).Take(3)
@@ -369,7 +369,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 					{
 						DrawDashed(RenderTarget, bL, canvasLeft + 10, xLeft - 6, yL, 9, 5);
-						RenderTarget.DrawLine(bL, xLeft - 6, yL, xRight, yL, 1f);
+						RenderTarget.DrawLine(bL, new SharpDX.Vector2(xLeft - 6, yL), new SharpDX.Vector2(xRight, yL), 1f);
 						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, canvasLeft + 12, yL - 14);
 					}
 				}
@@ -387,7 +387,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			while (x < x2)
 			{
 				float xEnd = Math.Min(x + dash, x2);
-				rt.DrawLine(b, x, y, xEnd, y, 1.2f);
+				rt.DrawLine(b, new SharpDX.Vector2(x, y), new SharpDX.Vector2(xEnd, y), 1.2f);
 				x = xEnd + gap;
 			}
 		}
