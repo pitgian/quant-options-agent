@@ -456,7 +456,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.85f);
 					var c4 = bins[i] >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
-						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y, xRight, y + bh), bb);
+						// BUG 13/11: SharpDX.RectangleF prende (x, y, LARGHEZZA, ALTEZZA), non
+						// (left, top, right, bottom). Prima passavo xRight e y+bh come 3°/4°
+						// argomento = rettangoli larghi ~955px (clippati al bordo pannello,
+						// sotto l'asse prezzi) e alti y+4 px, ognuno dipinto sopra il
+						// precedente → blocchi spessi sovrapposti a schermo.
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y, len, bh), bb);
 				}
 				// etichette: i 3 bin piu grossi per |net|
 				var topIdx = Enumerable.Range(0, nBins)
