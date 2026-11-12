@@ -46,14 +46,22 @@ using SharpDX.DirectWrite;
 //  il risultato torna al thread grafico via TriggerCustomEvent.
 // ============================================================================
 
+// BUG 13/11 (CS0246 nelle righe della regione generata): gli enum delle
+// proprietà NON devono stare in NinjaTrader.NinjaScript.Indicators. La region
+// "NinjaScript generated code" che NT appende al file li referenzia SENZA
+// qualificarli anche dentro i blocchi namespace NinjaTrader.NinjaScript.
+// MarketAnalyzerColumns / .Strategies, dove un enum dichiarato in ...Indicators
+// non è risolvibile (→ 20× CS0246 e compilazione fallita). Convenzione già
+// usata dal tree (OrderFlowPro): enum a livello GLOBALE, prima dei namespace:
+// risolvono da qualunque namespace il codice generato possa usare.
+public enum GexOiFutures { Auto, ES, NQ }
+public enum GexOiSource  { Indice, ETF }
+public enum GexOiBucket  { Tutte, Settimana, ZeroDTE }
+public enum GexOiLato    { Sinistra, Destra }
+public enum GexOiMetric  { GEX, OI }
+
 namespace NinjaTrader.NinjaScript.Indicators
 {
-	public enum GexOiFutures { Auto, ES, NQ }
-	public enum GexOiSource  { Indice, ETF }
-	public enum GexOiBucket  { Tutte, Settimana, ZeroDTE }
-	public enum GexOiLato    { Sinistra, Destra }
-	public enum GexOiMetric  { GEX, OI }
-
 	public class GexOiProfile : Indicator
 	{
 		// UseProxy=false: NT gira nella sessione utente — se c'è un proxy di
