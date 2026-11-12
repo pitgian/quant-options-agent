@@ -441,8 +441,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (double.IsNaN(binS[i]) || Math.Abs(y - yc) < Math.Abs((float)chartScale.GetYByValue(binS[i]) - yc))
 						binS[i] = b.S;
 				}
-				float maxBin = 0.01f;
-				foreach (var v in bins) maxBin = Math.Max(maxBin, (float)Math.Abs(v));
+				// NORMALIZZAZIONE al 97mo PERCENTILE + scala di POTENZA 0.40: la
+				// distribuzione GEX e' ~1000:1 (muro -500 Mld vs strike tipico 0.5) -
+				// col max lineare il 95% delle barre resta invisibile (misurato su
+				// anteprima offline: mediana 1px). Con p97+pow: mediana 33px, 74/92
+				// barre leggibili. Muri eccezionali clippano a piena scala.
+				var nz = bins.Where(v => v != 0).Select(v => Math.Abs(v)).OrderBy(v => v).ToList();
+				float maxBin = nz.Count > 0 ? (float)nz[(int)(nz.Count * 0.97)] : 0.01f;
+				maxBin = Math.Max(maxBin, 0.01f);
 
 				float colW = xRight - xLeft;
 				for (int i = 0; i < nBins; i++)
@@ -450,7 +456,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (bins[i] == 0 || double.IsNaN(binS[i])) continue;
 					float y  = yTop + i * PixelBinSize;
 					float bh = 3f;                                    // SOFFITTO DURO: barra sottile sempre
-					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.50f);  // max META' colonna
+					float rel = (float)Math.Pow(Math.Min(1.0, Math.Abs(bins[i]) / maxBin), 0.40);
+					float len = Math.Max(2f, rel * colW * 0.92f);
 					var c4 = bins[i] >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y, xRight, y + bh), bb);
@@ -462,7 +469,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				foreach (int i in topIdx)
 				{
 					float y = yTop + i * PixelBinSize;
-					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.50f);
+					float rel = (float)Math.Pow(Math.Min(1.0, Math.Abs(bins[i]) / maxBin), 0.40);
+					float len = Math.Max(2f, rel * colW * 0.92f);
 					DrawTextRight(RenderTarget, tf, brush, binS[i].ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 1);
 				}
 
