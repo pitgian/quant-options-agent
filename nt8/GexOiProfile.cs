@@ -130,7 +130,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				RefreshMinutes                 = 5;
 				StaleMinutes                   = 15;
 				ProfileWidthPct                = 10;
-				OffsetDallaDestraPx            = 0;
+				OffsetDallaDestraPx            = 150;
+				Lato                           = GexOiLato.Destra;
 				ShowFlip0Dte                   = false;
 
 				AddPlot(System.Windows.Media.Brushes.Transparent, "Void");   // plot fittizio: il disegno è tutto in OnRender
