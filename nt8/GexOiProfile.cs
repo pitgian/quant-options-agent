@@ -405,81 +405,66 @@ namespace NinjaTrader.NinjaScript.Indicators
 						title + " · piano " + (planTime == DateTime.MinValue ? "?" : planTime.ToString("HH:mm"))
 						+ (stale ? " ⚠" : ""), xRight, 4);
 
-				// ---- finestra ±WindowPct% attorno allo spot live
-				var inWin = bars.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct).ToList();
+				// ---- finestra ±WindowPct% attorno allo spot live: STESSO criterio
+				//      del sito (GexHistogram.tsx: s in [spot*(1-pct), spot*(1+pct)])
+				var inWin = bars.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct)
+					.OrderBy(b => b.S).ToList();
 
-				// ---- SOLO gli strike nel range prezzi VISIBILE a schermo: zoom in
-				//      = pochi strike grandi e leggibili, zoom out = profilo
-				//      completo. Senza questo: centinaia di rettangoli impilati
-				//      fuori scala (feedback 12/11 "miscuglio di rettangoli").
-				var vis = new List<ProfileBar>();
+				// ---- SCALA STABILE E IDENTICA AL SITO: yMax = max(maxPos, maxNeg)
+				//      calcolato su TUTTE le barre della finestra (non sul solo
+				//      visibile a schermo, non a percentili): zoom e pan NON cambiano
+				//      la lunghezza relativa delle barre, che corrispondono 1:1
+				//      all'istogramma della web app. Lineare come il sito: i muri
+				//      dominano, gli strike piccoli restano piccoli (e' la gerarchia
+				//      reale del libro, letta uguale su NT e sul sito).
+				float maxPos = 0.01f, maxNeg = 0.01f;
 				foreach (var b in inWin)
 				{
-					float y = (float)chartScale.GetYByValue(b.S);
-					if (y >= 16 && y <= panelH - 16) vis.Add(b);
+					if (b.Net > 0) maxPos = Math.Max(maxPos, (float)b.Net);
+					else           maxNeg = Math.Max(maxNeg, (float)-b.Net);
 				}
-				float maxAbs = 0.01f;
-				foreach (var b in vis) maxAbs = Math.Max(maxAbs, (float)Math.Abs(b.Net));
+				float yMax = Math.Max(maxPos, maxNeg);
 
 				float ySpot = (float)chartScale.GetYByValue(spot);
 
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
-				// ---- BARRE A BIN PIXEL-FISSI: una barra ogni PixelBinSize px (default 8)
-				//      qualunque zoom -> max ~70 barre, ordinate, MAI sovrapposte.
-				//      Ogni bin somma il net degli strike che cadono nella sua fascia
-				//      di prezzo: e la granularita che fa l'istogramma InsiderFinance.
-				int    nBins = Math.Max(1, (int)((panelH - 44) / PixelBinSize));
-				float  yTop  = 22f;
-				var bins = new double[nBins];
-				var binS = new double[nBins];   // prezzo rappresentativo del bin
-				for (int i = 0; i < nBins; i++) { bins[i] = 0; binS[i] = double.NaN; }
-				foreach (var b in vis)
-				{
-					float y = (float)chartScale.GetYByValue(b.S);
-					int i = (int)((y - yTop) / PixelBinSize);
-					if (i < 0 || i >= nBins) continue;
-					bins[i] += b.Net;
-					// prezzo del bin = lo strike piu vicino al centro del bin
-					float yc = yTop + (i + 0.5f) * PixelBinSize;
-					if (double.IsNaN(binS[i]) || Math.Abs(y - yc) < Math.Abs((float)chartScale.GetYByValue(binS[i]) - yc))
-						binS[i] = b.S;
-				}
-				// NORMALIZZAZIONE al 97mo PERCENTILE + scala di POTENZA 0.40: la
-				// distribuzione GEX e' ~1000:1 (muro -500 Mld vs strike tipico 0.5) -
-				// col max lineare il 95% delle barre resta invisibile (misurato su
-				// anteprima offline: mediana 1px). Con p97+pow: mediana 33px, 74/92
-				// barre leggibili. Muri eccezionali clippano a piena scala.
-				var nz = bins.Where(v => v != 0).Select(v => Math.Abs(v)).OrderBy(v => v).ToList();
-				float maxBin = nz.Count > 0 ? (float)nz[(int)(nz.Count * 0.97)] : 0.01f;
-				maxBin = Math.Max(maxBin, 0.01f);
-
+				// ---- UNA BARRA PER STRIKE (i bin a pixel erano la causa della
+				//      dipendenza dallo zoom: a ogni zoom aggregavano strike
+				//      diversi e rinormalizzavano). Prezzo y reale via GetYByValue;
+				//      SOLO lo SPESSORE si adatta al gap dallo strike adiacente
+				//      (72% del gap, come la larghezza 0.72 delle barre del sito,
+				//      tetto PixelBinSize px): a zoom-out non si sovrappongono,
+				//      ma lunghezze e valori NON cambiano mai.
 				float colW = xRight - xLeft;
-				for (int i = 0; i < nBins; i++)
+				int   nW   = inWin.Count;
+				var   ys   = new float[nW];
+				for (int i = 0; i < nW; i++) ys[i] = (float)chartScale.GetYByValue(inWin[i].S);
+				for (int i = 0; i < nW; i++)
 				{
-					if (bins[i] == 0 || double.IsNaN(binS[i])) continue;
-					float y  = yTop + i * PixelBinSize;
-					float bh = 4f;
-					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.85f);
-					var c4 = bins[i] >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
+					var b = inWin[i];
+					if (b.Net == 0) continue;
+					float y = ys[i];
+					if (y < -20 || y > panelH + 20) continue;
+					float gap = i + 1 < nW ? Math.Abs(ys[i + 1] - y)
+						: i > 0 ? Math.Abs(y - ys[i - 1]) : 10f;
+					float bh  = Math.Max(2f, Math.Min(PixelBinSize, gap * 0.72f));
+					float len = Math.Max(2f, (float)Math.Abs(b.Net) / yMax * colW);
+					var c4 = b.Net >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
-						// BUG 13/11: SharpDX.RectangleF prende (x, y, LARGHEZZA, ALTEZZA), non
-						// (left, top, right, bottom). Prima passavo xRight e y+bh come 3°/4°
-						// argomento = rettangoli larghi ~955px (clippati al bordo pannello,
-						// sotto l'asse prezzi) e alti y+4 px, ognuno dipinto sopra il
-						// precedente → blocchi spessi sovrapposti a schermo.
-						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y, len, bh), bb);
+						// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
 				}
-				// etichette: i 3 bin piu grossi per |net|
-				var topIdx = Enumerable.Range(0, nBins)
-					.Where(i => bins[i] != 0)
-					.OrderByDescending(i => Math.Abs(bins[i])).Take(3);
+				// etichette: i 3 strike piu grossi per |net| nella finestra
+				var topIdx = Enumerable.Range(0, nW)
+					.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
 				foreach (int i in topIdx)
 				{
-					float y = yTop + i * PixelBinSize;
-					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.85f);
-					DrawTextRight(RenderTarget, tf, brush, binS[i].ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 1);
+					float y = ys[i];
+					if (y < 12 || y > panelH - 6) continue;
+					float len = Math.Max(2f, (float)Math.Abs(inWin[i].Net) / yMax * colW);
+					DrawTextRight(RenderTarget, tf, brush, inWin[i].S.ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 8);
 				}
 
 				// ---- linee: Spot (tratteggiata blu) / Max Pain (ambra) / Flip (viola)
@@ -551,7 +536,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		[NinjaScriptProperty]
 		[Range(4, 30)]
-		[Display(Name = "Dimensione bin (px) — altezza di ogni barra", Order = 2, GroupName = "1. Dati")]
+		[Display(Name = "Spessore max barra (px)", Order = 2, GroupName = "1. Dati")]
 		public int PixelBinSize { get; set; }
 
 		[NinjaScriptProperty]
