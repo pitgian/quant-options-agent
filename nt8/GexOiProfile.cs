@@ -153,7 +153,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 				try
 				{
 					ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-					json = Http.GetStringAsync(PlanUrl).GetAwaiter().GetResult();
+					// cache-buster: raw.githubusercontent.com è dietro CDN e senza
+					// query variabile serve copie vecchie di ORE (12/11: piano
+					// delle 09:25 servito alle 14:27). Timestamp univoco = cache bypass.
+					string url = PlanUrl + "?t=" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+					json = Http.GetStringAsync(url).GetAwaiter().GetResult();
 				}
 				catch (Exception ex)
 				{
