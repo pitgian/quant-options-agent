@@ -120,7 +120,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				IsSuspendedWhileInactive       = false;
 				BarsRequiredToPlot             = 0;
 
-				Lato                           = GexOiLato.Sinistra;
+				Lato                           = GexOiLato.Destra;
 				PixelBinSize                   = 8;
 				OptFutures                     = GexOiFutures.Auto;
 				OptSource                      = GexOiSource.Indice;
@@ -129,7 +129,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				WindowPct                      = 5;
 				RefreshMinutes                 = 5;
 				StaleMinutes                   = 15;
-				ProfileWidthPct                = 18;
+				ProfileWidthPct                = 12;
 				OffsetDallaDestraPx            = 0;
 				ShowFlip0Dte                   = false;
 
@@ -350,7 +350,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			else
 			{
 				xRight2 = px + pw - 66 - OffsetDallaDestraPx;
-				xLeft2  = Math.Max(px + 20, xRight2 - profW);
+				xLeft2  = xRight2 - profW;
 			}
 			float xLeft  = Math.Max(px + 10, xLeft2);
 			float xRight = Math.Min(px + pw - 66, xRight2);
