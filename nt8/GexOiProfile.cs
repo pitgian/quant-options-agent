@@ -77,6 +77,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private int fetching;                   // 0 = idle, 1 = in volo (Interlocked)
 		private DispatcherTimer timer;
+		private bool loggedGeom;
 
 		private sealed class ProfileBar { public double S; public double Net; }
 
@@ -262,6 +263,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			outBars = outBars.OrderBy(b => b.S).ToList();
 			bars = outBars.Count > 0 ? outBars : null;
 			fetchError = bars == null ? "profilo '" + profKey + "' assente o vuoto" : "";
+			Log(string.Format("GexOiProfile[{0}]: piano {1} · {2} strike · mp={3} · flip={4}",
+				key, planTime.ToString("HH:mm"), bars == null ? 0 : bars.Count, maxPain, flip), LogLevel.Information);
 		}
 
 		// ---------------------------------------------------------------- render
@@ -271,15 +274,21 @@ namespace NinjaTrader.NinjaScript.Indicators
 			base.OnRender(chartControl, chartScale);
 			if (ChartPanel == null || ChartBars == null) return;
 
-			float panelH      = ChartPanel.H;
-			float canvasLeft  = (float)(chartControl.CanvasLeft  > 0 ? chartControl.CanvasLeft  : 0);
-			float canvasRight = (float)(chartControl.CanvasRight > 0 ? chartControl.CanvasRight : ChartPanel.W);
-			float widthTot    = canvasRight - canvasLeft;
-			if (widthTot < 120) widthTot = Math.Min(600f, ChartPanel.W);
-
-			float profW  = (float)(widthTot * ProfileWidthPct / 100.0);
-			float xRight = canvasRight - 8;
-			float xLeft  = Math.Max(canvasLeft + 20, xRight - profW);
+			float panelH = ChartPanel.H;
+			// geometria PANNELLO-relativa (ChartPanel.X/W): CanvasLeft/Right del
+			// ChartControl in workspace multi-finestra può indicare un'area più
+			// larga del pannello → disegno fuori viewport (chart vuoto, 12/11).
+			float px = ChartPanel.X > 0 ? ChartPanel.X : 0;
+			float pw = ChartPanel.W > 100 ? ChartPanel.W : 1000f;
+			float profW  = (float)(pw * ProfileWidthPct / 100.0);
+			float xRight = px + pw - 66;   // 66 px: riserva per l'asse prezzi a destra
+			float xLeft  = Math.Max(px + 20, xRight - profW);
+			if (!loggedGeom)
+			{
+				loggedGeom = true;
+				Log(string.Format("GexOiProfile: OnRender px={0} pw={1} xRight={2} xLeft={3} panelH={4} bars={5}",
+					px, pw, xRight, xLeft, panelH, bars == null ? -1 : bars.Count), LogLevel.Information);
+			}
 
 			double spot = CurrentBar >= 0 ? Close[0] : 0;
 			if (spot <= 0) spot = planSpot;
@@ -368,9 +377,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (yL < 16 || yL > panelH - 16) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 					{
-						DrawDashed(RenderTarget, bL, canvasLeft + 10, xLeft - 6, yL, 9, 5);
+						DrawDashed(RenderTarget, bL, px + 10, xLeft - 6, yL, 9, 5);
 						RenderTarget.DrawLine(new SharpDX.Vector2(xLeft - 6, yL), new SharpDX.Vector2(xRight, yL), bL, 1f);
-						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, canvasLeft + 12, yL - 14);
+						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, px + 12, yL - 14);
 					}
 				}
 
