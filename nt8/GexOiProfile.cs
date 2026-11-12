@@ -121,7 +121,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				BarsRequiredToPlot             = 0;
 
 				Lato                           = GexOiLato.Destra;
-				PixelBinSize                   = 8;
+				PixelBinSize                   = 6;
 				OptFutures                     = GexOiFutures.Auto;
 				OptSource                      = GexOiSource.Indice;
 				OptBucket                      = GexOiBucket.Tutte;
@@ -129,7 +129,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				WindowPct                      = 5;
 				RefreshMinutes                 = 5;
 				StaleMinutes                   = 15;
-				ProfileWidthPct                = 12;
+				ProfileWidthPct                = 10;
 				OffsetDallaDestraPx            = 0;
 				ShowFlip0Dte                   = false;
 
@@ -449,8 +449,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				{
 					if (bins[i] == 0 || double.IsNaN(binS[i])) continue;
 					float y  = yTop + i * PixelBinSize;
-					float bh = PixelBinSize - 2f;                     // barra piu piccola del bin: gap visivo
-					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.92f);
+					float bh = 3f;                                    // SOFFITTO DURO: barra sottile sempre
+					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.50f);  // max META' colonna
 					var c4 = bins[i] >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y, xRight, y + bh), bb);
@@ -462,7 +462,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				foreach (int i in topIdx)
 				{
 					float y = yTop + i * PixelBinSize;
-					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.92f);
+					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.50f);
 					DrawTextRight(RenderTarget, tf, brush, binS[i].ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 1);
 				}
 
