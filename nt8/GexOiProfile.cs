@@ -121,7 +121,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				BarsRequiredToPlot             = 0;
 
 				Lato                           = GexOiLato.Destra;
-				PixelBinSize                   = 6;
+				PixelBinSize                   = 10;
 				OptFutures                     = GexOiFutures.Auto;
 				OptSource                      = GexOiSource.Indice;
 				OptBucket                      = GexOiBucket.Tutte;
@@ -415,10 +415,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				float ySpot = (float)chartScale.GetYByValue(spot);
 
-				// fondale scuro dietro la colonna profilo (sotto la fascia header)
-				using (var bBg = new SolidColorBrush(RenderTarget, new Color4(0.05f, 0.08f, 0.12f, 0.60f)))
-					RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, 22, xRight - xLeft, panelH - 26), bBg);
-
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
@@ -456,9 +452,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				{
 					if (bins[i] == 0 || double.IsNaN(binS[i])) continue;
 					float y  = yTop + i * PixelBinSize;
-					float bh = 3f;                                    // SOFFITTO DURO: barra sottile sempre
-					float rel = (float)Math.Pow(Math.Min(1.0, Math.Abs(bins[i]) / maxBin), 0.40);
-					float len = Math.Max(2f, rel * colW * 0.92f);
+					float bh = 4f;
+					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.85f);
 					var c4 = bins[i] >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y, xRight, y + bh), bb);
@@ -470,8 +465,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				foreach (int i in topIdx)
 				{
 					float y = yTop + i * PixelBinSize;
-					float rel = (float)Math.Pow(Math.Min(1.0, Math.Abs(bins[i]) / maxBin), 0.40);
-					float len = Math.Max(2f, rel * colW * 0.92f);
+					float len = Math.Max(2f, (float)(Math.Abs(bins[i]) / maxBin) * colW * 0.85f);
 					DrawTextRight(RenderTarget, tf, brush, binS[i].ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 1);
 				}
 
