@@ -379,28 +379,42 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				// ---- finestra ±WindowPct% attorno allo spot live
 				var inWin = bars.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct).ToList();
-				float maxAbs = 0.01f;
-				foreach (var b in inWin) maxAbs = Math.Max(maxAbs, (float)Math.Abs(b.Net));
 
-				float ySpot = (float)chartScale.GetYByValue(spot);
-
-				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
-					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 4), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
-
-				// ---- barre: ogni strike alla SUA quota di prezzo
-				var top3 = inWin.OrderByDescending(b => Math.Abs(b.Net)).Take(3)
-					.Select(b => b.S).ToHashSet();
-				float prevY = float.NaN;
+				// ---- SOLO gli strike nel range prezzi VISIBILE a schermo: zoom in
+				//      = pochi strike grandi e leggibili, zoom out = profilo
+				//      completo. Senza questo: centinaia di rettangoli impilati
+				//      fuori scala (feedback 12/11 "miscuglio di rettangoli").
+				var vis = new List<ProfileBar>();
 				foreach (var b in inWin)
 				{
 					float y = (float)chartScale.GetYByValue(b.S);
-					if (y < 16 || y > panelH - 16) { prevY = y; continue; }
-					float barH = float.IsNaN(prevY) ? 3f : Math.Max(1.5f, Math.Min(22f, Math.Abs(prevY - y) * 0.8f));
+					if (y >= 16 && y <= panelH - 16) vis.Add(b);
+				}
+				float maxAbs = 0.01f;
+				foreach (var b in vis) maxAbs = Math.Max(maxAbs, (float)Math.Abs(b.Net));
+
+				float ySpot = (float)chartScale.GetYByValue(spot);
+
+				// fondale scuro dietro la colonna profilo (sotto la fascia header)
+				using (var bBg = new SolidColorBrush(RenderTarget, new Color4(0.05f, 0.08f, 0.12f, 0.60f)))
+					RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, 22, xRight - xLeft, panelH - 26), bBg);
+
+				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
+					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
+
+				// ---- barre: spacing REALE fra strike visibili (zero sovrapposizioni)
+				var top3 = vis.OrderByDescending(b => Math.Abs(b.Net)).Take(3)
+					.Select(b => b.S).ToHashSet();
+				float prevY = float.NaN;
+				foreach (var b in vis)
+				{
+					float y = (float)chartScale.GetYByValue(b.S);
+					float barH = float.IsNaN(prevY) ? 3f : Math.Max(1.5f, Math.Min(16f, Math.Abs(prevY - y) * 0.85f));
 					float len  = Math.Max(2f, (float)(Math.Abs(b.Net) / maxAbs) * (xRight - xLeft));
-					var c4 = b.Net >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.85f) : new Color4(0.97f, 0.44f, 0.44f, 0.85f);
+					var c4 = b.Net >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - barH / 2f, xRight, y + barH / 2f), bb);
-					if (top3.Contains(b.S))
+					if (top3.Contains(b.S) && barH >= 2.5f)
 						DrawTextRight(RenderTarget, tf, brush, b.S.ToString("0"), Math.Max(xLeft, xRight - len - 34), y - 7);
 					prevY = y;
 				}
