@@ -51,6 +51,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public enum GexOiFutures { Auto, ES, NQ }
 	public enum GexOiSource  { Indice, ETF }
 	public enum GexOiBucket  { Tutte, Settimana, ZeroDTE }
+	public enum GexOiLato    { Sinistra, Destra }
 	public enum GexOiMetric  { GEX, OI }
 
 	public class GexOiProfile : Indicator
@@ -119,6 +120,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				IsSuspendedWhileInactive       = false;
 				BarsRequiredToPlot             = 0;
 
+				Lato                           = GexOiLato.Sinistra;
 				OptFutures                     = GexOiFutures.Auto;
 				OptSource                      = GexOiSource.Indice;
 				OptBucket                      = GexOiBucket.Tutte;
@@ -334,11 +336,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 			float px = ChartPanel.X > 0 ? ChartPanel.X : 0;
 			float pw = ChartPanel.W > 100 ? ChartPanel.W : 1000f;
 			float profW  = (float)(pw * ProfileWidthPct / 100.0);
-			// OffsetDallaDestraPx: la suite OrderFlow (Volume Profile Price View)
-			// disegna il SUO profilo nell'angolo destro del grafico - senza offset
-			// i due profili si sovrappongono ("miscuglio", 12/11). Default 190 px.
-			float xRight = px + pw - 66 - OffsetDallaDestraPx;
-			float xLeft  = Math.Max(px + 20, xRight - profW);
+			// Lato Sinistra (default): ancorato al bordo sinistro del pannello -
+			// l'angolo destro e occupato dal profilo Price View della suite
+			// OrderFlow (rettangoli grandi sovrapposti ai nostri, 12/11).
+			// Lato Destra + OffsetDallaDestraPx se disattivi OrderFlow.
+			float xLeft2, xRight2;
+			if (Lato == GexOiLato.Sinistra)
+			{
+				xLeft2  = px + 14 + OffsetDallaDestraPx;
+				xRight2 = xLeft2 + profW;
+			}
+			else
+			{
+				xRight2 = px + pw - 66 - OffsetDallaDestraPx;
+				xLeft2  = Math.Max(px + 20, xRight2 - profW);
+			}
+			float xLeft  = Math.Max(px + 10, xLeft2);
+			float xRight = Math.Min(px + pw - 66, xRight2);
 			if (!loggedGeom)
 			{
 				loggedGeom = true;
@@ -413,8 +427,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				foreach (var b in vis)
 				{
 					float y = (float)chartScale.GetYByValue(b.S);
-					float barH = float.IsNaN(prevY) ? 3f : Math.Max(1.5f, Math.Min(16f, Math.Abs(prevY - y) * 0.85f));
-					float len  = Math.Max(2f, (float)(Math.Abs(b.Net) / maxAbs) * (xRight - xLeft));
+					float colW = xRight - xLeft;
+					float barH = float.IsNaN(prevY) ? 3f : Math.Max(1.5f, Math.Min(12f, Math.Abs(prevY - y) * 0.85f));
+					float len  = Math.Max(2f, (float)(Math.Abs(b.Net) / maxAbs) * colW * 0.75f);
 					var c4 = b.Net >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - barH / 2f, xRight, y + barH / 2f), bb);
@@ -487,7 +502,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 		// -------------------------------------------------------------- proprietà
 
 		[NinjaScriptProperty]
-		[Display(Name = "Futures (Auto = dal grafico)", Order = 1, GroupName = "1. Dati")]
+		[Display(Name = "Lato pannello", Order = 1, GroupName = "1. Dati")]
+		public GexOiLato Lato { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Futures (Auto = dal grafico)", Order = 2, GroupName = "1. Dati")]
 		public GexOiFutures OptFutures { get; set; }
 
 		[NinjaScriptProperty]
