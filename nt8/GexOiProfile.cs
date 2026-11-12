@@ -126,7 +126,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				WindowPct                      = 5;
 				RefreshMinutes                 = 5;
 				StaleMinutes                   = 15;
-				ProfileWidthPct                = 22;
+				ProfileWidthPct                = 18;
+				OffsetDallaDestraPx            = 190;
 				ShowFlip0Dte                   = false;
 
 				AddPlot(System.Windows.Media.Brushes.Transparent, "Void");   // plot fittizio: il disegno è tutto in OnRender
@@ -333,7 +334,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 			float px = ChartPanel.X > 0 ? ChartPanel.X : 0;
 			float pw = ChartPanel.W > 100 ? ChartPanel.W : 1000f;
 			float profW  = (float)(pw * ProfileWidthPct / 100.0);
-			float xRight = px + pw - 66;   // 66 px: riserva per l'asse prezzi a destra
+			// OffsetDallaDestraPx: la suite OrderFlow (Volume Profile Price View)
+			// disegna il SUO profilo nell'angolo destro del grafico - senza offset
+			// i due profili si sovrappongono ("miscuglio", 12/11). Default 190 px.
+			float xRight = px + pw - 66 - OffsetDallaDestraPx;
 			float xLeft  = Math.Max(px + 20, xRight - profW);
 			if (!loggedGeom)
 			{
@@ -519,7 +523,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public double ProfileWidthPct { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Mostra anche flip 0DTE", Order = 9, GroupName = "2. Aggiornamento")]
+		[Range(0, 600)]
+		[Display(Name = "Offset da destra (px)", Order = 9, GroupName = "2. Aggiornamento")]
+		public int OffsetDallaDestraPx { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Mostra anche flip 0DTE", Order = 10, GroupName = "2. Aggiornamento")]
 		public bool ShowFlip0Dte { get; set; }
 	}
 }
