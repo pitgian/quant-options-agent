@@ -685,36 +685,137 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
-				// ---- BANDE ZONA DI CONFLUENZA (Entrambi): rettangolo ambra
-				//      semi-trasparente che copre l'estensione verticale della zona,
-				//      disegnato PRIMA delle barre (che restano leggibili sopra).
-				//      E' il dato utile della modalità Entrambi: sommare i valori dava
-				//      un profilo sfocato, perché i muri dei due libri quasi mai
-				//      cadono sullo stesso strike (0 su 8 misurati su NQ).
-				bool zonesOn = OptSource == GexOiSource.Entrambi && zones != null && zones.Count > 0;
-				if (zonesOn)
+				// ---- GEOMETRIA COLONNA (spec Claude Opus 5): la zona NON occupa
+				//      tutta la colonna. Rail 10px a sinistra + canale tacche muri
+				//      ai due lati del rail + canale etichette a destra con buffer
+				//      OPACO: l'etichetta non puo' mai collidere con le tacche ne'
+				//      con le linee MP/Flip (collisione strutturalmente impossibile).
+				float Wcol = xRight - xLeft;
+				bool  wide = Wcol >= 120f;
+				float railOff = wide ? 8f  : 4f;
+				float railW   = wide ? 10f : 8f;
+				float labOff  = wide ? 38f : 26f;
+				float x_r0 = xLeft + railOff, x_r1 = x_r0 + railW, x_t0 = xLeft + labOff;
+
+				bool inBoth = OptSource == GexOiSource.Entrambi;
+				if (inBoth)
 				{
-					foreach (var z in zones)
+					// selezione: top 6 per peso + GARANTITE la piu' vicina sopra e
+					// la piu' vicina sotto lo spot (sostituiscono la 6a e la 5a)
+					var sel = new List<GexZone>();
+					double maxW = 0.01;
+					if (zones != null && zones.Count > 0)
 					{
-						// estensione da DISEGNARE: almeno ±tolleranza/2 e comunque almeno
-						// una barra piena (griglia 25pt) attorno al centro, altrimenti le
-						// zone con i due muri sullo STESSO strike (tipico su ES: 7550 vs
-						// 7550) si vedono come una barra sporcata, non come banda.
-						double zc = (z.Lo + z.Hi) / 2.0;
-						double ztol = tolPts > 0 ? tolPts : (spot > 0 ? spot : planSpot) * ZoneTolPct / 100.0;
-						double zhalf = Math.Max((z.Hi - z.Lo) / 2.0, Math.Max(ztol, 26.0) / 2.0);
-						float yHi = (float)chartScale.GetYByValue(zc + zhalf);   // prezzo piu alto = y minore
-						float yLo = (float)chartScale.GetYByValue(zc - zhalf);
-						float top = Math.Min(yHi, yLo), bot = Math.Max(yHi, yLo);
-						if (bot < 0 || top > panelH) continue;
-						if (bot - top < 2f) { float c0 = (top + bot) / 2f; top = c0 - 1f; bot = c0 + 1f; }
-						var cZone = z.NetEtf < 0 && z.NetIdx < 0
-							? new Color4(0.97f, 0.44f, 0.44f, 0.16f)    // entrambi put: zona di trigger
-							: z.NetEtf > 0 && z.NetIdx > 0
-							? new Color4(0.20f, 0.83f, 0.60f, 0.16f)    // entrambi call: zona di pin
-							: new Color4(0.98f, 0.75f, 0.25f, 0.16f);   // segni discordi: ambra
-						using (var bz = new SolidColorBrush(RenderTarget, cZone))
-							RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, top, xRight - xLeft, bot - top), bz);
+						foreach (var zz in zones) maxW = Math.Max(maxW, Math.Abs(zz.NetEtf) + Math.Abs(zz.NetIdx));
+						sel = zones.OrderByDescending(zz => Math.Abs(zz.NetEtf) + Math.Abs(zz.NetIdx)).Take(6).ToList();
+						var byPrice = zones.OrderBy(zz => zz.Center).ToList();
+						var nAbove = byPrice.LastOrDefault(zz => zz.Center < spot);
+						var nBelow = byPrice.FirstOrDefault(zz => zz.Center >= spot);
+						if (nAbove != null && !sel.Contains(nAbove)) { if (sel.Count >= 6) sel[5] = nAbove; else sel.Add(nAbove); }
+						if (nBelow != null && !sel.Contains(nBelow)) { if (sel.Count >= 6) sel[4] = nBelow; else sel.Add(nBelow); }
+					}
+
+					if (sel.Count == 0)
+					{
+						// 0 zone: track punteggiato + diamante vuoto allo spot, NESSUN testo
+						using (var bTr = new SolidColorBrush(RenderTarget, new Color4(0.165f, 0.192f, 0.231f, 1f)))
+							DrawDashedV(RenderTarget, bTr, x_r0 + railW / 2f, 24f, panelH - 8f, 3f, 3f);
+						float ys = (float)chartScale.GetYByValue(spot);
+						float dcx = x_r0 + railW / 2f;
+						using (var bD = new SolidColorBrush(RenderTarget, new Color4(0.165f, 0.192f, 0.231f, 1f)))
+							RenderTarget.DrawRectangle(new SharpDX.RectangleF(dcx - 3f, ys - 3f, 6f, 6f), bD, 1f);
+					}
+					else
+					{
+						var toLabel = new List<object[]>();
+						foreach (var z in sel)
+						{
+							double comb = Math.Abs(z.NetEtf) + Math.Abs(z.NetIdx);
+							double wrel = comb / maxW;
+							float  alpha = wrel >= 0.66 ? 0.18f : wrel >= 0.33 ? 0.11f : 0.06f;
+							float  tickLen = wrel >= 0.66 ? 12f : wrel >= 0.33 ? 9f : 6f;
+							int    pips = wrel >= 0.66 ? 3 : wrel >= 0.33 ? 2 : 1;
+							bool putBoth  = z.NetEtf < 0 && z.NetIdx < 0;
+							bool callBoth = z.NetEtf > 0 && z.NetIdx > 0;
+
+							Color4 cFill, cTickE, cTickI;
+							if (callBoth)      { cFill = new Color4(0.059f, 0.820f, 0.757f, alpha); cTickE = new Color4(0.059f, 0.820f, 0.757f, 1f); cTickI = new Color4(0.498f, 0.906f, 0.875f, 1f); }
+							else if (putBoth)  { cFill = new Color4(0.298f, 0.525f, 1.000f, alpha); cTickE = new Color4(0.298f, 0.525f, 1.000f, 1f); cTickI = new Color4(0.639f, 0.753f, 1.000f, 1f); }
+							else               { cFill = new Color4(1.000f, 0.310f, 0.639f, alpha); cTickE = new Color4(1.000f, 0.310f, 0.639f, 1f); cTickI = new Color4(1.000f, 0.655f, 0.812f, 1f); }
+
+							float yHi = (float)chartScale.GetYByValue(z.Hi);
+							float yLo = (float)chartScale.GetYByValue(z.Lo);
+							float top = Math.Min(yHi, yLo), bot = Math.Max(yHi, yLo);
+							if (bot < 0 || top > panelH) continue;
+							if (bot - top < 6f) { float c0 = (top + bot) / 2f; top = c0 - 3f; bot = c0 + 3f; }
+							top = (float)Math.Round(top); bot = (float)Math.Round(bot);
+
+							// rail: fill + bordi verticali sx/dx (nessun bordo top/bottom)
+							using (var bz = new SolidColorBrush(RenderTarget, cFill))
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(x_r0, top, railW, bot - top), bz);
+							float bA = wrel >= 0.66 ? 1.5f : 1f;
+							using (var bb = new SolidColorBrush(RenderTarget, new Color4(cTickE.R, cTickE.G, cTickE.B, 0.95f)))
+							{
+								RenderTarget.DrawLine(new SharpDX.Vector2(x_r0, top), new SharpDX.Vector2(x_r0, bot), bb, bA);
+								RenderTarget.DrawLine(new SharpDX.Vector2(x_r1, top), new SharpDX.Vector2(x_r1, bot), bb, bA);
+							}
+
+							// muri: ETF a SINISTRA (tacca + quadrato PIENO), INDICE a DESTRA
+							// (tacca + quadrato VUOTO): lato + forma ridondanti, leggibili
+							// anche se i due muri coincidono in y.
+							float yE = (float)Math.Round((float)chartScale.GetYByValue(z.EtfS));
+							float yI = (float)Math.Round((float)chartScale.GetYByValue(z.IdxS));
+							if (yE >= 4 && yE <= panelH - 4)
+								using (var bT = new SolidColorBrush(RenderTarget, cTickE))
+								{
+									RenderTarget.DrawLine(new SharpDX.Vector2(x_r0 - 1 - tickLen, yE), new SharpDX.Vector2(x_r0 - 1, yE), bT, 2f);
+									RenderTarget.FillRectangle(new SharpDX.RectangleF(x_r0 - 17, yE - 2, 4, 4), bT);
+								}
+							if (yI >= 4 && yI <= panelH - 4)
+								using (var bT = new SolidColorBrush(RenderTarget, cTickI))
+								{
+									RenderTarget.DrawLine(new SharpDX.Vector2(x_r1 + 1, yI), new SharpDX.Vector2(x_r1 + 1 + tickLen, yI), bT, 2f);
+									RenderTarget.DrawRectangle(new SharpDX.RectangleF(x_r1 + 13, yI - 2, 4, 4), bT, 1f);
+								}
+							if (Math.Abs(yE - yI) <= 10f)
+								using (var bh = new SolidColorBrush(RenderTarget, new Color4(cTickE.R, cTickE.G, cTickE.B, 0.9f)))
+									RenderTarget.DrawLine(new SharpDX.Vector2(x_r0 + railW / 2f, Math.Min(yE, yI)), new SharpDX.Vector2(x_r0 + railW / 2f, Math.Max(yE, yI)), bh, 1f);
+
+							// etichetta: buffer opaco nel canale dedicato
+							double domS = Math.Abs(z.NetEtf) >= Math.Abs(z.NetIdx) ? z.EtfS : z.IdxS;
+							float yC = (float)chartScale.GetYByValue(z.Center);
+							if (yC >= 8 && yC <= panelH - 8)
+								toLabel.Add(new object[] { domS.ToString("0"), yC, yC, pips, cTickE });
+						}
+
+						// anti-collisione: pitch minimo 14px tra i centri dei buffer
+						var ord = toLabel.OrderBy(t => (float)t[1]).ToList();
+						for (int i = 1; i < ord.Count; i++)
+						{
+							float yPrev = (float)ord[i - 1][1], yCur = (float)ord[i][1];
+							if (yCur - yPrev < 14f) ord[i][1] = yPrev + 14f;
+						}
+						foreach (var t in ord)
+						{
+							string txt = (string)t[0];
+							float yL = (float)t[1], yReal = (float)t[2];
+							int pips = (int)t[3];
+							var cV = (Color4)t[4];
+							if (yL < 8f || yL > panelH - 8f) continue;
+							int digits = txt.Length;
+							float bufW = Math.Min(62f, 8f + digits * 6f + 4f + 5f * pips);
+							using (var bg = new SolidColorBrush(RenderTarget, new Color4(0.039f, 0.051f, 0.071f, 1f)))
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(x_t0, yL - 6.5f, bufW, 13f), bg);
+							using (var bb2 = new SolidColorBrush(RenderTarget, new Color4(cV.R, cV.G, cV.B, 1f)))
+							{
+								RenderTarget.DrawRectangle(new SharpDX.RectangleF(x_t0, yL - 6.5f, bufW, 13f), bb2, 1f);
+								DrawTextLeft(RenderTarget, tf, bb2, txt, x_t0 + 4, yL - 7.5f);
+								for (int p = 0; p < pips; p++)
+									RenderTarget.FillRectangle(new SharpDX.RectangleF(x_t0 + 8f + digits * 6f + 4f + p * 5f, yL - 1.5f, 3f, 3f), bb2);
+								if (Math.Abs(yL - yReal) > 4f)
+									DrawDashed(RenderTarget, bb2, x_r0 + 5f, x_t0 - 2f, yReal, 2f, 2f);
+							}
+						}
 					}
 				}
 
@@ -735,58 +836,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      rappresenta nessuno dei due libri) e doppia serie (rumore).
 				//      Il dato utile è UNO: dove i due libri confermano lo stesso
 				//      livello.
-				bool twoBars = OptSource == GexOiSource.Entrambi;
-				if (twoBars)
-				{
-					if (zones == null || zones.Count == 0)
-					{
-						using (var bNa = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
-							DrawTextRight(RenderTarget, tf, bNa, "Entrambi: nessuna zona di confluenza", xRight, 26);
-					}
-					else
-					{
-						// intensità = peso combinato normalizzato sul massimo fra le zone
-						double maxW = 0.01;
-						foreach (var zz in zones) maxW = Math.Max(maxW, Math.Abs(zz.NetEtf) + Math.Abs(zz.NetIdx));
-						int lbl = 0;
-						foreach (var z in zones)
-						{
-							float yE = (float)chartScale.GetYByValue(z.EtfS);
-							float yI = (float)chartScale.GetYByValue(z.IdxS);
-							if (yE >= 4 && yE <= panelH - 4)
-							{
-								using (var bT = new SolidColorBrush(RenderTarget, new Color4(0.20f, 0.83f, 0.60f, 1f)))
-									RenderTarget.DrawLine(new SharpDX.Vector2(xRight - 16, yE), new SharpDX.Vector2(xRight, yE), bT, 2f);
-							}
-							if (yI >= 4 && yI <= panelH - 4)
-							{
-								using (var bT = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.95f, 0.78f, 1f)))
-									RenderTarget.DrawLine(new SharpDX.Vector2(xRight - 10, yI), new SharpDX.Vector2(xRight, yI), bT, 2f);
-							}
-							if (lbl < 6)
-							{
-								float yc = (float)chartScale.GetYByValue(z.Center);
-								if (yc < 12 || yc > panelH - 8) continue;
-								lbl++;
-								bool putBoth  = z.NetEtf < 0 && z.NetIdx < 0;
-								bool callBoth = z.NetEtf > 0 && z.NetIdx > 0;
-								char tipo = callBoth ? 'C' : putBoth ? 'P' : 'D';
-								double wrel = (Math.Abs(z.NetEtf) + Math.Abs(z.NetIdx)) / maxW;
-								string intens = wrel >= 0.66 ? "HI" : wrel >= 0.33 ? "ME" : "LO";
-								var cT = putBoth ? new Color4(1.00f, 0.60f, 0.60f, 1f)
-									: callBoth ? new Color4(0.45f, 0.95f, 0.75f, 1f)
-									: new Color4(0.98f, 0.85f, 0.45f, 1f);
-								using (var bt = new SolidColorBrush(RenderTarget, cT))
-								{
-									DrawTextLeft(RenderTarget, tf, bt,
-										"\u25C6 " + z.Center.ToString("0") + " " + tipo + " " + intens, xLeft, yc - 7);
-									DrawTextLeft(RenderTarget, tf, bt,
-										"E" + E(z.NetEtf) + " I" + E(z.NetIdx), xLeft, yc + 7);
-								}
-							}
-						}
-					}
-				}
 				else
 				{
 				int   nW   = inWin.Count;
@@ -813,7 +862,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				// etichette: i 3 strike piu grossi per |net| nella finestra
 				// (in modalità Entrambi le etichette sono già state messe nel ramo
 				// a due barre, dove si usano i pesi delle due fonti)
-				if (!twoBars)
+				if (!inBoth)
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
 						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
@@ -877,20 +926,70 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (yL < 16 || yL > panelH - 16) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 					{
-						DrawDashed(RenderTarget, bL, xLast, xRight, yL, 9, 5);
-						// etichetta ancorata all'INIZIO della linea (subito a destra
-						// della candela), non più al bordo sinistro del pannello.
-						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xLast + 4, yL - 13);
+						if (inBoth)
+						{
+							// interruzione unica: copre rail + tacche + buffer testo
+							float xBreak0 = x_r0 - 17f, xBreak1 = Math.Min(x_t0 + 68f, xRight - 11f);
+							if (xBreak0 > xLast) DrawDashPattern(RenderTarget, bL, xLast, xBreak0, yL, ln.Item4, ln.Item5);
+							if (xBreak1 < xRight - 11f) DrawDashPattern(RenderTarget, bL, xBreak1, xRight - 11f, yL, ln.Item4, ln.Item5);
+							TriLeft(RenderTarget, bL, xRight - 9f, yL);
+						}
+						else
+						{
+							DrawDashPattern(RenderTarget, bL, xLast, xRight, yL, ln.Item4, ln.Item5);
+							DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xLast + 4, yL - 13);
+						}
 					}
 				}
 
 				// legenda
 				string leg = "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)" + (regimeTxt.Length > 0 ? " · regime " + regimeTxt : "");
-				if (twoBars)
-					leg = "Entrambi: sole zone di confluenza \u25C6 (tacca verde = muro ETF, tacca chiara = muro indice) · tol " + (tolPts > 0 ? tolPts.ToString("0") + " pt" : ZoneTolPct.ToString("0.0#") + "%");
-				else if (OptSource == GexOiSource.Entrambi)
-					leg = "nessuna zona confluenza (muri ETF/indice mai entro " + (tolPts > 0 ? tolPts.ToString("0") + " pt" : ZoneTolPct.ToString("0.0#") + "%") + ") · " + leg;
+				if (inBoth)
+					leg = "Entrambi: rail = zona confluenza · tacca sinistra + quadrato pieno = muro ETF · tacca destra + quadrato vuoto = muro indice · pallini = peso";
+				else if (inBoth)
+					leg = "Entrambi: nessuna zona di confluenza con la risoluzione attuale";
 				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);
+			}
+		}
+
+		// tratteggio verticale (track "0 zone")
+		private static void DrawDashedV(RenderTarget rt, SolidColorBrush b, float x, float y1, float y2, float dash, float gap)
+		{
+			float y = y1;
+			while (y < y2)
+			{
+				float yEnd = Math.Min(y + dash, y2);
+				rt.DrawLine(new SharpDX.Vector2(x, y), new SharpDX.Vector2(x, yEnd), b, 1f);
+				y = yEnd + gap;
+			}
+		}
+
+		// tratteggio orizzontale con pattern dash/gap generico
+		private static void DrawDashPattern(RenderTarget rt, SolidColorBrush b, float x1, float x2, float y, float dash, float gap)
+		{
+			float x = x1;
+			while (x < x2)
+			{
+				float xEnd = Math.Min(x + dash, x2);
+				rt.DrawLine(new SharpDX.Vector2(x, y), new SharpDX.Vector2(xEnd, y), b, 1.2f);
+				x = xEnd + gap;
+			}
+		}
+
+		// triangolo pieno a punta sinistra (marker MP/Flip sul bordo destro)
+		private static void TriLeft(RenderTarget rt, SolidColorBrush b, float xTip, float y)
+		{
+			using (var geo = new SharpDX.Direct2D1.PathGeometry(rt.Factory))
+			{
+				using (var sink = geo.Open())
+				{
+					sink.BeginFigure(new SharpDX.Vector2(xTip + 7f, y - 3.5f), SharpDX.Direct2D1.FigureBegin.Filled);
+					sink.AddLine(new SharpDX.Vector2(xTip + 7f, y + 3.5f));
+					sink.AddLine(new SharpDX.Vector2(xTip, y));
+					sink.EndFigure(SharpDX.Direct2D1.FigureEnd.Closed);
+					sink.Close();
+				}
+				rt.FillGeometry(geo, b);
 			}
 		}
 

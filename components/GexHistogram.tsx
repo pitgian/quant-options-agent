@@ -303,7 +303,7 @@ export const GexHistogram: React.FC<{
         </p>
       ) : geom ? (
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Istogramma per strike">
-          {ticksY.map((v, i) => {
+          {!bothMode && ticksY.map((v, i) => {
             const y = geom.yZero - (v / geom.yMax) * geom.half;
             return (
               <g key={i}>
@@ -312,65 +312,115 @@ export const GexHistogram: React.FC<{
               </g>
             );
           })}
-          <line x1={M.left} x2={W - M.right} y1={geom.yZero} y2={geom.yZero} stroke="#475569" strokeWidth={0.8} />
-          <text x={M.left - 6} y={geom.yZero + 3} textAnchor="end" fontSize={9} fill="#94a3b8">0</text>
-
-          {/* ZONE DI CONFLUENZA (vista Entrambi): banda verticale sulla zona,
-              colore = verso concordato dei due libri. Disegnate PRIMA delle
-              barre così restano leggibili sopra. */}
-          {zones.map((z, i) => {
-            const x1 = geom.x(z.loR), x2 = geom.x(z.hiR);
-            const col = z.a < 0 && z.b < 0 ? '#f87171' : z.a > 0 && z.b > 0 ? '#34d399' : '#fbbf24';
-            const lbl = z.a < 0 && z.b < 0 ? 'put condiviso' : z.a > 0 && z.b > 0 ? 'call condiviso' : 'segni discordi';
-            return (
-              <g key={`zona-${i}`}>
-                <rect x={Math.min(x1, x2)} y={M.top} width={Math.max(3, Math.abs(x2 - x1))} height={PLOT_H}
-                      fill={col} opacity={0.18}>
-                  <title>{`Zona confluenza ${z.lo.toFixed(0)}–${z.hi.toFixed(0)} (${lbl}) — muro ETF ${z.a.toFixed(1)} · muro indice ${z.b.toFixed(1)}`}</title>
-                </rect>
-                <text x={(x1 + x2) / 2} y={M.top + 9} textAnchor="middle" fontSize={10} fontWeight="bold" fill={col}>
-                  ◆
-                </text>
-              </g>
-            );
-          })}
+          {!bothMode && (
+            <>
+              <line x1={M.left} x2={W - M.right} y1={geom.yZero} y2={geom.yZero} stroke="#475569" strokeWidth={0.8} />
+              <text x={M.left - 6} y={geom.yZero + 3} textAnchor="end" fontSize={9} fill="#94a3b8">0</text>
+            </>
+          )}
 
           {bothMode ? (
-            /* VISTA ENTRAMBI: NESSUNA BARRA. Solo le zone di confluenza (bande
-               disegnate sopra) con due tacche verticali che indicano dove cade
-               esattamente il muro di ciascun libro dentro la zona.
-               Un istogramma qui costringeva a scegliere fra somma (profilo che
-               non rappresenta nessuno dei due libri) e doppia serie (rumore). */
-            <g>
-              {zones.map((z, i) => {
-                const col = z.a < 0 && z.b < 0 ? '#f87171' : z.a > 0 && z.b > 0 ? '#34d399' : '#fbbf24';
-                const tipo = z.a > 0 && z.b > 0 ? 'C' : z.a < 0 && z.b < 0 ? 'P' : 'D';
-                const comb = Math.abs(z.a) + Math.abs(z.b);
-                const maxComb = Math.max(...zones.map(q => Math.abs(q.a) + Math.abs(q.b)), 0.01);
-                const head = comb / maxComb >= 0.66 ? 'HI' : comb / maxComb >= 0.33 ? 'ME' : 'LO';
-                const fmtV = (v: number) => (metric === 'oi' ? Math.round(v).toLocaleString('it-IT') : v.toFixed(1));
+            /* SPEC Claude Opus 5 — vista ENTRAMBI, solo zone di confluenza.
+               Corsie: y 0..16 = etichette (buffer opaco), y 24..284 = rail zone,
+               y 286..300 = asse prezzo. I muri vivono ai BORDI opposti del rail
+               (ETF in basso con quadrato pieno, indice in alto con quadrato
+               vuoto): anche se coincidono in X restano leggibili. */
+            (() => {
+              const Y0 = 24, Y1 = 284, YLAB = 15, YAX = 290;
+              const byWeight = [...zones].sort((p, q) => (Math.abs(q.a) + Math.abs(q.b)) - (Math.abs(p.a) + Math.abs(p.b)));
+              const sel = byWeight.slice(0, 6);
+              const above = zones.filter(z => z.loR < spot).sort((p, q) => q.loR - p.loR)[0];
+              const below = zones.filter(z => z.loR >= spot).sort((p, q) => p.loR - q.loR)[0];
+              if (above && !sel.includes(above)) { if (sel.length >= 6) sel[5] = above; else sel.push(above); }
+              if (below && !sel.includes(below)) { if (sel.length >= 6) sel[4] = below; else sel.push(below); }
+              const maxComb = Math.max(...zones.map(z => Math.abs(z.a) + Math.abs(z.b)), 0.01);
+              const COL = (z) => z.a > 0 && z.b > 0 ? { r: '#0FD1C1', i: '#7FE7DF' }
+                : z.a < 0 && z.b < 0 ? { r: '#4C86FF', i: '#A3C0FF' } : { r: '#FF4FA3', i: '#FFA7CF' };
+              const LVL = (z) => (Math.abs(z.a) + Math.abs(z.b)) / maxComb >= 0.66 ? 'HI' : (Math.abs(z.a) + Math.abs(z.b)) / maxComb >= 0.33 ? 'ME' : 'LO';
+              const ALPHA = { HI: 0.18, ME: 0.11, LO: 0.06 }, LEN = { HI: 16, ME: 12, LO: 8 }, PIPS = { HI: 3, ME: 2, LO: 1 };
+
+              // etichette: buffer opaco centrato sulla zona, clamp e anti-collisione
+              const labs = sel.map(z => {
+                const txt = z.loR.toFixed(0);
+                const w = Math.min(74, 8 + txt.length * 6.5 + 4 + 5 * PIPS[LVL(z)]);
+                const cx = (geom.x(z.loR) + geom.x(z.hiR)) / 2;
+                return { z, txt, w, cx0: cx, cx };
+              }).sort((p, q) => p.cx - q.cx);
+              for (let i = 1; i < labs.length; i++) {
+                const gap = labs[i].cx0 - labs[i - 1].cx0;
+                const need = (labs[i - 1].w + labs[i].w) / 2 + 6;
+                if (gap < need) labs[i].cx = labs[i - 1].cx + need;
+              }
+              for (const l of labs) {
+                const lo = 48 + l.w / 2, hi = 880 - l.w / 2;
+                l.cx = Math.min(hi, Math.max(lo, l.cx));
+              }
+
+              if (!sel.length) {
+                // 0 zone: track punteggiato + diamante vuoto allo spot, nessun testo
+                const xc = geom.x(spot);
                 return (
-                  <g key={`zline-${i}`}>
-                    <line x1={geom.x(z.aS)} x2={geom.x(z.aS)} y1={M.top} y2={M.top + PLOT_H}
-                          stroke={col} strokeWidth={2.5} opacity={0.95}>
-                      <title>{`Muro ETF @ ${z.aS.toFixed(0)} = ${fmtV(z.a)}`}</title>
-                    </line>
-                    <line x1={geom.x(z.bS)} x2={geom.x(z.bS)} y1={M.top} y2={M.top + PLOT_H}
-                          stroke={col} strokeWidth={1.2} strokeDasharray="3 3" opacity={0.95}>
-                      <title>{`Muro indice @ ${z.bS.toFixed(0)} = ${fmtV(z.b)}`}</title>
-                    </line>
-                    <text x={(geom.x(z.loR) + geom.x(z.hiR)) / 2} y={M.top + 20} textAnchor="middle"
-                          fontSize={8.5} fontWeight="bold" fill={col}>
-                      {`${tipo} ${head}`}
-                    </text>
-                    <text x={(geom.x(z.loR) + geom.x(z.hiR)) / 2} y={M.top + 30} textAnchor="middle"
-                          fontSize={8} fill="#94a3b8">
-                      {z.loR.toFixed(0)}
-                    </text>
+                  <g>
+                    <line x1={xc} x2={xc} y1={Y0} y2={Y1} stroke="#2A313B" strokeWidth={1} strokeDasharray="3 3" />
+                    <rect x={xc - 3} y={Y0 + 130} width={6} height={6} fill="none" stroke="#2A313B" strokeWidth={1} transform={`rotate(45 ${xc} ${Y0 + 133})`} />
                   </g>
                 );
-              })}
-            </g>
+              }
+              return (
+                <g>
+                  {/* stub per le zone fuori dalla top-6 */}
+                  {zones.filter(z => !sel.includes(z)).map((z, i) => {
+                    const c = COL(z).r, cx = (geom.x(z.loR) + geom.x(z.hiR)) / 2;
+                    return <line key={`stub-${i}`} x1={cx} x2={cx} y1={Y0} y2={Y1} stroke={c} strokeWidth={3} opacity={0.5} />;
+                  })}
+                  {sel.map((z, i) => {
+                    const c = COL(z), lvl = LVL(z);
+                    const x1 = geom.x(z.loR), x2 = geom.x(z.hiR);
+                    const rw = Math.max(6, Math.abs(x2 - x1)), cx = (x1 + x2) / 2;
+                    const xE = geom.x(z.aS), xI = geom.x(z.bS);
+                    const L = LEN[lvl];
+                    const lab = labs.find(l => l.z === z)!;
+                    const tipo = z.a > 0 && z.b > 0 ? 'C' : z.a < 0 && z.b < 0 ? 'P' : 'D';
+                    return (
+                      <g key={`z-${i}`}>
+                        {/* rail: fill + bordi verticali, nessun bordo top/bottom */}
+                        <rect x={cx - rw / 2} y={Y0} width={rw} height={Y1 - Y0} fill={c.r} opacity={ALPHA[lvl]} />
+                        <line x1={cx - rw / 2} x2={cx - rw / 2} y1={Y0} y2={Y1} stroke={c.r} strokeWidth={lvl === 'HI' ? 1.5 : 1} opacity={0.95} />
+                        <line x1={cx + rw / 2} x2={cx + rw / 2} y1={Y0} y2={Y1} stroke={c.r} strokeWidth={lvl === 'HI' ? 1.5 : 1} opacity={0.95} />
+                        {/* spread dei muri dentro il rail */}
+                        <line x1={xE} x2={xI} y1={154} y2={154} stroke={c.r} strokeWidth={1} opacity={0.9} />
+                        <line x1={xE} x2={xE} y1={149} y2={159} stroke={c.r} strokeWidth={1} opacity={0.9} />
+                        <line x1={xI} x2={xI} y1={149} y2={159} stroke={c.r} strokeWidth={1} opacity={0.9} />
+                        {/* muro ETF in BASSO: segmento + quadrato PIENO */}
+                        <line x1={xE} x2={xE} y1={Y1 - L} y2={Y1} stroke={c.r} strokeWidth={2} />
+                        <rect x={xE - 2.5} y={YAX - 2.5} width={5} height={5} fill={c.r}>
+                          <title>{`Muro ETF @ ${z.aS.toFixed(0)} = ${metric === 'oi' ? Math.round(z.a).toLocaleString('it-IT') : z.a.toFixed(2) + ' Mld'}`}</title>
+                        </rect>
+                        {/* muro INDICE in ALTO: segmento + quadrato VUOTO */}
+                        <line x1={xI} x2={xI} y1={Y0} y2={Y0 + L} stroke={c.i} strokeWidth={2} />
+                        <rect x={xI - 2.5} y={Y0 - 9.5} width={5} height={5} fill="none" stroke={c.i} strokeWidth={1}>
+                          <title>{`Muro indice @ ${z.bS.toFixed(0)} = ${metric === 'oi' ? Math.round(z.b).toLocaleString('it-IT') : z.b.toFixed(2) + ' Mld'}`}</title>
+                        </rect>
+                        {/* leader punteggiato dal buffer al rail */}
+                        {Math.abs(lab.cx - cx) > 4 && (
+                          <line x1={lab.cx} x2={cx} y1={YLAB} y2={Y0} stroke={c.r} strokeWidth={1} strokeDasharray="2 2" opacity={0.8} />
+                        )}
+                        {/* buffer etichetta OPACO: mai attraversato da nulla */}
+                        <rect x={lab.cx - lab.w / 2} y={1} width={lab.w} height={14} fill="#0A0D12" stroke={c.r} strokeWidth={1} />
+                        <text x={lab.cx - lab.w / 2 + 4} y={11.5} fontSize={10} fontWeight="bold" fill="#E6EDF3">
+                          {lab.txt}
+                        </text>
+                        {Array.from({ length: PIPS[lvl] }).map((_, p) => (
+                          <rect key={p} x={lab.cx - lab.w / 2 + 8 + lab.txt.length * 6.5 + 4 + p * 5} y={7} width={3} height={3} fill={c.r} />
+                        ))}
+                        <text x={cx} y={Y1 + 14} textAnchor="middle" fontSize={8.5} fill={c.r} fontWeight="bold">{tipo}</text>
+                        <title>{`Zona confluenza ${z.lo.toFixed(0)}–${z.hi.toFixed(0)} · ETF ${z.a.toFixed(2)} · indice ${z.b.toFixed(2)} · peso ${lvl}`}</title>
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })()
           ) : bars.map(b => {
             const [cVal, pVal] = geom.val(b);
             const x = geom.x(b.s) - geom.bw / 2;
