@@ -1,187 +1,178 @@
 import React, { useMemo, useState } from 'react';
 
 /**
- * GexHistogram — istogramma Strike Profile alla InsiderFinance:
- * una barra per strike, verde sopra lo zero = lato CALL, rossa sotto =
- * lato PUT, linea tratteggiata sullo spot. Toggle All (±10%) / Near
- * (±1,5%) e selettore METRICA: Γ GEX (gamma dollari) o OI (open interest).
- * Tutti gli strike della borsa selezionata, non solo i top-4.
+ * GexHistogram — profilo GEX/OI per strike.
  *
- * I valori GEX arrivano dal piano in Mld (miliardi $) — la stessa
- * convenzione delle etichette della scala (⧉ Call wall 15 Mld...).
+ * DUE anime, secondo la fonte selezionata:
  *
- * @module components/GexHistogram
+ *  · Fonte singola (ETF o Indici): istogramma SVG, una barra per strike reale
+ *    (verde = call/gamma lunga, rosso = put/gamma corta), linee Spot/MaxPain/Flip.
+ *
+ *  · Fonte 'Entrambi': NON si sovrappone nulla e NON si sommano due libri che
+ *    presidiano prezzi diversi. Si mostra il PANNELLO MURI: una riga per muro,
+ *    con la barra GEX a scala comune. Una riga è CONFLUENZA (⧉) quando un muro
+ *    ETF e uno indice cadono sullo STESSO prezzo futures entro ±ZONE_TOL_PT.
+ *    Con la tolleranza giusta (10 pt = due griglie da 5 della scala) di solito
+ *    NON c'è confluenza: e questo è un dato, non un guasto — il pannello lo
+ *    dice a parole, invece di disegnare bande a caso.
+ *
+ * Perché 10 pt: i muri sono livelli di prezzo del futures. SPY 750 e SPX 7500
+ * NON sono lo stesso livello: in scala ES fanno 7545 e 7525, cioè 20 punti
+ * diversi. Chiamarli confluenza (come faceva la vecchia tolleranza 25 pt)
+ * produceva solo falsi positivi.
+ *
+ * I muri arrivano dai top_gamma del piano (già aggregati per strike, con
+ * picchi veri), convertiti in Mld — non dai profili grezzi per strike, che
+ * hanno rumore a sufficienza da inventare muri dove non ce ne sono.
  */
 
 export interface GexProfileEntry {
   s: number;
   c: number;
   p: number;
-  /** Open interest call/put dello strike (dal 05/11). */
+  /** Open interest call/put dello strike. */
   co?: number;
   po?: number;
+  /** Strike nativo della catena (SPY/QQQ o SPX/NDX), portato dai muri. */
+  native?: number;
+  /** Lato dominante dello strike: call/put (etichetta 'call wall'/'put wall'). */
+  side?: 'call' | 'put';
 }
 
-const W = 900, H = 300;
-const M = { left: 56, right: 16, top: 26, bottom: 26 };
+const W = 960, H = 340;
+const M = { left: 60, right: 16, top: 28, bottom: 28 };
 const PLOT_W = W - M.left - M.right;
 const PLOT_H = H - M.top - M.bottom;
-/** Finestre di zoom (limitano SOLO l'asse X): il profilo pubblicato è già
- *  per-strike raw in scala nativa della fonte — nessuna aggregazione client,
- *  così ogni barra è uno strike reale e il confronto 1:1 con InsiderFinance
- *  è diretto. */
+
+/**
+ * Tolleranza di confluenza in punti futures: 5 pt = la griglia operativa della
+ * scala. I muri delle due catene cadono quasi sempre a ~20 pt l'uno dall'altro
+ * (SPY e SPX hanno griglie di strike diverse): non sono lo stesso livello.
+ * Con la tolleranza vecchia di 25 pt la UI contava 6 "confluenze" che erano
+ * tutte falsi positivi (verificato 13/11 sul piano live: gap minimo reale 20 pt).
+ */
+const ZONE_TOL_PT = 5;
+
 const WINDOWS = [
   { label: 'Vicine ±1,5%', pct: 0.015 },
   { label: '±5%', pct: 0.05 },
   { label: '±10%', pct: 0.10 },
   { label: 'Tutte ±20%', pct: 0.20 },
 ] as const;
-const DEFAULT_WIN = 1; // ±5%
+const DEFAULT_WIN = 1;
 
 type Metric = 'gex' | 'oi';
 
 const fmtMld = (v: number): string =>
   `${Math.abs(v) >= 1 ? v.toFixed(Math.abs(v) >= 10 ? 0 : 1) : v.toFixed(2)} Mld`;
-
 const fmtOi = (v: number): string => Math.round(v).toLocaleString('it-IT');
+/** Prezzo nativo: interi per gli strike indice, 1 decimale per gli ETF. */
+const fmtNat = (v: number): string =>
+  (Math.round(v * 10) / 10).toLocaleString('it-IT', { maximumFractionDigits: 1 });
 
 export const GexHistogram: React.FC<{
   profile: Array<GexProfileEntry> | undefined;
   spot: number;
   idxName: string;
-  /** Linee di riferimento in scala NQ: max pain e flip gamma della fonte selezionata. */
+  /** Nome della catena ETF (SPY/QQQ): i muri del pannello 'Entrambi'. */
+  etfName?: string;
   maxPain?: number;
   flip?: number;
-  /** DOPPIO PREZZO nel tooltip: strike della vista → segmento con le altre
-   *  scale, es. "≈ ES 7670 · SPX 7646" (vista ETF, strike nativi) oppure
-   *  "SPX 7646 · SPY 762" (vista indici/'Entrambi', strike in scala futures).
-   *  Il padre decide le conversioni in base alla fonte; assente = nessun incrocio. */
   futEq?: (s: number) => string;
-  /** Nome dei futures (ES/NQ) per i testi e la legenda. */
   futName?: string;
-  /** Solo vista 'Entrambi': le due serie _binned (25pt, scala futures) per le
-   *  BARRE. In 'Entrambi' non si somma: si disegnano DUE barre per strike
-   *  (ETF a sinistra, indice a destra), ognuna normalizzata al proprio
-   *  massimo di finestra — la somma di due libri con muri sfalsati non
-   *  rappresenta né l'uno né l'altro. */
-  barsEtf?: Array<GexProfileEntry>;
-  barsIdx?: Array<GexProfileEntry>;
-  /** Solo vista 'Entrambi': i due profili RAW in scala futures, usati SOLO per
-   *  rilevare i muri e le ZONE DI CONFLUENZA (muro ETF + muro indice entro una
-   *  tolleranza). NON si usano i _binned: il bin a 25pt introduce aliasing
-   *  (misurato su ES: dente di sega 14,9% -> 28,4% del max) che generava muri
-   *  finti, uno per barra. */
+  /** Vista 'Entrambi': i MURI delle due fonti in scala futures (top_gamma). */
   zoneEtf?: Array<GexProfileEntry>;
   zoneIdx?: Array<GexProfileEntry>;
-  /** Tolleranza zona in punti futures. Se assente/0 si usa zoneTolPct. */
-  zoneTolPts?: number;
-  /** Tolleranza zona in % dello spot (fallback se zoneTolPts è 0). */
-  zoneTolPct?: number;
-  /** Muro = |net| >= wallPct% del massimo della PROPRIA fonte (default 20%). */
-  wallPct?: number;
-  /** Scala dello strike dell'asse X: nel profilo ETF gli strike sono nativi
-   *  (SPY/QQQ), nel profilo indici e 'Entrambi' sono in punti futures (ES/NQ).
-   *  Va ETICHETTATA nel tooltip e nel footer: lo stesso numero senza scala
-   *  fa scambiare NQ per NDX (il libro indice è in NDX ma il profilo è
-   *  già convertito). Default: idxName. */
   strikeScale?: string;
-}> = ({ profile, spot, idxName, maxPain, flip, futEq, futName, strikeScale,
-       zoneEtf, zoneIdx, zoneTolPts, zoneTolPct = 0.2, wallPct = 20 }) => {
+}> = ({ profile, spot, idxName, etfName = 'ETF', maxPain, flip, futEq, futName,
+       zoneEtf, zoneIdx, strikeScale }) => {
   const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
 
-  // ---- ZONE DI CONFLUENZA (solo quando arrivano ENTRAMBI i profili).
-  // Muro = |net| >= wallPct% del massimo della PROPRIA fonte (soglia relativa:
-  // le due fonti hanno scale diverse — su ES il libro indice pesa 5x l'ETF —
-  // così entrambe contribuiscono con un numero confrontabile di muri).
-  // Zona = muro ETF e muro indice a distanza <= zoneTolPct% dello spot,
-  // con le zone sovrapposte fuse fra loro. loR/hiR = estensione da DISEGNARE:
-  // allargata ad almeno ±tolleranza/2 attorno al centro, altrimenti le zone
-  // dove i due muri cadono sullo STESSO strike (tipico su ES: 7550 vs 7550)
-  // collassavano a 2px, invisibili come banda (viste come una linea col ◆).
-  type Zone = { lo: number; hi: number; loR: number; hiR: number; a: number; b: number; aS: number; bS: number };
-  type Raw = Pick<Zone, 'lo' | 'hi' | 'a' | 'b' | 'aS' | 'bS'>;
-  const zones = useMemo<Zone[]>(() => {
-    const A = zoneEtf, B = zoneIdx;
-    if (!A?.length || !B?.length || !(spot > 0)) return [];
-    // Tolleranza: punti espliciti se forniti, altrimenti RAGGIO = semisomma dei
-    // passi nativi delle due fonti (intersezione dei loro intervalli di
-    // risoluzione).
-    const stepOf = (arr: Array<GexProfileEntry>): number => {
-      const ss = [...new Set(arr.map(e => e.s))].sort((p, q) => p - q);
-      const d: number[] = [];
-      for (let i = 1; i < ss.length; i++) if (ss[i] - ss[i - 1] > 0.01) d.push(ss[i] - ss[i - 1]);
-      if (!d.length) return 0;
-      d.sort((p, q) => p - q);
-      return d[Math.floor(d.length / 2)];
-    };
-    const stepE = stepOf(A), stepI = stepOf(B);
-    const tol = zoneTolPts && zoneTolPts > 0
-      ? zoneTolPts
-      : (stepE + stepI) / 2 || (spot * zoneTolPct) / 100;
-    // Finestra di "massimo locale" PER FONTE (2,5 passi nativi): usare la
-    // stessa finestra in punti per entrambe dava selettività incomparabile
-    // (su NQ ±57pt = ±1,4 strike ETF ma ±5,6 strike indice).
-    const winE = 2.5 * stepE, winI = 2.5 * stepI;
-    const wallFrac = wallPct / 100;
-    const val = (e: GexProfileEntry) =>
-      metric === 'oi' ? (e.co ?? 0) - (e.po ?? 0) : e.c + e.p;
-    // Muro = |net| >= soglia relativa **E massimo locale entro ±tol**.
-    // Senza il massimo locale qualsiasi punto sopra soglia diventa muro: su ES
-    // uscivano 12 zone finte, una per barra (aliasing del bin 25pt).
-    const wallsOf = (arr: Array<GexProfileEntry>, win: number): Array<[number, number]> => {
-      const pts = arr
-        .map(e => [e.s, val(e)] as [number, number])
-        .sort((p, q) => p[0] - q[0]);
-      let mx = 0;
-      for (const [, v] of pts) mx = Math.max(mx, Math.abs(v));
-      if (mx <= 0) return [];
-      const thr = mx * wallFrac;
-      const out: Array<[number, number]> = [];
-      for (let i = 0; i < pts.length; i++) {
-        const [s, v] = pts[i];
-        if (Math.abs(v) < thr) continue;
-        let isMax = true;
-        for (let j = i - 1; j >= 0 && pts[j][0] >= s - win; j--)
-          if (Math.abs(pts[j][1]) > Math.abs(v)) { isMax = false; break; }
-        if (isMax)
-          for (let j = i + 1; j < pts.length && pts[j][0] <= s + win; j++)
-            if (Math.abs(pts[j][1]) > Math.abs(v)) { isMax = false; break; }
-        if (isMax) out.push([s, v]);
-      }
-      return out;
-    };
-    const wa = wallsOf(A, winE), wb = wallsOf(B, winI);
-    if (!wa.length || !wb.length) return [];
-    const iv: Raw[] = [];
-    for (const [sa, va] of wa)
-      for (const [sb, vb] of wb)
-        if (Math.abs(sa - sb) <= tol)
-          iv.push({ lo: Math.min(sa, sb), hi: Math.max(sa, sb), a: va, b: vb, aS: sa, bS: sb });
-    if (!iv.length) return [];
-    iv.sort((p, q) => p.lo - q.lo);
-    const out: Raw[] = [];
-    let cur: Raw = { ...iv[0] };
-    for (let i = 1; i < iv.length; i++) {
-      const z = iv[i];
-      if (z.lo <= cur.hi + tol) {
-        cur.hi = Math.max(cur.hi, z.hi);
-        if (Math.abs(z.a) > Math.abs(cur.a)) { cur.a = z.a; cur.aS = z.aS; }
-        if (Math.abs(z.b) > Math.abs(cur.b)) { cur.b = z.b; cur.bS = z.bS; }
-      } else { out.push(cur); cur = { ...z }; }
-    }
-    out.push(cur);
-    return out
-      .map<Zone>(z => {
-        const c = (z.lo + z.hi) / 2;
-        const half = Math.max((z.hi - z.lo) / 2, Math.max(tol, 26) / 2);
-        return { ...z, loR: c - half, hiR: c + half };
-      })
-      .sort((p, q) => (Math.abs(q.a) + Math.abs(q.b)) - (Math.abs(p.a) + Math.abs(p.b)));
-  }, [zoneEtf, zoneIdx, spot, metric, zoneTolPts, zoneTolPct, wallPct]);
   const bothMode = !!zoneEtf?.length && !!zoneIdx?.length;
 
+  // ============================================================== PANNELLO
+  type Wall = { s: number; net: number; native: number; side: string; src: 'etf' | 'idx' };
+
+  const walls = useMemo<Wall[]>(() => {
+    if (!bothMode) return [];
+    const mk = (arr: Array<GexProfileEntry>, src: 'etf' | 'idx'): Wall[] =>
+      arr.map(e => ({
+        s: e.s,
+        net: e.c + e.p,
+        native: e.native ?? e.s,
+        side: e.side ?? (e.c + e.p >= 0 ? 'call' : 'put'),
+        src,
+      }));
+    return [...mk(zoneEtf!, 'etf'), ...mk(zoneIdx!, 'idx')];
+  }, [zoneEtf, zoneIdx, bothMode]);
+
+  // Raggruppa per prezzo: un muro ETF + un muro indice entro ZONE_TOL_PT = una
+  // riga sola, in confluenza. Niente fusione a catena: un cluster accetta al
+  // più UN muro per fonte, così 7525/7545/7565 non diventano un'unica banda.
+  type WallRow = { price: number; etf?: Wall; idx?: Wall;
+                   near?: { dist: number; price: number; src: 'etf' | 'idx' } };
+  const rows = useMemo<WallRow[]>(() => {
+    if (!bothMode) return [];
+    const win = WINDOWS[winIdx];
+    const inWin = walls
+      .filter(w => Math.abs(w.s - spot) / spot <= win.pct)
+      .sort((a, b) => a.s - b.s);
+    const out: WallRow[] = [];
+    for (const w of inWin) {
+      const last = out[out.length - 1];
+      if (last && !last[w.src] && Math.abs(w.s - last.price) <= ZONE_TOL_PT) {
+        last[w.src] = w;
+        last.price = Math.round((last.price + w.s) / 5) * 5; // zona comune
+      } else {
+        out.push({ price: w.s, [w.src]: w } as WallRow);
+      }
+    }
+    // sui muri solitari: quanto è lontano il muro più vicino dell'ALTRA fonte.
+    // È il numero che dice se due righe vicine sono lo stesso livello o no.
+    for (const r of out) {
+      if (r.etf && r.idx) continue;
+      const other = r.etf ? 'idx' : 'etf';
+      let best: Wall | null = null;
+      for (const w of walls) {
+        if (w.src !== other) continue;
+        if (!best || Math.abs(w.s - r.price) < Math.abs(best.s - r.price)) best = w;
+      }
+      if (best) r.near = { dist: Math.round(Math.abs(best.s - r.price)), price: best.s, src: other };
+    }
+    // la scala si legge dall'alto: prezzi decrescenti
+    return out.sort((a, b) => b.price - a.price);
+  }, [walls, spot, winIdx, bothMode]);
+
+  const confN = useMemo(() => rows.filter(r => r.etf && r.idx).length, [rows]);
+
+  // Quanto distano DAVVERO i due libri: per ogni muro indice, il muro ETF più
+  // vicino. È il numero che smaschera i falsi positivi della vecchia UI.
+  const minGap = useMemo(() => {
+    if (!bothMode) return null;
+    const e = walls.filter(w => w.src === 'etf').map(w => w.s).sort((a, b) => a - b);
+    const i = walls.filter(w => w.src === 'idx').map(w => w.s).sort((a, b) => a - b);
+    if (!e.length || !i.length) return null;
+    let best = Infinity;
+    for (const s of i) {
+      let lo = 0, hi = e.length - 1, near = e[0];
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (Math.abs(e[mid] - s) < Math.abs(near - s)) near = e[mid];
+        if (e[mid] < s) lo = mid + 1; else hi = mid - 1;
+      }
+      best = Math.min(best, Math.abs(near - s));
+    }
+    return Math.round(best);
+  }, [walls, bothMode]);
+
+  const maxAbs = useMemo(
+    () => Math.max(1e-9, ...rows.flatMap(r => [Math.abs(r.etf?.net ?? 0), Math.abs(r.idx?.net ?? 0)])),
+    [rows],
+  );
+
+  // ============================================================== ISTOGRAMMA
   const bars = useMemo(() => {
     const arr = profile ?? [];
     const win = WINDOWS[winIdx];
@@ -191,22 +182,14 @@ export const GexHistogram: React.FC<{
 
   const hasOi = useMemo(() => bars.some(b => (b.co ?? 0) + (b.po ?? 0) > 0), [bars]);
 
-  // Vista a DUE barre (solo 'Entrambi'): valori netti per fonte nella finestra,
-  // ognuno normalizzato al proprio massimo. Si disegna ETF a sinistra e indice
-  // a destra dello strike: le strutture restano leggibili e confrontabili
-  // (su ES il libro indice pesa 5x: in scala assoluta l'ETF sparirebbe).
   const geom = useMemo(() => {
     if (!bars.length) return null;
     const val = (b: GexProfileEntry): [number, number] => {
       if (metric === 'oi') {
         const co = b.co ?? 0, po = b.po ?? 0;
-        return view === 'net'
-          ? [Math.max(0, co - po), Math.min(0, co - po)]
-          : [co, -po];
+        return view === 'net' ? [Math.max(0, co - po), Math.min(0, co - po)] : [co, -po];
       }
-      return view === 'net'
-        ? [Math.max(0, b.c + b.p), Math.min(0, b.c + b.p)]
-        : [b.c, b.p];
+      return view === 'net' ? [Math.max(0, b.c + b.p), Math.min(0, b.c + b.p)] : [b.c, b.p];
     };
     const vals = bars.map(val);
     const maxPos = Math.max(0, ...vals.map(v => v[0]));
@@ -220,21 +203,60 @@ export const GexHistogram: React.FC<{
     const yZero = M.top + half;
     const x = (s: number) => M.left + ((s - x0) / (x1 - x0)) * PLOT_W;
     const bw = Math.max(1.2, (PLOT_W / bars.length) * 0.72);
-    return { yMax, x, bw, yZero, half, x0, x1,
+    return { yMax, x, bw, yZero, half, x0, x1, val,
       barTop: (c: number) => yZero - (Math.min(c, yMax) / yMax) * half,
-      barBottom: (p: number) => yZero + (Math.min(-p, yMax) / yMax) * half,
-      val };
+      barBottom: (p: number) => yZero + (Math.min(-p, yMax) / yMax) * half };
   }, [bars, metric, view]);
 
   const refLines = useMemo(() => {
-    const defs = [
+    if (!geom) return [];
+    return [
       { v: spot > 0 ? spot : undefined, label: 'Spot', color: '#60a5fa', dash: '4 3' },
       { v: maxPain && maxPain > 0 ? maxPain : undefined, label: 'Max Pain', color: '#fbbf24', dash: '6 3' },
       { v: flip && flip > 0 ? flip : undefined, label: 'Flip', color: '#c084fc', dash: '6 3' },
-    ];
-    if (!geom) return [];
-    return defs.filter(l => l.v !== undefined && geom.x0 <= l.v && l.v <= geom.x1);
+    ].filter(l => l.v !== undefined && geom.x0 <= l.v! && l.v! <= geom.x1);
   }, [geom, spot, maxPain, flip]);
+
+  // ============================================================ RENDER
+  const winBtns = (
+    <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
+      {WINDOWS.map((w, i) => (
+        <button key={w.label} onClick={() => setWinIdx(i)}
+          className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${winIdx === i ? 'bg-blue-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
+          title={`Strike entro ±${(w.pct * 100).toLocaleString('it-IT')}%`}>
+          {w.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const Bar: React.FC<{ v: number; tone: 'gex' | 'oi' }> = ({ v }) => {
+    const pct = Math.min(100, Math.abs(v) / maxAbs * 100);
+    return (
+      <div className="h-2.5 rounded-sm bg-slate-800/50 overflow-hidden min-w-[60px] flex-1">
+        <div className={`h-full ${v >= 0 ? 'bg-emerald-400/80' : 'bg-red-400/80'}`}
+             style={{ width: `${Math.max(2, pct)}%` }} />
+      </div>
+    );
+  };
+
+  const WallCell: React.FC<{ w?: Wall; name: string }> = ({ w, name }) => {
+    if (!w) return <div className="flex-1 min-w-0" aria-hidden />;
+    return (
+      <div className="flex items-center gap-2 flex-1 min-w-0"
+           title={`${name} ${fmtNat(w.native)} · ${w.net >= 0 ? 'gamma lunga (pin)' : 'gamma corta (trigger)'} · ${fmtMld(w.net)} · ≈ ${futName ?? 'fut'} ${w.s.toFixed(0)}`}>
+        <span className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap text-gray-500">{name}</span>
+        <span className="text-[10px] font-mono text-gray-400 whitespace-nowrap">{fmtNat(w.native)}</span>
+        <span className="text-[10px] font-mono text-gray-400 w-16 text-right whitespace-nowrap">{fmtMld(w.net)}</span>
+        <Bar v={w.net} tone="gex" />
+        <span className={`text-[9px] font-extrabold px-1 py-0.5 rounded border whitespace-nowrap ${
+          w.net >= 0 ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                     : 'bg-amber-500/15 text-amber-300 border-amber-500/30'}`}>
+          {w.net >= 0 ? '🛡' : '⚡'} {w.side}
+        </span>
+      </div>
+    );
+  };
 
   if (!profile || profile.length === 0) {
     return (
@@ -244,261 +266,232 @@ export const GexHistogram: React.FC<{
     );
   }
 
-  const fmtY = (v: number) => (metric === 'oi' ? fmtOi(v) : fmtMld(v));
-  const emptyMetric = metric === 'oi' && !hasOi;
-  const ticksY = geom
-    ? [0.25, 0.5, 0.75, 1].map(f => geom.yMax * f)
-    : [];
-  const ticksX = geom
-    ? Array.from({ length: 7 }, (_, i) => geom.x0 + ((geom.x1 - geom.x0) * i) / 6)
-    : [];
-
   return (
     <div>
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-        <span className="text-[10px] text-gray-500">
-          {metric === 'gex'
-            ? view === 'net'
-              ? 'Net GEX per strike (call−put) · sopra zero gamma lunga, sotto gamma corta · Mld $'
-              : 'GEX per strike · valori in Mld $ · verde = call (gamma lunga) · rossa = put (gamma corta)'
-            : view === 'net'
-              ? 'Net OI per strike (call−put) · sopra zero call-dominato, sotto put-dominato · contratti'
-              : 'Open Interest per strike · contratti · verde = call · rossa = put'}
-        </span>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
-            {(['gex', 'oi'] as const).map(m => (
-              <button key={m} onClick={() => setMetric(m)}
-                className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${metric === m ? 'bg-sky-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
-                title={m === 'gex' ? 'Gamma Exposure in dollari (Mld)' : 'Open Interest in contratti'}>
-                {m === 'gex' ? 'Γ GEX' : 'OI'}
-              </button>
-            ))}
-          </div>
-          <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
-            {(['split', 'net'] as const).map(v => (
-              <button key={v} onClick={() => setView(v)}
-                className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${view === v ? 'bg-indigo-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
-                title={v === 'split' ? 'Due barre: lato call (verde) e lato put (rosso)' : 'Una barra per strike: netto call−put (verde sopra = call-dominato, rosso sotto = put-dominato)'}>
-                {v === 'split' ? 'Call/Put' : 'Net'}
-              </button>
-            ))}
-          </div>
-          <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
-            {WINDOWS.map((w, i) => (
-              <button key={w.label} onClick={() => setWinIdx(i)}
-                className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${winIdx === i ? 'bg-blue-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
-                title={`Strike entro ±${(w.pct * 100).toLocaleString('it-IT')}%`}>
-                {w.label}
-              </button>
-            ))}
+      {/* ------ intestazione: fonte singola = controlli istogramma, entrambi = riepilogo */}
+      {!bothMode ? (
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <span className="text-[10px] text-gray-500">
+            {metric === 'gex'
+              ? view === 'net'
+                ? 'Net GEX per strike (call−put) · sopra zero gamma lunga, sotto gamma corta · Mld $'
+                : 'GEX per strike · Mld $ · verde = call (gamma lunga) · rosso = put (gamma corta)'
+              : view === 'net'
+                ? 'Net OI per strike (call−put) · contratti'
+                : 'Open Interest per strike · contratti · verde = call · rosso = put'}
+          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
+              {(['gex', 'oi'] as const).map(m => (
+                <button key={m} onClick={() => setMetric(m)}
+                  className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${metric === m ? 'bg-sky-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
+                  title={m === 'gex' ? 'Gamma Exposure in dollari (Mld)' : 'Open Interest in contratti'}>
+                  {m === 'gex' ? 'Γ GEX' : 'OI'}
+                </button>
+              ))}
+            </div>
+            <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
+              {(['split', 'net'] as const).map(v => (
+                <button key={v} onClick={() => setView(v)}
+                  className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${view === v ? 'bg-indigo-600/80 text-white' : 'bg-[#0d1117] text-gray-400 hover:text-slate-200'}`}
+                  title={v === 'split' ? 'Due barre per strike: call (verde) e put (rosso)' : 'Una barra per strike: netto call−put'}>
+                  {v === 'split' ? 'Call/Put' : 'Net'}
+                </button>
+              ))}
+            </div>
+            {winBtns}
           </div>
         </div>
-      </div>
-
-      {emptyMetric ? (
-        <p className="text-[11px] text-gray-500 py-6 text-center">
-          Open Interest non disponibile in questo snapshot (piano precedente al 05/11) —
-          attendi il prossimo giro del pipeline o torna alla metrica Γ GEX.
-        </p>
-      ) : geom ? (
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Istogramma per strike">
-          {!bothMode && ticksY.map((v, i) => {
-            const y = geom.yZero - (v / geom.yMax) * geom.half;
-            return (
-              <g key={i}>
-                <line x1={M.left} x2={W - M.right} y1={y} y2={y} stroke="#1e293b" strokeWidth={0.6} strokeDasharray="3 4" />
-                <text x={M.left - 6} y={y + 3} textAnchor="end" fontSize={9} fill="#64748b">{fmtY(v)}</text>
-              </g>
-            );
-          })}
-          {!bothMode && (
-            <>
-              <line x1={M.left} x2={W - M.right} y1={geom.yZero} y2={geom.yZero} stroke="#475569" strokeWidth={0.8} />
-              <text x={M.left - 6} y={geom.yZero + 3} textAnchor="end" fontSize={9} fill="#94a3b8">0</text>
-            </>
-          )}
-
-          {bothMode ? (
-            /* SPEC Claude Opus 5 — vista ENTRAMBI, solo zone di confluenza.
-               Corsie: y 0..16 = etichette (buffer opaco), y 24..284 = rail zone,
-               y 286..300 = asse prezzo. I muri vivono ai BORDI opposti del rail
-               (ETF in basso con quadrato pieno, indice in alto con quadrato
-               vuoto): anche se coincidono in X restano leggibili. */
-            (() => {
-              const Y0 = 24, Y1 = 284, YLAB = 15, YAX = 290;
-              const byWeight = [...zones].sort((p, q) => (Math.abs(q.a) + Math.abs(q.b)) - (Math.abs(p.a) + Math.abs(p.b)));
-              const sel = byWeight.slice(0, 6);
-              const above = zones.filter(z => z.loR < spot).sort((p, q) => q.loR - p.loR)[0];
-              const below = zones.filter(z => z.loR >= spot).sort((p, q) => p.loR - q.loR)[0];
-              if (above && !sel.includes(above)) { if (sel.length >= 6) sel[5] = above; else sel.push(above); }
-              if (below && !sel.includes(below)) { if (sel.length >= 6) sel[4] = below; else sel.push(below); }
-              const maxComb = Math.max(...zones.map(z => Math.abs(z.a) + Math.abs(z.b)), 0.01);
-              const COL = (z) => z.a > 0 && z.b > 0 ? { r: '#0FD1C1', i: '#7FE7DF' }
-                : z.a < 0 && z.b < 0 ? { r: '#4C86FF', i: '#A3C0FF' } : { r: '#FF4FA3', i: '#FFA7CF' };
-              const LVL = (z) => (Math.abs(z.a) + Math.abs(z.b)) / maxComb >= 0.66 ? 'HI' : (Math.abs(z.a) + Math.abs(z.b)) / maxComb >= 0.33 ? 'ME' : 'LO';
-              const ALPHA = { HI: 0.18, ME: 0.11, LO: 0.06 }, LEN = { HI: 16, ME: 12, LO: 8 }, PIPS = { HI: 3, ME: 2, LO: 1 };
-
-              // etichette: buffer opaco centrato sulla zona, clamp e anti-collisione
-              const labs = sel.map(z => {
-                const txt = z.loR.toFixed(0);
-                const w = Math.min(74, 8 + txt.length * 6.5 + 4 + 5 * PIPS[LVL(z)]);
-                const cx = (geom.x(z.loR) + geom.x(z.hiR)) / 2;
-                return { z, txt, w, cx0: cx, cx };
-              }).sort((p, q) => p.cx - q.cx);
-              for (let i = 1; i < labs.length; i++) {
-                const gap = labs[i].cx0 - labs[i - 1].cx0;
-                const need = (labs[i - 1].w + labs[i].w) / 2 + 6;
-                if (gap < need) labs[i].cx = labs[i - 1].cx + need;
-              }
-              for (const l of labs) {
-                const lo = 48 + l.w / 2, hi = 880 - l.w / 2;
-                l.cx = Math.min(hi, Math.max(lo, l.cx));
-              }
-
-              if (!sel.length) {
-                // 0 zone: track punteggiato + diamante vuoto allo spot, nessun testo
-                const xc = geom.x(spot);
-                return (
-                  <g>
-                    <line x1={xc} x2={xc} y1={Y0} y2={Y1} stroke="#2A313B" strokeWidth={1} strokeDasharray="3 3" />
-                    <rect x={xc - 3} y={Y0 + 130} width={6} height={6} fill="none" stroke="#2A313B" strokeWidth={1} transform={`rotate(45 ${xc} ${Y0 + 133})`} />
-                  </g>
-                );
-              }
-              return (
-                <g>
-                  {/* stub per le zone fuori dalla top-6 */}
-                  {zones.filter(z => !sel.includes(z)).map((z, i) => {
-                    const c = COL(z).r, cx = (geom.x(z.loR) + geom.x(z.hiR)) / 2;
-                    return <line key={`stub-${i}`} x1={cx} x2={cx} y1={Y0} y2={Y1} stroke={c} strokeWidth={3} opacity={0.5} />;
-                  })}
-                  {sel.map((z, i) => {
-                    const c = COL(z), lvl = LVL(z);
-                    const x1 = geom.x(z.loR), x2 = geom.x(z.hiR);
-                    const rw = Math.max(6, Math.abs(x2 - x1)), cx = (x1 + x2) / 2;
-                    const xE = geom.x(z.aS), xI = geom.x(z.bS);
-                    const L = LEN[lvl];
-                    const lab = labs.find(l => l.z === z)!;
-                    const tipo = z.a > 0 && z.b > 0 ? 'C' : z.a < 0 && z.b < 0 ? 'P' : 'D';
-                    return (
-                      <g key={`z-${i}`}>
-                        {/* rail: fill + bordi verticali, nessun bordo top/bottom */}
-                        <rect x={cx - rw / 2} y={Y0} width={rw} height={Y1 - Y0} fill={c.r} opacity={ALPHA[lvl]} />
-                        <line x1={cx - rw / 2} x2={cx - rw / 2} y1={Y0} y2={Y1} stroke={c.r} strokeWidth={lvl === 'HI' ? 1.5 : 1} opacity={0.95} />
-                        <line x1={cx + rw / 2} x2={cx + rw / 2} y1={Y0} y2={Y1} stroke={c.r} strokeWidth={lvl === 'HI' ? 1.5 : 1} opacity={0.95} />
-                        {/* spread dei muri dentro il rail */}
-                        <line x1={xE} x2={xI} y1={154} y2={154} stroke={c.r} strokeWidth={1} opacity={0.9} />
-                        <line x1={xE} x2={xE} y1={149} y2={159} stroke={c.r} strokeWidth={1} opacity={0.9} />
-                        <line x1={xI} x2={xI} y1={149} y2={159} stroke={c.r} strokeWidth={1} opacity={0.9} />
-                        {/* muro ETF in BASSO: segmento + quadrato PIENO */}
-                        <line x1={xE} x2={xE} y1={Y1 - L} y2={Y1} stroke={c.r} strokeWidth={2} />
-                        <rect x={xE - 2.5} y={YAX - 2.5} width={5} height={5} fill={c.r}>
-                          <title>{`Muro ETF @ ${z.aS.toFixed(0)} = ${metric === 'oi' ? Math.round(z.a).toLocaleString('it-IT') : z.a.toFixed(2) + ' Mld'}`}</title>
-                        </rect>
-                        {/* muro INDICE in ALTO: segmento + quadrato VUOTO */}
-                        <line x1={xI} x2={xI} y1={Y0} y2={Y0 + L} stroke={c.i} strokeWidth={2} />
-                        <rect x={xI - 2.5} y={Y0 - 9.5} width={5} height={5} fill="none" stroke={c.i} strokeWidth={1}>
-                          <title>{`Muro indice @ ${z.bS.toFixed(0)} = ${metric === 'oi' ? Math.round(z.b).toLocaleString('it-IT') : z.b.toFixed(2) + ' Mld'}`}</title>
-                        </rect>
-                        {/* leader punteggiato dal buffer al rail */}
-                        {Math.abs(lab.cx - cx) > 4 && (
-                          <line x1={lab.cx} x2={cx} y1={YLAB} y2={Y0} stroke={c.r} strokeWidth={1} strokeDasharray="2 2" opacity={0.8} />
-                        )}
-                        {/* buffer etichetta OPACO: mai attraversato da nulla */}
-                        <rect x={lab.cx - lab.w / 2} y={1} width={lab.w} height={14} fill="#0A0D12" stroke={c.r} strokeWidth={1} />
-                        <text x={lab.cx - lab.w / 2 + 4} y={11.5} fontSize={10} fontWeight="bold" fill="#E6EDF3">
-                          {lab.txt}
-                        </text>
-                        {Array.from({ length: PIPS[lvl] }).map((_, p) => (
-                          <rect key={p} x={lab.cx - lab.w / 2 + 8 + lab.txt.length * 6.5 + 4 + p * 5} y={7} width={3} height={3} fill={c.r} />
-                        ))}
-                        <text x={cx} y={Y1 + 14} textAnchor="middle" fontSize={8.5} fill={c.r} fontWeight="bold">{tipo}</text>
-                        <title>{`Zona confluenza ${z.lo.toFixed(0)}–${z.hi.toFixed(0)} · ETF ${z.a.toFixed(2)} · indice ${z.b.toFixed(2)} · peso ${lvl}`}</title>
-                      </g>
-                    );
-                  })}
-                </g>
-              );
-            })()
-          ) : bars.map(b => {
-            const [cVal, pVal] = geom.val(b);
-            const x = geom.x(b.s) - geom.bw / 2;
-            const yTop = geom.barTop(cVal);
-            const hBot = geom.barBottom(pVal) - geom.yZero;
-            // DOPPIO PREZZO: il strike della vista + le scale corrispondenti
-            // (futures ↔ nativo) secondo la fonte, calcolate dal padre.
-            const eq = futEq?.(b.s) ?? '';
-            const tip = metric === 'gex'
-              ? `Strike ${strikeScale ?? idxName} ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
-              : `Strike ${strikeScale ?? idxName} ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
-            return (
-              <g key={b.s}>
-                {cVal > 0 && (
-                  <rect x={x} y={yTop} width={geom.bw} height={Math.max(0.5, geom.yZero - yTop)} fill="#34d399" opacity={0.9}>
-                    <title>{tip}</title>
-                  </rect>
-                )}
-                {pVal < 0 && (
-                  <rect x={x} y={geom.yZero} width={geom.bw} height={Math.max(0.5, hBot)} fill="#f87171" opacity={0.9}>
-                    <title>{tip}</title>
-                  </rect>
-                )}
-              </g>
-            );
-          })}
-
-          {/* linee di riferimento: spot, max pain, flip */}
-          {refLines.map((l, i) => (
-            <g key={l.label}>
-              <line x1={geom.x(l.v!)} x2={geom.x(l.v!)} y1={M.top - 4} y2={M.top + PLOT_H}
-                    stroke={l.color} strokeWidth={1.2} strokeDasharray={l.dash} />
-              <text x={geom.x(l.v!)} y={M.top - 8} textAnchor="middle" fontSize={9.5} fontWeight="bold" fill={l.color}>
-                {l.label}
-              </text>
-            </g>
-          ))}
-
-          {ticksX.map((s, i) => (
-            <text key={i} x={geom.x(s)} y={H - 8} textAnchor="middle" fontSize={9} fill="#64748b">
-              {s.toFixed(0)}
-            </text>
-          ))}
-        </svg>
       ) : (
-        <p className="text-[11px] text-gray-500 py-6 text-center">Nessun dato per questo perimetro.</p>
-      )}
-
-      <div className="flex items-center gap-4 mt-1">
-        <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400" />
-          {view === 'net' ? 'Net ≥ 0 (call-dominato)' : `Call ${metric === 'oi' ? 'OI' : 'GEX'}`}
-        </span>
-        <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400" />
-          {view === 'net' ? 'Net ≤ 0 (put-dominato)' : `Put ${metric === 'oi' ? 'OI' : 'GEX'}`}
-        </span>
-        <span className="text-[10px] text-gray-500 flex items-center gap-2 flex-wrap">
-          <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-blue-400" /> Spot</span>
-          <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> Max Pain</span>
-          <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-purple-400" /> Flip</span>
-        </span>
-        {bothMode && (
-          <span className="text-[10px] text-gray-400 flex items-center gap-3 flex-wrap">
-            <span className="inline-flex items-center gap-1">
-              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400/25 border border-emerald-400" />
-              zona confluenza ({zones.length})
-            </span>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <span className="text-[11px] leading-relaxed">
+            {confN > 0 ? (
+              <span className="font-bold text-violet-300">⧉ {confN} confluenz{confN === 1 ? 'a' : 'e'}</span>
+            ) : (
+              <span className="font-bold text-gray-300">⧉ nessuna confluenza</span>
+            )}
             <span className="text-gray-500">
-              C/P = entrambi call/put · D = segni discordi (gamma conteso) · HI/ME/LO = peso relativo
-              · linea piena = muro ETF · tratteggiata = muro indice
+              {' '}entro ±{ZONE_TOL_PT} pt sullo stesso prezzo {futName} — i due libri qui{' '}
+              {confN > 0 ? 'confermano gli stessi livelli' : 'presidiano livelli distinti'}
+              {minGap !== null && <> · distanza minima fra i muri delle due fonti: <b className="text-gray-300">{minGap} pt</b></>}
             </span>
           </span>
-        )}
-        <span className="text-[10px] text-gray-500">
-          strike in scala {strikeScale ?? idxName} · doppio prezzo nel tooltip: {futName ?? 'futures'} ↔ nativo · passa il mouse sopra le barre per i valori
-        </span>
-      </div>
+          {winBtns}
+        </div>
+      )}
+
+      {/* =========================== PANNELLO MURI (Entrambi) =========================== */}
+      {bothMode ? (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 text-[9px] uppercase tracking-wider text-gray-600 font-bold px-2">
+            <span className="w-20">{futName}</span>
+            <span className="flex-1">muro a confronto · barra = |GEX| a scala comune (max {fmtMld(maxAbs)})</span>
+          </div>
+
+          {rows.map((r, i) => {
+            const isConf = !!(r.etf && r.idx);
+            // riga spot inserita nel punto di prezzo corretto
+            const prev = rows[i - 1];
+            const spotHere = spot && prev && r.price < spot && prev.price > spot;
+            return (
+              <React.Fragment key={`${r.price}-${i}`}>
+                {spotHere && (
+                  <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-amber-500/50 bg-amber-500/10">
+                    <span className="font-mono font-extrabold text-amber-300 text-sm tnum">
+                      {futName} {Math.round(spot).toLocaleString()}
+                    </span>
+                    <span className="text-[9px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>
+                    <span className="text-[10px] text-gray-400 ml-2">spot — sopra e sotto i muri</span>
+                  </div>
+                )}
+                <div className={`flex flex-col gap-1 px-2 py-1.5 rounded-lg border ${
+                  isConf ? 'border-violet-500/50 bg-violet-500/10'
+                         : 'border-slate-800 bg-slate-900/30'}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="w-20 font-mono font-bold tnum text-[13px] text-slate-100 whitespace-nowrap">
+                      {futName} {r.price.toLocaleString()}
+                    </span>
+                    {isConf ? (
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border bg-violet-500/20 text-violet-200 border-violet-500/40"
+                            title={`Un muro della catena ${etfName} e uno della catena ${idxName} cadono sullo stesso prezzo ${futName} (entro ±${ZONE_TOL_PT} pt): due libri indipendenti confermano lo stesso livello.`}>
+                        ⧉ {etfName}×{idxName}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-gray-500 whitespace-nowrap"
+                            title={r.near
+                              ? `Nessuna confluenza qui: il muro ${r.near.src === 'etf' ? etfName : idxName} più vicino è a ${r.near.price} (${r.near.dist} pt da ${r.price}) — è un livello DIVERSO`
+                              : "Nessun muro dell'altra fonte in questa finestra"}>
+                        {r.near
+                          ? <>muro {r.near.src === 'etf' ? etfName : idxName} più vicino: <b className={r.near.dist <= 25 ? 'text-gray-400' : 'text-gray-500'}>{r.near.dist} pt</b></>
+                          : <>nessun muro dell'altra fonte</>}
+                      </span>
+                    )}
+                    {isConf && (
+                      <span className="text-[10px] text-gray-500 whitespace-nowrap ml-auto">conferma incrociata</span>
+                    )}
+                  </div>
+                  {isConf ? (
+                    <>
+                      <WallCell w={r.etf} name={etfName} />
+                      <WallCell w={r.idx} name={idxName} />
+                    </>
+                  ) : (
+                    <WallCell w={r.etf ?? r.idx} name={r.etf ? etfName : idxName} />
+                  )}
+                </div>
+              </React.Fragment>
+            );
+          })}
+
+          {confN === 0 && (
+            <p className="text-[10px] text-gray-500 leading-relaxed mt-1 px-2">
+              Qui ⧉ non ce n'è, ed è un dato vero: {etfName} e {idxName} hanno griglie di strike
+              diverse, quindi i loro muri più grossi cadono a {minGap ?? 'una ventina di'} pt di
+              distanza sul {futName} — due livelli distinti, non uno confermato due volte. La
+              confluenza viene segnalata solo entro ±{ZONE_TOL_PT} pt: capita raramente, e quando
+              capita è la conferma più forte della scala.
+            </p>
+          )}
+
+          <div className="flex items-center gap-4 mt-1 px-2 flex-wrap">
+            <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400/80" /> gamma lunga (pin 🛡)
+            </span>
+            <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400/80" /> gamma corta (trigger ⚡)
+            </span>
+            <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500/40 border border-violet-500" /> ⧉ confluenza (±{ZONE_TOL_PT} pt)
+            </span>
+          </div>
+        </div>
+      ) : (
+        /* =========================== ISTOGRAMMA (fonte singola) =========================== */
+        <>
+          {metric === 'oi' && !hasOi ? (
+            <p className="text-[11px] text-gray-500 py-6 text-center">
+              Open Interest non disponibile in questo snapshot — torna alla metrica Γ GEX.
+            </p>
+          ) : geom ? (
+            <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Istogramma per strike">
+              {[0.25, 0.5, 0.75, 1].map((f, i) => {
+                const v = geom.yMax * f;
+                const y = geom.yZero - (v / geom.yMax) * geom.half;
+                return (
+                  <g key={i}>
+                    <line x1={M.left} x2={W - M.right} y1={y} y2={y} stroke="#1e293b" strokeWidth={0.6} strokeDasharray="3 4" />
+                    <text x={M.left - 6} y={y + 3} textAnchor="end" fontSize={9} fill="#64748b">
+                      {metric === 'oi' ? fmtOi(v) : fmtMld(v)}
+                    </text>
+                  </g>
+                );
+              })}
+              <line x1={M.left} x2={W - M.right} y1={geom.yZero} y2={geom.yZero} stroke="#475569" strokeWidth={0.8} />
+              <text x={M.left - 6} y={geom.yZero + 3} textAnchor="end" fontSize={9} fill="#94a3b8">0</text>
+
+              {bars.map(b => {
+                const [cVal, pVal] = geom.val(b);
+                const x = geom.x(b.s) - geom.bw / 2;
+                const yTop = geom.barTop(cVal);
+                const hBot = geom.barBottom(pVal) - geom.yZero;
+                const eq = futEq?.(b.s) ?? '';
+                const tip = metric === 'gex'
+                  ? `Strike ${strikeScale ?? idxName} ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call ${b.c.toFixed(2)} Mld · put ${b.p.toFixed(2)} Mld`
+                  : `Strike ${strikeScale ?? idxName} ${b.s.toFixed(0)}${eq ? ` · ${eq}` : ''} — call OI ${(b.co ?? 0).toLocaleString('it-IT')} · put OI ${(b.po ?? 0).toLocaleString('it-IT')}`;
+                return (
+                  <g key={b.s}>
+                    {cVal > 0 && (
+                      <rect x={x} y={yTop} width={geom.bw} height={Math.max(0.5, geom.yZero - yTop)}
+                            fill="#34d399" opacity={0.9}><title>{tip}</title></rect>
+                    )}
+                    {pVal < 0 && (
+                      <rect x={x} y={geom.yZero} width={geom.bw} height={Math.max(0.5, hBot)}
+                            fill="#f87171" opacity={0.9}><title>{tip}</title></rect>
+                    )}
+                  </g>
+                );
+              })}
+
+              {refLines.map(l => (
+                <g key={l.label}>
+                  <line x1={geom.x(l.v!)} x2={geom.x(l.v!)} y1={M.top - 4} y2={M.top + PLOT_H}
+                        stroke={l.color} strokeWidth={1.2} strokeDasharray={l.dash} />
+                  <text x={geom.x(l.v!)} y={M.top - 8} textAnchor="middle" fontSize={9.5} fontWeight="bold" fill={l.color}>
+                    {l.label}
+                  </text>
+                </g>
+              ))}
+
+              {Array.from({ length: 7 }, (_, i) => geom.x0 + ((geom.x1 - geom.x0) * i) / 6).map((s, i) => (
+                <text key={i} x={geom.x(s)} y={H - 8} textAnchor="middle" fontSize={9} fill="#64748b">
+                  {s.toFixed(0)}
+                </text>
+              ))}
+            </svg>
+          ) : (
+            <p className="text-[11px] text-gray-500 py-6 text-center">Nessun dato per questo perimetro.</p>
+          )}
+
+          <div className="flex items-center gap-4 mt-1 flex-wrap">
+            <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400" />
+              {view === 'net' ? 'Net ≥ 0 (call-dominato)' : `Call ${metric === 'oi' ? 'OI' : 'GEX'}`}
+            </span>
+            <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400" />
+              {view === 'net' ? 'Net ≤ 0 (put-dominato)' : `Put ${metric === 'oi' ? 'OI' : 'GEX'}`}
+            </span>
+            <span className="text-[10px] text-gray-500 flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-blue-400" /> Spot</span>
+              <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> Max Pain</span>
+              <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-purple-400" /> Flip</span>
+            </span>
+            <span className="text-[10px] text-gray-500">
+              strike in scala {strikeScale ?? idxName} · doppio prezzo nel tooltip: {futName ?? 'futures'} ↔ nativo
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 };

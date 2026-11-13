@@ -130,6 +130,16 @@ export interface LiveSpot {
   NQ: number | null;
 }
 
+/** Livelli che la scala usa davvero: SOLO opzioni. I nomi price/AMT (PDH,
+ *  VWAP, POC…) non vengono più pubblicati dal pipeline (13/11) ma restano
+ *  nelle stats storiche: il filtro li tiene fuori da pannelli e test di
+ *  separazione, altrimenti il track record parlerebbe di livelli morti. */
+const OPTIONS_LEVEL_RE = /^(PIN|TRIGGER|GEX-FLIP|MAXPAIN)/;
+export function isOptionsLevel(statsKey: string): boolean {
+  const name = statsKey.includes(':') ? statsKey.slice(statsKey.indexOf(':') + 1) : statsKey;
+  return OPTIONS_LEVEL_RE.test(name.replace(/-IDX$/, ''));
+}
+
 // In produzione il piano vive sul data branch (raw.githubusercontent);
 // in SVILUPPO usa i file locali /data serviti dal middleware vite — così
 // si testa il pipeline rigenerato localmente senza pushare.
@@ -168,7 +178,9 @@ export async function fetchLevelStats(force = false): Promise<Record<string, Lev
   const now = Date.now();
   if (!force && statsCache && now - statsCache.ts < TTL) return statsCache.data;
   const data = await fetchJson<{ levels?: Record<string, LevelStat> }>(`${BASE}/level_stats.json`);
-  const stats = data?.levels ?? {};
+  const all = data?.levels ?? {};
+  const stats: Record<string, LevelStat> = {};
+  for (const [k, v] of Object.entries(all)) if (isOptionsLevel(k)) stats[k] = v;
   statsCache = { ts: now, data: stats };
   return stats;
 }

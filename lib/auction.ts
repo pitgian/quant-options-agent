@@ -181,8 +181,52 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
     buckets.set(key, [...(buckets.get(key) ?? []), inp]);
   }
 
+  // Fusione delle zone ADIACENTI, ma SOLO fra FONTI DIVERSE: il bucket puro è
+  // fragile al bordo — SPY 745 → ES 7495 e SPX 7500 → ES 7500 sono lo STESSO
+  // livello (5 pt su ES ≈ 0,07%) ma cadono in due bucket diversi, quindi la
+  // scala li mostrava come due righe separate SENZA ⧉ mentre l'istogramma in
+  // modalità 'Entrambi' li segnava come confluenza. Limitare il merge alle
+  // coppie ETF↔indice (un solo assorbimento per zona) lascia intatta la
+  // modalità a fonte singola: lì i livelli vicini RESTANO distinti (VWAP e
+  // flip a 4 pt non si fondono), perché sono concetti diversi, non la stessa
+  // cosa letta da due libri.
+  const isIdx = (arr: LadderInput[]) => arr.some(m => (m.name ?? m.label).endsWith('-IDX'));
+  const onlyOpts = (arr: LadderInput[]) => arr.every(m => m.family === 'options');
+  const keys = [...buckets.keys()].sort((a, b) => a - b);
+  const mergedByKey = new Map<number, LadderInput[]>();
+  const taken = new Set<number>();
+  for (const k of keys) {
+    if (taken.has(k)) continue;
+    taken.add(k);
+    let group = buckets.get(k)!.slice();
+    const mineIdx = isIdx(group);
+    let bestKey = null as number | null;
+    let bestDist = Infinity;
+    // ilmerge vale SOLO fra muri opzioni di fonti diverse: un muro {indice}
+    // vicino a PDH/VWAP non è una confluenza ETF×indice, sono due letture
+    // diverse del mercato che vanno tenute su righe distinte.
+    if (onlyOpts(group)) {
+      for (const k2 of keys) {
+        if (taken.has(k2)) continue;
+        const g2 = buckets.get(k2)!;
+        if (!onlyOpts(g2)) continue;
+        const d = Math.abs(k2 - k);
+        if (d > bucketSize || d >= bestDist) continue;
+        if (isIdx(g2) !== mineIdx) { bestKey = k2; bestDist = d; }
+      }
+    }
+    let anchor = k;
+    if (bestKey !== null) {
+      taken.add(bestKey);
+      group = [...group, ...buckets.get(bestKey)!];
+      anchor = Math.round(((k + bestKey) / 2) / bucketSize) * bucketSize;
+    }
+    // se due zone convergono sullo stesso anchor, uniscile (stessa fonte)
+    mergedByKey.set(anchor, [...(mergedByKey.get(anchor) ?? []), ...group]);
+  }
+
   const zones: (LadderLevel & { score: number })[] = [];
-  for (const [price, members] of buckets.entries()) {
+  for (const [price, members] of mergedByKey.entries()) {
     const families = new Set(members.map(m => m.family));
     const hasNaked = members.some(m => m.isNaked);
     const hasFlip = members.some(m => m.isFlip);

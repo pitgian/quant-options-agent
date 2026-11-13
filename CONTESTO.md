@@ -153,8 +153,12 @@ tests/                       test_intraday_playbook.py (26 check) +
 
 ## 3. Le fonti dei livelli (cosa mostra la scala)
 
-SOLO livelli da opzioni (i livelli di prezzo — VWAP/max/min/value — sono stati
-rimossi dalla scala su richiesta esplicita; restano calcolati nel backend):
+SOLO livelli da opzioni. I livelli di prezzo/AMT (PDH, VWAP, POC, IB, max/min…)
+sono stati RIMOSSI OVUNQUE il 13/11: non li pubblica più day_plan.py (restano
+solo le barre futures per lo spot), non compaiono più nelle stats (filtro
+`isOptionsLevel` in dayPlanService) e gli helper AMT (profile_from_bars,
+value_area, vwap_of, session_high_low) sono stati cancellati. La scala, il
+track record e l'indicatore NT8 vivono di soli muri gamma / flip / max pain.
 
 1. **GEX flip** — zero-crossing della gamma netta: sopra → dealer long gamma
    (respingono, mean reversion); sotto → short gamma (amplificano, trend)
@@ -167,6 +171,20 @@ rimossi dalla scala su richiesta esplicita; restano calcolati nel backend):
 5. **Top strike gamma** — i 3 più grandi per lato di |GEX| per strike entrano
    in scala come livelli propri ("Muro gamma XXX Mld") e si fondono coi muri
    OI+Volume vicini (= confluenza); il GEX netto è la barra sulla riga
+
+6. **Confluenza ETF×indice (⧉)** — regola 13/11: un muro della catena ETF e
+   uno della catena indice fanno confluenza SOLO se cadono entro **±5 pt**
+   sullo stesso prezzo futures (la griglia operativa). I muri vengono dai
+   `top_gamma` del piano, non dai profili per strike (rumore → muri finti).
+   Con la tolleranza vecchia (25 pt) le "confluenze" erano falsi positivi:
+   SPY 750 → ES 7545 e SPX 7500 → ES 7525 distano 20 pt e sono DUE livelli.
+   In vista 'Entrambi' l'istogramma diventa un PANNELLO MURI: una riga per
+   livello, barra |GEX| a scala comune, righe ⧉ viola quando le due fonti
+   confermano lo stesso prezzo; se non ce ne sono il pannello lo dice e
+   riporta il gap minimo fra i muri (è un dato, non un guasto). La scala
+   (`lib/auction.ts`) fonde le zone adiacenti con la STESSA regola ±5 pt e
+   solo fra muri opzioni di fonti diverse, così ⧉ significa la stessa cosa
+   nei due posti.
 
 Scala operativa = raggio **±5%** dal prezzo, zone arrotondate a **5 punti**,
 max 10 per lato, ordinata: sopra lo spot dal più lontano in alto al più

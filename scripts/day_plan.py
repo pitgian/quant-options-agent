@@ -3,10 +3,13 @@
 un desk di volumi/opzioni. UNICO punto di verità per la UI.
 
 Genera data/day_plan.json:
-  { futures, spot_fut, as_of, session{...}, read[3 frasi AMT],
-    levels[ {name, nome_it, price, kind: magnet|barrier|pivot|reference,
-             source: price|amt|options, dist_pts, conf?} ],
-    profile_today{...histogram}, profile_prev{...}, stats del giorno }
+  { futures, last_price, read, levels[ SOLO opzioni: muri gamma (PIN/TRIGGER),
+    GEX flip, max pain — con chain etf/index e strike nativo ],
+    top_gamma*/gex_profile* per l'istogramma, ratio di conversione }
+
+  NOTA 13/11: i livelli price/AMT (PDH, VWAP, POC, IB…) non esistono più: la
+  scala è solo opzioni da mesi e quei livelli erano zavorra nel piano e nel
+  track record. Le barre futures servono unicamente per lo spot.
 
 E mantiene data/level_stats.json: l'affidabilità storica per nome livello
 ("PDH rispettato 8/12") — valutata ogni mattina sul piano del giorno
@@ -24,7 +27,6 @@ Uso:
 
 import argparse
 import json
-import math
 import os
 import sys
 import numpy as np
@@ -40,6 +42,14 @@ from fetch_options_data import calculate_walls  # parità con la UI (stessa form
 PLAN_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "day_plan.json")
 PREV_PLAN_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "day_plan_prev.json")
 STATS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "level_stats.json")
+
+# Griglia operativa: tutti i livelli opzioni si normalizzano a 5pt per
+# garantire che ETF e INDICE che rappresentano lo stesso strike economico
+# cadano nella STESSA zona — condizione necessaria per le zone di confluenza.
+def _r5(x):
+    """Arrotonda a 5 punti (griglia operativa ES/NQ)."""
+    return round(round(x / 5) * 5, 1)
+
 
 # OI aggregata minima perché la catena opzioni sia considerata sana.
 # Un giorno normale SPY/QQQ ha milioni di contratti; yfinance/Yahoo a volte
@@ -116,66 +126,10 @@ def split_sessions(idx_et, highs, lows, opens, closes, vols):
     return rth, on
 
 
-def session_high_low(bars):
-    return (max(b["h"] for b in bars), min(b["l"] for b in bars))
-
-
-def profile_from_bars(bars, bucket=1.0):
-    """Profilo volumi: distribuzione del volume lungo il range di ogni barra."""
-    grid: dict = {}
-    for b in bars:
-        hi, lo, vol = b["h"], b["l"], b["v"]
-        if not vol or vol <= 0:
-            continue
-        R = hi - lo
-        if R < 1e-5:
-            key = round(round((hi + lo) / 2 / bucket) * bucket, 1)
-            grid[key] = grid.get(key, 0.0) + vol
-            continue
-        r = float(math.floor(lo / bucket) * bucket)
-        top = float(math.ceil(hi / bucket) * bucket)
-        while r <= top:
-            cell_hi = r + bucket
-            overlap = max(0.0, min(hi, cell_hi) - max(lo, r))
-            if overlap > 0:
-                key = round(r, 1)
-                grid[key] = grid.get(key, 0.0) + (vol / R) * overlap
-            r += bucket
-    return {k: v for k, v in grid.items() if v > 0}
-
-
-def value_area(profile):
-    """POC + VAH/VAL (70% dei volumi, espansione dal POC)."""
-    if not profile:
-        return None
-    prices = sorted(profile)
-    vols = [profile[p] for p in prices]
-    poc_i = max(range(len(vols)), key=lambda i: vols[i])
-    total = sum(vols)
-    target = total * 0.7
-    lo = hi = poc_i
-    acc = vols[poc_i]
-    while acc < target and (lo > 0 or hi < len(vols) - 1):
-        up = vols[hi + 1] if hi < len(vols) - 1 else -1
-        dn = vols[lo - 1] if lo > 0 else -1
-        if up >= dn and up >= 0:
-            hi += 1; acc += vols[hi]
-        elif dn >= 0:
-            lo -= 1; acc += vols[lo]
-        else:
-            break
-    return {"poc": round(prices[poc_i], 1), "vah": round(prices[hi], 1), "val": round(prices[lo], 1)}
-
-
-def vwap_of(bars):
-    tp = [(b["h"] + b["l"] + b["c"]) / 3 for b in bars]
-    v = [b["v"] for b in bars]
-    tv = sum(v)
-    if tv <= 0:
-        return None, 0.0
-    vwap = sum(p * w for p, w in zip(tp, v)) / tv
-    variance = sum(w * (p - vwap) ** 2 for p, w in zip(tp, v)) / tv
-    return vwap, math.sqrt(max(variance, 0.0))
+# NOTA 13/11: session_high_low / profile_from_bars / value_area / vwap_of
+# (max-min sessione, profili volumi, POC/VA, VWAP) rimossi insieme ai livelli
+# price/AMT che li usavano: la scala è solo opzioni. Le barre futures restano
+# nel pipeline per lo spot (last_price).
 
 
 # ---------------------------------------------------------------------------
@@ -536,123 +490,26 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
             **extra,
         })
 
-    # ---value di ieri (AMT) ---
-    prev_days = [d for d in dates if d < today]
-    prev_va = None
-    if prev_days:
-        p = profile_from_bars(rth[prev_days[-1]])
-        prev_va = value_area(p)
-        if prev_va:
-            add("POC-1d", "POC di ieri (magnete)", prev_va["poc"], "magnet", "amt")
-            add("VAH-1d", "Value high di ieri", prev_va["vah"], "barrier", "amt")
-            add("VAL-1d", "Value low di ieri", prev_va["val"], "barrier", "amt")
-
-    # --- PDH/PDL ---
-    if prev_s := (rth[prev_days[-1]] if prev_days else None):
-        hi_p, lo_p = session_high_low(prev_s)
-        add("PDH", "Max di ieri", hi_p, "pivot", "price")
-        add("PDL", "Min di ieri", lo_p, "pivot", "price")
-
-    # --- Overnight: barre non-RTH tra chiusura di ieri (16:00) e apert. oggi ---
-    if prev_days:
-        prev_date = prev_days[-1]
-        on_bars = []
-        for d, bars in on.items():
-            if d > prev_date or (d == today):
-                for b in bars:
-                    t = idx_et[b["i"]]
-                    if (d > prev_date and t.hour < 9) or (d == today and (t.hour < 9 or (t.hour == 9 and t.minute < 30))) or (d == prev_date and t.hour >= 16):
-                        on_bars.append(b)
-        if on_bars:
-            onh, onl = session_high_low(on_bars)
-            add("ONH", "Max overnight", onh, "pivot", "price")
-            add("ONL", "Min overnight", onl, "pivot", "price")
-
-    # --- Apertura RTH + Initial Balance ---
-    open_rth = today_bars[0]["o"]
-    add("OPEN", "Apertura RTH", open_rth, "reference", "price")
-    ib = today_bars[:12]
-    if ib:
-        ibh, ibl = session_high_low(ib)
-        add("IB-HIGH", "Initial Balance max", ibh, "pivot", "amt")
-        add("IB-LOW", "Initial Balance min", ibl, "pivot", "amt")
-
-    # --- VWAP RTH (09:30, convenzione equity) + bande ---
-    vwap, sigma = vwap_of(today_bars)
-    if vwap:
-        add("VWAP", "VWAP RTH (09:30)", vwap, "pivot", "price")
-        for name, mult, nome in (("VWAP+1s", 1, "VWAP +1σ"), ("VWAP-1s", -1, "VWAP −1σ")):
-            add(name, nome, vwap + mult * sigma, "reference", "price")
-
-    # --- VWAP Globex (dalla 18:00 ET più recente: apertura CME del giorno
-    #     di trading corrente; il lunedì mattina prende la domenica 18:00) ---
-    now_et = datetime.now(ET)
-    anchor18 = now_et.replace(hour=18, minute=0, second=0, microsecond=0)
-    if now_et < anchor18:
-        anchor18 -= timedelta(days=1)
-    ts_list = [t.to_pydatetime() if hasattr(t, "to_pydatetime") else t for t in idx_et]
-    g_mask = np.array([t >= anchor18 for t in ts_list])
-    if g_mask.sum() > 0:
-        tp = (h[g_mask] + l[g_mask] + c[g_mask]) / 3.0
-        vol = v[g_mask]
-        if vol.sum() > 0:
-            gvwap = float((tp * vol).sum() / vol.sum())
-            add("GVWAP", "VWAP Globex (18:00)", gvwap, "pivot", "price")
-
-    # --- POC developing di oggi ---
-    p_today = value_area(profile_from_bars(today_bars))
-    if p_today:
-        add("POC-dev", "POC di oggi", p_today["poc"], "magnet", "amt")
-
-    # --- naked POC: POC delle ultime 5 sedute mai rivisitati ---
-    for dval in dates[-6:]:
-        if dval == today:
-            continue
-        p = value_area(profile_from_bars(rth[dval]))
-        if not p:
-            continue
-        later_bars = [b for dd in dates for b in rth[dd] if dd >= dval]
-        later_on = [b for d, bs in on.items() for b in bs if d >= dval]
-        all_later = later_bars + later_on
-        sliced = any(b["l"] <= p["poc"] <= b["h"] for b in all_later)
-        if not sliced:
-            add(f"NAKED-{dval.isoformat()}", f"POC naked {dval.strftime('%d/%m')}",
-                p["poc"], "magnet", "amt")
-
-    # --- settimanali: TUTTE le barre (RTH+overnight) dalla mezzanotte ET del
-    #     lunedì corrente. Prima usava solo le barre RTH: il lunedì mattina
-    #     (nessuna barra RTH del giorno) restituiva silenziosamente il max/min
-    #     di VENERDÌ etichettato come 'settimana in corso'. Per i futures il
-    #     max/min settimanale include l'overnight Globex. ---
-    monday = today - timedelta(days=today.weekday())
-    wk_bars = []
-    for d, bars in list(rth.items()) + list(on.items()):
-        if d >= monday:
-            wk_bars.extend(bars)
-    if wk_bars:
-        add("W-HIGH", "Max settimana (in agg.)", max(b["h"] for b in wk_bars), "pivot", "price")
-        add("W-LOW", "Min settimana (in agg.)", min(b["l"] for b in wk_bars), "pivot", "price")
-    if prev_days:
-        pwh_days = [d for d in dates if d < monday]
-        if pwh_days:
-            pb = [b for d in pwh_days for b in rth[d]]
-            if pb:
-                add("PWH", "Max sett. scorsa", max(b["h"] for b in pb), "pivot", "price")
-                add("PWL", "Min sett. scorsa", min(b["l"] for b in pb), "pivot", "price")
+    # NOTA 13/11: i livelli price/AMT (PDH, PDL, ONH/ONL, OPEN, IB, VWAP±σ,
+    # GVWAP, POC, naked POC, W-HIGH/LOW, PWH/PWL) NON vengono più pubblicati:
+    # la scala è SOLO opzioni (muri gamma, flip, max pain) da mesi e quei
+    # livelli restavano nel piano come zavorra — e finivano pure nel track
+    # record. Le barre futures servono ancora per lo spot (last_price).
 
     # --- GEX flip (opzioni ETF) ---
     if gex_flip_etf:
         add("GEX-FLIP", "GEX flip (cambio regime gamma)",
-            gex_flip_etf * spot_fut_ratio, "pivot", "options", chain="etf")
+            _r5(gex_flip_etf * spot_fut_ratio), "pivot", "options", chain="etf")
     # Flip 0DTE: solo le scadenze di oggi (daily + weekly + mensile che
     # cadono oggi). Regime intraday: è il libro che i dealer coprono entro
     # la chiusura. Può divergere dall'aggregato → info, non rumore.
     if gex_flip0_etf:
         add("GEX-FLIP-0DTE", "GEX flip 0DTE (scade oggi)",
-            gex_flip0_etf * spot_fut_ratio, "pivot", "options", chain="etf")
+            _r5(gex_flip0_etf * spot_fut_ratio), "pivot", "options", chain="etf")
 
     # --- muri da catena INDICE (SPX/NDX): stessa logica, fonte separata ---
     # Strike in scala indice, convertiti col fattore indice→futures (ES/SPX).
+    # Normalizzati a griglia 5pt per confluenza con ETF.
     # Nomi con suffisso -IDX: il track record li accumula separatamente
     # (ES:PIN vs ES:PIN-IDX) — è la misura che dice nel tempo quale fonte
     # produce livelli più affidabili.
@@ -661,16 +518,16 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         i_src = "SPX" if futures == "ES" else "NDX"
         if index_opts.get("flip"):
             add("GEX-FLIP-IDX", f"GEX flip da {i_src} (cambio regime gamma)",
-                index_opts["flip"] * i_ratio, "pivot", "options", chain="index")
+                _r5(index_opts["flip"] * i_ratio), "pivot", "options", chain="index")
         if index_opts.get("flip0"):
             add("GEX-FLIP-0DTE-IDX", f"GEX flip 0DTE da {i_src} (scade oggi)",
-                index_opts["flip0"] * i_ratio, "pivot", "options", chain="index")
+                _r5(index_opts["flip0"] * i_ratio), "pivot", "options", chain="index")
         pin_wi, trg_wi = [], []
         for w in index_opts.get("walls") or []:
             strike = w.get("strike")
             if not strike:
                 continue
-            price_fut = strike * i_ratio
+            price_fut = _r5(strike * i_ratio)
             net = w.get("net_gex", 0.0) or 0.0
             (pin_wi if net >= 0 else trg_wi).append((price_fut, w))
         for price_fut, w in sorted(pin_wi, key=lambda x: -abs(x[1].get("net_gex", 0)))[:3]:
@@ -689,13 +546,14 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
 
     # --- muri da opzioni ETF: pin (gamma lunga) = barriera; trigger = accelerano ---
     # Le walls sono in scala ETF (SPY/QQQ): stesso fattore di tutti gli altri
-    # livelli non-opzioni. (calculate_walls lavora sulle catene ETF.)
+    # livelli non-opzioni. Normalizzate a griglia 5pt per confluenza con IDX.
+    # (calculate_walls lavora sulle catene ETF.)
     pin_walls, trigger_walls = [], []
     for w in walls_etf:
         strike = w.get("strike")
         if not strike or not spot_etf:
             continue
-        price_fut = strike * spot_fut_ratio
+        price_fut = _r5(strike * spot_fut_ratio)
         net = w.get("net_gex", 0.0) or 0.0
         if net >= 0:
             pin_walls.append((price_fut, w))
@@ -728,27 +586,8 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
     levels = dedupe_levels(levels)
     levels.sort(key=lambda x: -x["price"])
 
-    # --- lettura del giorno (3 frasi AMT) ---
+    # --- lettura del giorno: solo gamma (i livelli price/AMT non esistono più) ---
     read = []
-    open_p = today_bars[0]["o"]
-    if prev_va:
-        ot = ("sopra la value di ieri" if open_p > prev_va["vah"]
-              else "sotto la value di ieri" if open_p < prev_va["val"]
-              else "dentro la value di ieri")
-        if ot == "sopra la value di ieri":
-            read.append(f"Apertura {ot}: giornata direzionale — accettazione sopra {prev_va['vah']:.0f} "
-                        f"conferma gli acquirenti; il rientro rapido è un failed breakout verso il POC {prev_va['poc']:.0f}.")
-        elif ot == "sotto la value di ieri":
-            read.append(f"Apertura {ot}: si cercano acquirenti — accettazione sotto {prev_va['val']:.0f} "
-                        f"conferma i venditori; il rientro è short covering verso il POC {prev_va['poc']:.0f}.")
-        else:
-            read.append(f"Apertura {ot}: giornata rotazionale — il prezzo dovrebbe oscillare tra "
-                        f"VAL {prev_va['val']:.0f} e VAH {prev_va['vah']:.0f} fino a prova contraria.")
-    if vwap:
-        where = "sopra" if last >= vwap else "sotto"
-        bias = "long: si comprano i pullback verso il VWAP" if where == "sopra" \
-            else "short: si vendono i rimbalzi verso il VWAP"
-        read.append(f"Prezzo {where} VWAP ({vwap:.0f}) → bias intraday {bias}.")
     pins_above = sorted([x["price"] for x in levels if x.get("gamma") == "pin" and x["price"] > last])
     pins_below = sorted([x["price"] for x in levels if x.get("gamma") == "pin" and x["price"] < last])
     if pins_above or pins_below:
@@ -764,16 +603,6 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         "last_price": round(last_fut, 1),
         "read": read,
         "levels": levels,
-        "developing_poc": (p_today["poc"] if p_today else None),
-        "developing_va_h": (p_today["vah"] if p_today else None),
-        "developing_va_l": (p_today["val"] if p_today else None),
-        "profile_today": {str(k): round(vv, 1) for k, vv in profile_from_bars(today_bars).items()},
-        "vwap": round(vwap, 1) if vwap else None,
-        "vwap_sigma": round(sigma, 1) if sigma else None,
-        "ib": {
-            "high": round(session_high_low(ib)[0], 1) if today_bars[:12] else None,
-            "low": round(session_high_low(ib)[1], 1) if today_bars[:12] else None,
-        } if today_bars else None,
     }
 
 
@@ -1061,8 +890,9 @@ def main() -> None:
                 prof_bi = gex_profile_by_bucket(spx.get("expiries", []), spx_spot, window_pct=0.20)
                 index_aggr = {
                     "gamma_regime_index": reg_i,
+                    # Normalizzati a 5pt per confluenza con ETF
                     "top_gamma_index": [
-                        {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_i
+                        {**t, "strike_fut": _r5(t["strike"] * i_ratio)} for t in tg_i
                     ],
                     "gex_profile_index": [
                         {**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["all"]
@@ -1085,19 +915,20 @@ def main() -> None:
                         [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["0dte"]], 25),
                     "gex_profile_week_index_binned": _bin_profile(
                         [{**e, "s": round(e["s"] * i_ratio, 1)} for e in prof_bi["week"]], 25),
+                    # Normalizzati a 5pt per confluenza con ETF
                     "top_gamma_0dte_index": [
-                        {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_bi["0dte"]
+                        {**t, "strike_fut": _r5(t["strike"] * i_ratio)} for t in tg_bi["0dte"]
                     ],
                     "top_gamma_week_index": [
-                        {**t, "strike_fut": round(t["strike"] * i_ratio, 1)} for t in tg_bi["week"]
+                        {**t, "strike_fut": _r5(t["strike"] * i_ratio)} for t in tg_bi["week"]
                     ],
-                    "gex_flip_0dte_index": (round(flip0_i * i_ratio, 1) if flip0_i else None),
+                    "gex_flip_0dte_index": (_r5(flip0_i * i_ratio) if flip0_i else None),
                     "idx_to_fut_ratio": (round(index_to_fut, 6) if index_to_fut else None),
                     "max_pain_nearest_index": (
-                        round(mp_i["nearest"]["strike"] * i_ratio, 1)
+                        _r5(mp_i["nearest"]["strike"] * i_ratio)
                         if mp_i.get("nearest", {}).get("strike") else None),
                     "max_pain_all_index": (
-                        round(mp_i["all"]["strike"] * i_ratio, 1)
+                        _r5(mp_i["all"]["strike"] * i_ratio)
                         if mp_i.get("all", {}).get("strike") else None),
                 }
 
@@ -1112,7 +943,7 @@ def main() -> None:
         plan["spot_etf"] = spot_etf
         plan["gamma_regime"] = gex_regime
         if flip0:
-            plan["gex_flip_0dte"] = round(flip0 * ratio, 1)
+            plan["gex_flip_0dte"] = _r5(flip0 * ratio)
             plan["etf_to_fut_ratio"] = round(ratio, 6)
         if flip0 is not None:
             plan["gex_flip_0dte_native"] = round(flip0, 4)
@@ -1145,20 +976,21 @@ def main() -> None:
         plan["gex_profile_week_binned"] = _bin_profile([
             {**e, "s": round(e["s"] * ratio, 1)} for e in prof_b["week"]
         ], 25)
+        # Normalizzati a 5pt per confluenza ETF↔IDX nella scala
         plan["top_gamma_0dte"] = [
-            {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in tg_b["0dte"]
+            {**t, "strike_fut": _r5(t["strike"] * ratio)} for t in tg_b["0dte"]
         ]
         plan["top_gamma_week"] = [
-            {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in tg_b["week"]
+            {**t, "strike_fut": _r5(t["strike"] * ratio)} for t in tg_b["week"]
         ]
         if mp.get("nearest", {}).get("strike"):
-            plan["max_pain_nearest"] = round(mp["nearest"]["strike"] * ratio, 1)
+            plan["max_pain_nearest"] = _r5(mp["nearest"]["strike"] * ratio)
             plan["max_pain_nearest_native"] = round(mp["nearest"]["strike"], 2)
         if mp.get("all", {}).get("strike"):
-            plan["max_pain_all"] = round(mp["all"]["strike"] * ratio, 1)
+            plan["max_pain_all"] = _r5(mp["all"]["strike"] * ratio)
             plan["max_pain_all_native"] = round(mp["all"]["strike"], 2)
         plan["top_gamma"] = [
-            {**t, "strike_fut": round(t["strike"] * ratio, 1)} for t in top_gamma
+            {**t, "strike_fut": _r5(t["strike"] * ratio)} for t in top_gamma
         ]
         plans[fut] = plan
         bars_data[fut] = (idx_et, h, l, cl)

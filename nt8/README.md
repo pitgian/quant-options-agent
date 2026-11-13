@@ -21,6 +21,19 @@ rigenera il csproj a ogni compilazione e scarta i riferimenti manuali
 Il fetch va su `raw.githubusercontent.com` (branch `data`): verificare che la
 VM abbia accesso a internet. HTTP è asincrono: non blocca mai il thread grafico.
 
+## Confluenza (modalità Entrambi)
+
+I muri vengono dai `top_gamma` del piano (GEX aggregato per strike, picchi
+veri), NON dai profili per strike: il rumore dei profili grezzi inventava
+muri. Una zona di confluenza esiste solo se un muro ETF e uno indice cadono
+entro **±5 pt** sullo stesso prezzo futures (la griglia operativa della
+scala). Con la tolleranza vecchia di 25 pt uscivano 6 "confluenze" che erano
+tutti falsi positivi: SPY 750 → ES 7545 e SPX 7500 → ES 7525 sono DUE livelli
+distinti, non uno confermato due volte (gap minimo reale misurato: 20 pt).
+Quando non c'è nessuna confluenza l'indicatore lo scrive ("⧉ 0 confluenze
+±5pt · gap minimo Xpt") invece di disegnare bande vuote: è un dato, non un
+guasto. Stessa regola e stessi numeri della web app.
+
 ## Proprietà
 
 | Proprietà | Default | Note |

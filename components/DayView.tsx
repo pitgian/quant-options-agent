@@ -194,26 +194,30 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     return (s: number) => `${idxName} ${fmtNat(s / idxRatio)}${etfRatio ? ` · ${etfName} ${fmtNat(s / etfRatio)}` : ''}`;
   }, [chain, futures, idxName, etfName, etfRatio, idxRatio]);
 
-  // Profili RAW delle due fonti (solo vista 'Entrambi'), in SCALA FUTURES:
-  // servono a GexHistogram per rilevare muri e ZONE DI CONFLUENZA. Si usano i
-  // raw e NON i _binned: il bin a 25pt introduce aliasing (dente di sega che
-  // su ES raddoppia) e generava muri finti, uno per barra.
-  // ETF: profilo nativo (SPY/QQQ) × etf_to_fut_ratio. IDX: già futures.
-  const profilesBoth = useMemo(() => {
-    if (!plan || chain !== 'both') return { etf: undefined, idx: undefined, zoneTolPts: undefined };
-    const pick = (
-      all: Array<GexProfileEntry> | undefined,
-      wk: Array<GexProfileEntry> | undefined,
-      zero: Array<GexProfileEntry> | undefined,
-    ): Array<GexProfileEntry> | undefined =>
-      bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
-    const r = plan.etf_to_fut_ratio;
-    const etfNat = pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte);
+  // I MURI delle due fonti (solo vista 'Entrambi'), già in scala futures.
+  // Si prendono i top_gamma del piano: sono GEX aggregati per strike, con
+  // picchi veri. I profili grezzi per strike NO: hanno troppo rumore e il
+  // detector inventava muri (e quindi confluenze) dove non ce n'erano.
+  // net_gex nel JSON è in DOLLARI → /1e9 per avere Mld, stessa unità delle
+  // etichette della scala. native/side servono al pannello per dire DI QUALE
+  // catena è il muro (SPY 750 vs SPX 7500) e se è call o put.
+  const wallsBoth = useMemo(() => {
+    if (!plan || chain !== 'both') return { etf: undefined, idx: undefined };
+    const gammaToWalls = (
+      tg: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }> | undefined,
+    ): GexProfileEntry[] =>
+      (tg ?? []).map(t => ({
+        s: t.strike_fut,
+        c: t.sign === 'long' ? Math.abs(t.net_gex) / 1e9 : 0,
+        p: t.sign === 'short' ? -Math.abs(t.net_gex) / 1e9 : 0,
+        native: t.strike,
+        side: t.side,
+      }));
     return {
-      etf: r && etfNat ? etfNat.map(e => ({ ...e, s: Math.round(e.s * r * 10) / 10 })) : undefined,
-      idx: pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index),
-      // barre: non più usate in 'Entrambi' (solo zone di confluenza)
-      zoneTolPts: undefined, // auto: raggio = (passoEtf + passoIdx)/2 calcolato nel componente
+      etf: gammaToWalls(bucket === '0dte' ? plan.top_gamma_0dte
+        : bucket === 'week' ? plan.top_gamma_week : plan.top_gamma),
+      idx: gammaToWalls(bucket === '0dte' ? plan.top_gamma_0dte_index
+        : bucket === 'week' ? plan.top_gamma_week_index : plan.top_gamma_index),
     };
   }, [plan, chain, bucket]);
 
@@ -515,6 +519,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           profile={profileSel}
           spot={chain === 'etf' ? (plan?.spot_etf ?? spot) : spot}
           idxName={chain === 'etf' ? etfName : idxName}
+          etfName={etfName}
           futName={futures}
           strikeScale={chain === 'etf' ? etfName : futures}
           maxPain={chain === 'index' ? plan?.max_pain_nearest_index
@@ -524,18 +529,28 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
             ? (bucket === '0dte' ? (plan?.gex_flip_0dte_native ?? gexFlip?.price) : (plan?.gex_flip_native ?? gexFlip?.price))
             : gexFlip?.price}
           futEq={futEq}
-          zoneEtf={profilesBoth.etf}
-          zoneIdx={profilesBoth.idx}
-          zoneTolPts={profilesBoth.zoneTolPts}
+          zoneEtf={wallsBoth.etf}
+          zoneIdx={wallsBoth.idx}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
-          Ogni barra è uno strike reale della catena (niente aggregazione):
-          barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
-          sotto = gamma corta delle put (amplifica). La linea blu tratteggiata è lo spot: le barre più
-          alte vicino alla linea sono i pin di scadenza, le code rosse lontane sono l'assicurazione
-          anti-crollo. Il selettore qui sopra cambia la finestra di zoom (±1,5% zona del denaro,
-          ±20% libro completo).
-        </p>
+          {chain === 'both'
+            ? <>
+                Il pannello confronta i MURI delle due catene sullo STESSO prezzo {futures}:
+                una riga per livello, barra = |GEX| a scala comune, verde = gamma lunga
+                (pin 🛡) / rosso = gamma corta (trigger ⚡). <b>⧉ viola = confluenza</b>, cioè
+                un muro {etfName} e uno {idxName} che cadono entro 5 pt l'uno dall'altro —
+                due libri indipendenti d'accordo sullo stesso livello. Se di confluenze
+                non ce n'è, è scritto: {etfName} e {idxName} hanno griglie di strike diverse
+                e i loro muri possono stare a ~20 pt l'uno dall'altro, che sono due livelli
+                distinti, NON uno solo. La finestra sopra limita solo quali muri entrano
+                nel confronto.
+              </>
+            : <>Ogni barra è uno strike reale della catena (niente aggregazione):
+                barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
+                sotto = gamma corta delle put (amplifica). La linea blu tratteggiata è lo spot:
+                le barre più alte vicino alla linea sono i pin di scadenza, le code rosse lontane
+                sono l'assicurazione anti-crollo. Il selettore qui sopra cambia la finestra di
+                zoom (±1,5% zona del denaro, ±20% libro completo).</>}        </p>
       </Card>
     </div>
   );

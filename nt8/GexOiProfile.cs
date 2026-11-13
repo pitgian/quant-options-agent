@@ -132,6 +132,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private sealed class GexZone { public double Lo, Hi, Center, NetEtf, NetIdx, EtfS, IdxS; }
 		private List<GexZone> zones;
 		private double tolPts;   // tolleranza zona risolta (pt futures) per il render
+		private double minGapPts; // distanza minima reale fra un muro ETF e uno indice (0=n/a)
 
 		// JavaScriptSerializer deserializza gli ARRAY JSON come
 		// System.Collections.ArrayList, NON come object[] (verificato 12/11:
@@ -383,46 +384,46 @@ namespace NinjaTrader.NinjaScript.Indicators
 			zones = null;
 			if (perFonte.Count == 2)
 			{
-				// I MURI si cercano sui profili RAW (risoluzione piena), non sui
-				// binnati: il bin a 25pt introduce aliasing (misurato: dente di
-				// sega 14.9% -> 28.4% del max su ES) e generava muri finti.
-				// ETF: gex_profile*(nativo) x etf_to_fut_ratio -> scala futures.
-				// IDX: gex_profile*_index e' GIA' in scala futures.
-				double etfRatio = TryNum(plan, "etf_to_fut_ratio");
-				List<KeyValuePair<double, double>> rawEtf, rawIdx;
-				if (etfRatio > 0)
-				{
-					rawEtf = RawProfile(plan, "gex_profile" + suffix, etfRatio);
-					if (rawEtf.Count == 0) rawEtf = DictToList(perFonte[0]);
-				}
-				else rawEtf = DictToList(perFonte[0]);
-				rawIdx = RawProfile(plan, idxKeyRaw, 1.0);
-				if (rawIdx.Count == 0) rawIdx = DictToList(perFonte[1]);
+				// I MURI si cercano sui top_gamma (già aggregati, picchi chiari),
+				// NON sui profili binnati che introducono aliasing.
+				// top_gamma ha: strike_fut (scala fut), net_gex (dollari), sign, side
+				List<KeyValuePair<double, double>> wallsEtf, wallsIdx;
 
-				// RISOLUZIONE PER FONTE (fix 13/11, su segnalazione di una review
-				// esterna): usare la STESSA finestra in punti per entrambe le fonti
-				// dava selettività incomparabile — su NQ ±57pt erano ±1.4 strike
-				// ETF (passo 41pt) ma ±5.6 strike indice (passo 10pt): il criterio
-				// di "massimo locale" era quasi banale per l'ETF e severissimo per
-				// l'indice. Ora ogni fonte usa la PROPRIA finestra (2.5 passi
-				// nativi) e la confluenza richiede che i due intervalli di
-				// risoluzione si intersechino: raggio = (passoEtf + passoIdx)/2.
-				double stepEtf = etfRatio > 0 ? etfRatio : MedianStep(rawEtf);
-				double stepIdx = MedianStep(rawIdx);
-				if (stepEtf <= 0) stepEtf = stepIdx;
-				if (stepIdx <= 0) stepIdx = stepEtf;
-				double radius = ZoneTolPct > 0
+				// Estrai muri da top_gamma ETF
+				object[] tgEtfArr = ToArray(plan.TryGetValue("top_gamma" + suffix, out var tgEtfObj) ? tgEtfObj : null);
+				wallsEtf = TopGammaToWalls(tgEtfArr);
+
+				// Estrai muri da top_gamma IDX
+				object[] tgIdxArr = ToArray(plan.TryGetValue("top_gamma_index" + suffix, out var tgIdxObj) ? tgIdxObj : null);
+				wallsIdx = TopGammaToWalls(tgIdxArr);
+
+				// Tolleranza: la STESSA della web app = la griglia operativa della
+				// scala (5 pt). 25 pt (il valore vecchio) faceva passare per confluenza
+				// muri a 20 pt uno dall'altro, che su ES sono DUE livelli distinti: i
+				// "6 zone" della vecchia UI erano tutti falsi positivi (verificato
+				// 13/11 sul piano live, gap minimo reale 20 pt).
+				double tol = ZoneTolPct > 0
 					? planSpot * ZoneTolPct / 100.0
-					: (stepEtf + stepIdx) / 2.0;
-				double winEtf = 2.5 * stepEtf, winIdx = 2.5 * stepIdx;
-				tolPts = radius;
+					: 5.0;
+				tolPts = tol;
 
-				zones = BuildZones(rawEtf, rawIdx, planSpot, radius, winEtf, winIdx);
-				Log(string.Format("GexOiProfile: confluenza -> {0} zone · griglia ETF {1:0.0}pt / IDX {2:0.0}pt · raggio {3:0.0}pt{4} · soglia muro {5}% + max locale; raw {6}/{7} punti",
-					zones.Count, stepEtf, stepIdx, radius,
-					ZoneTolPct > 0 ? " (manuale)" : " = (passoE+passoI)/2",
-					WallPct, rawEtf.Count, rawIdx.Count),
-					LogLevel.Information);
+				zones = BuildZones(wallsEtf, wallsIdx, planSpot, tol, 50.0, 50.0);
+
+				// Distanza minima reale fra i due libri: il numero che il trader
+				// deve vedere quando le confluenze sono zero.
+				minGapPts = 0;
+				{
+					double best = double.MaxValue;
+					foreach (var a in wallsEtf)
+						foreach (var b in wallsIdx)
+						{
+							double d = Math.Abs(a.Key - b.Key);
+							if (d < best) best = d;
+						}
+					if (best != double.MaxValue) minGapPts = best;
+				}
+				Log(string.Format("GexOiProfile: confluenza -> {0} zone (tol {1:0}pt) · gap minimo ETF↔indice {2:0}pt · soglia muro {3}%",
+					zones.Count, tol, minGapPts, WallPct), LogLevel.Information);
 			}
 
 			var outBars = new List<ProfileBar>();
@@ -455,11 +456,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 		// ------------------------------------------------------- zone confluenza
 
 		// Muro = |net| >= WallPct% del massimo della PROPRIA fonte (soglia relativa)
-		// **E massimo locale** entro ±tol. Il massimo locale è essenziale: senza,
-		// qualsiasi bin sopra soglia diventa "muro" e su ES uscivano 12 zone finte
-		// una per barra (il profilo indice alterna 5/6 strike per bin = dente di
-		// sega, e le creste dell'aliasing passavano da muri).
-		private List<KeyValuePair<double, double>> Walls(List<KeyValuePair<double, double>> raw, double tol)
+		// **E massimo locale** entro ±win. La finestra win è passata da BuildZones:
+		// top_gamma: passo ~5-10pt → win=30pt (ETF) / 15pt (IDX) sufficiente.
+		private List<KeyValuePair<double, double>> Walls(List<KeyValuePair<double, double>> raw, double win)
 		{
 			var res = new List<KeyValuePair<double, double>>();
 			if (raw == null || raw.Count < 1) return res;
@@ -474,10 +473,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 				if (Math.Abs(a[i].Value) < thr) continue;
 				double s = a[i].Key;
 				bool isMax = true;
-				for (int j = i - 1; j >= 0 && a[j].Key >= s - tol; j--)
+				for (int j = i - 1; j >= 0 && a[j].Key >= s - win; j--)
 					if (Math.Abs(a[j].Value) > Math.Abs(a[i].Value)) { isMax = false; break; }
 				if (isMax)
-					for (int j = i + 1; j < a.Count && a[j].Key <= s + tol; j++)
+					for (int j = i + 1; j < a.Count && a[j].Key <= s + win; j++)
 						if (Math.Abs(a[j].Value) > Math.Abs(a[i].Value)) { isMax = false; break; }
 				if (isMax) res.Add(a[i]);
 			}
@@ -508,6 +507,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			var res = new List<KeyValuePair<double, double>>();
 			if (d != null) foreach (var kv in d) res.Add(new KeyValuePair<double, double>(kv.Key, kv.Value));
+			return res;
+		}
+
+		// Converte top_gamma JSON in lista di muri (strike_fut, net_gex).
+		// top_gamma è già aggregato con picchi chiari — perfetto per wall detection.
+		// net_gex è in DOLLARI, lo lasciamo così: Walls usa soglie relative (%).
+		private List<KeyValuePair<double, double>> TopGammaToWalls(object[] tgArr)
+		{
+			var res = new List<KeyValuePair<double, double>>();
+			if (tgArr == null || tgArr.Length == 0) return res;
+			foreach (var eo in tgArr)
+			{
+				var e = eo as Dictionary<string, object>;
+				if (e == null) continue;
+				double sf = TryNum(e, "strike_fut");
+				if (sf <= 0) continue;
+				double ng = TryNum(e, "net_gex"); // dollari, non Mld
+				string sign = TryStr(e, "sign") ?? "";
+				// Solo i muri significativi: |net_gex| > 1% del max (soglia fissa)
+				res.Add(new KeyValuePair<double, double>(sf, ng));
+			}
 			return res;
 		}
 
@@ -717,13 +737,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 					if (sel.Count == 0)
 					{
-						// 0 zone: track punteggiato + diamante vuoto allo spot, NESSUN testo
+						// 0 confluenze: NON si disegna niente di decorativo. Un track
+						// punteggiato + il testo che dice QUANTO sono lontani i muri:
+						// è il dato (le due fonti presidiano livelli distinti).
 						using (var bTr = new SolidColorBrush(RenderTarget, new Color4(0.165f, 0.192f, 0.231f, 1f)))
 							DrawDashedV(RenderTarget, bTr, x_r0 + railW / 2f, 24f, panelH - 8f, 3f, 3f);
 						float ys = (float)chartScale.GetYByValue(spot);
 						float dcx = x_r0 + railW / 2f;
 						using (var bD = new SolidColorBrush(RenderTarget, new Color4(0.165f, 0.192f, 0.231f, 1f)))
 							RenderTarget.DrawRectangle(new SharpDX.RectangleF(dcx - 3f, ys - 3f, 6f, 6f), bD, 1f);
+						using (var bNone = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
+							DrawTextRight(RenderTarget, tf, bNone,
+								string.Format("⧉ 0 confluenze ±{0:0}pt · gap minimo {1:0}pt", tolPts, minGapPts),
+								x_r0 - 20f, Math.Max(28f, Math.Min(panelH - 30f, ys - 6f)));
 					}
 					else
 					{
