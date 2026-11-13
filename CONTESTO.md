@@ -178,10 +178,11 @@ track record e l'indicatore NT8 vivono di soli muri gamma / flip / max pain.
    `top_gamma` del piano, non dai profili per strike (rumore → muri finti).
    Con la tolleranza vecchia (25 pt) le "confluenze" erano falsi positivi:
    SPY 750 → ES 7545 e SPX 7500 → ES 7525 distano 20 pt e sono DUE livelli.
-   In vista 'Entrambi' l'istogramma diventa un PANNELLO MURI: una riga per
-   livello, barra |GEX| a scala comune, righe ⧉ viola quando le due fonti
-   confermano lo stesso prezzo; se non ce ne sono il pannello lo dice e
-   riporta il gap minimo fra i muri (è un dato, non un guasto). La scala
+   In vista 'Entrambi' l'istogramma resta IDENTICO alle viste singole (barre
+   verticali per strike = somma ETF+indice sulla griglia bin 25pt) e le
+   confluenze sono BANDE VIOLA sovrapposte (tooltip con i due muri e i loro
+   GEX); se non ce ne sono il riepilogo sopra il grafico lo dice e riporta il
+   gap minimo fra i muri (è un dato, non un guasto). La scala
    (`lib/auction.ts`) fonde le zone adiacenti con la STESSA regola ±5 pt e
    solo fra muri opzioni di fonti diverse, così ⧉ significa la stessa cosa
    nei due posti.

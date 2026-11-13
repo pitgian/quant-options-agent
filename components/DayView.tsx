@@ -534,17 +534,16 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           {chain === 'both'
-            ? <>
-                Il pannello confronta i MURI delle due catene sullo STESSO prezzo {futures}:
-                una riga per livello, barra = |GEX| a scala comune, verde = gamma lunga
-                (pin 🛡) / rosso = gamma corta (trigger ⚡). <b>⧉ viola = confluenza</b>, cioè
-                un muro {etfName} e uno {idxName} che cadono entro 5 pt l'uno dall'altro —
-                due libri indipendenti d'accordo sullo stesso livello. Se di confluenze
-                non ce n'è, è scritto: {etfName} e {idxName} hanno griglie di strike diverse
-                e i loro muri possono stare a ~20 pt l'uno dall'altro, che sono due livelli
-                distinti, NON uno solo. La finestra sopra limita solo quali muri entrano
-                nel confronto.
-              </>
+            ? <>In 'Entrambi' l'istogramma è identico alle viste singole: barre verticali,
+                una per strike. Le barre sono la <b>somma dei due libri per strike</b> sulla
+                griglia bin 25pt in scala futures (l'unica su cui ETF e indice condividono
+                gli strike): verde = gamma lunga delle call, rosso = gamma corta delle put.
+                Le <b>bande viola ⧉</b> sovrapposte sono le confluenze: un muro della catena
+                {etfName} e uno della catena {idxName} entro 5 pt sullo stesso prezzo {futures},
+                calcolate sui top_gamma delle due fonti presi separatamente (passa il mouse
+                sulla banda per vedere i due muri e i loro GEX). Se bande non ce ne sono è un
+                dato, non un guasto: le due catene hanno griglie di strike diverse e i loro
+                muri più grossi possono stare a ~20 pt di distanza, cioè su due livelli distinti.</>
             : <>Ogni barra è uno strike reale della catena (niente aggregazione):
                 barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
                 sotto = gamma corta delle put (amplifica). La linea blu tratteggiata è lo spot:
