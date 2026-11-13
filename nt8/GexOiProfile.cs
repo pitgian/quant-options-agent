@@ -94,15 +94,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 		}
 
 		// --- stato dati (SOLO thread UI: scritto dentro TriggerCustomEvent) ---
-		private List<ProfileBar> bars;          // profilo netto per strike (scala fut)
-		// Solo modalità Entrambi: i due libri tenuti SEPARATI per il disegno.
-		// Le barre "Entrambi" NON sono la somma: sommare due libri i cui muri
-		// quasi mai coincidono produce un profilo che non rappresenta né l'uno
-		// né l'altro (su ES la somma è dominata dall'indice per l'83%). Si
-		// disegnano quindi due barre per strike: alta = ETF, bassa = indice,
-		// ognuna normalizzata al PROPRIO massimo di finestra per renderle
-		// confrontabili (i valori assoluti restano nei log e nelle etichette).
-		private List<ProfileBar> barsEtf, barsIdx;
+		private List<ProfileBar> bars;          // profilo netto per strike (scala fut;
+		                                        // in Entrambi = SOMMA ETF+indice, come il sito)
 		private DateTime planTime = DateTime.MinValue;
 		private double   planSpot;              // last_price del piano (fallback)
 		private double   maxPain;               // scala fut
@@ -433,17 +426,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 			outBars = outBars.OrderBy(b => b.S).ToList();
 			bars = outBars.Count > 0 ? outBars : null;
 
-			// barre per fonte (solo Entrambi): griglia 25pt condivisa, valori assoluti
-			barsEtf = barsIdx = null;
-			if (perFonte.Count == 2)
-			{
-				var le = new List<ProfileBar>();
-				foreach (var kv in perFonte[0]) le.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
-				var li = new List<ProfileBar>();
-				foreach (var kv in perFonte[1]) li.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
-				barsEtf = le.OrderBy(b => b.S).ToList();
-				barsIdx = li.OrderBy(b => b.S).ToList();
-			}
 			string keysTxt = string.Join("+", profKeys.ToArray());
 			fetchError = bars == null ? "profilo '" + keysTxt + "' assente o vuoto" : "";
 			if (profKeys.Count > 1 && matchedFonte < 2 && bars != null)
@@ -705,165 +687,55 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
-				// ---- GEOMETRIA COLONNA (spec Claude Opus 5): la zona NON occupa
-				//      tutta la colonna. Rail 10px a sinistra + canale tacche muri
-				//      ai due lati del rail + canale etichette a destra con buffer
-				//      OPACO: l'etichetta non puo' mai collidere con le tacche ne'
-				//      con le linee MP/Flip (collisione strutturalmente impossibile).
-				float Wcol = xRight - xLeft;
-				bool  wide = Wcol >= 120f;
-				float railOff = wide ? 8f  : 4f;
-				float railW   = wide ? 10f : 8f;
-				float labOff  = wide ? 38f : 26f;
-				float x_r0 = xLeft + railOff, x_r1 = x_r0 + railW, x_t0 = xLeft + labOff;
-
+				// ---- CONFLUENZA (Entrambi): bande viola sulla colonna. Una
+				//      confluenza e' un INTERVALLO DI PREZZO, quindi nella colonna
+				//      (asse y = prezzo) e' un segmento: rettangolo traslucido largo
+				//      quanto la colonna, bordi tratteggiati ai due prezzi, etichetta
+				//      ⧉ a destra. Stessa regola del sito: muro ETF e muro indice
+				//      dai top_gamma entro ±tolPts (5 pt di default).
+				float colW = xRight - xLeft;
 				bool inBoth = OptSource == GexOiSource.Entrambi;
-				if (inBoth)
+
+				if (inBoth && zones != null && zones.Count > 0)
 				{
-					// selezione: top 6 per peso + GARANTITE la piu' vicina sopra e
-					// la piu' vicina sotto lo spot (sostituiscono la 6a e la 5a)
-					var sel = new List<GexZone>();
-					double maxW = 0.01;
-					if (zones != null && zones.Count > 0)
+					var sel = zones
+						.OrderByDescending(z => Math.Abs(z.NetEtf) + Math.Abs(z.NetIdx))
+						.Take(6).ToList();
+					foreach (var z in sel)
 					{
-						foreach (var zz in zones) maxW = Math.Max(maxW, Math.Abs(zz.NetEtf) + Math.Abs(zz.NetIdx));
-						sel = zones.OrderByDescending(zz => Math.Abs(zz.NetEtf) + Math.Abs(zz.NetIdx)).Take(6).ToList();
-						var byPrice = zones.OrderBy(zz => zz.Center).ToList();
-						var nAbove = byPrice.LastOrDefault(zz => zz.Center < spot);
-						var nBelow = byPrice.FirstOrDefault(zz => zz.Center >= spot);
-						if (nAbove != null && !sel.Contains(nAbove)) { if (sel.Count >= 6) sel[5] = nAbove; else sel.Add(nAbove); }
-						if (nBelow != null && !sel.Contains(nBelow)) { if (sel.Count >= 6) sel[4] = nBelow; else sel.Add(nBelow); }
-					}
-
-					if (sel.Count == 0)
-					{
-						// 0 confluenze: NON si disegna niente di decorativo. Un track
-						// punteggiato + il testo che dice QUANTO sono lontani i muri:
-						// è il dato (le due fonti presidiano livelli distinti).
-						using (var bTr = new SolidColorBrush(RenderTarget, new Color4(0.165f, 0.192f, 0.231f, 1f)))
-							DrawDashedV(RenderTarget, bTr, x_r0 + railW / 2f, 24f, panelH - 8f, 3f, 3f);
-						float ys = (float)chartScale.GetYByValue(spot);
-						float dcx = x_r0 + railW / 2f;
-						using (var bD = new SolidColorBrush(RenderTarget, new Color4(0.165f, 0.192f, 0.231f, 1f)))
-							RenderTarget.DrawRectangle(new SharpDX.RectangleF(dcx - 3f, ys - 3f, 6f, 6f), bD, 1f);
-						using (var bNone = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
-							DrawTextRight(RenderTarget, tf, bNone,
-								string.Format("⧉ 0 confluenze ±{0:0}pt · gap minimo {1:0}pt", tolPts, minGapPts),
-								x_r0 - 20f, Math.Max(28f, Math.Min(panelH - 30f, ys - 6f)));
-					}
-					else
-					{
-						var toLabel = new List<object[]>();
-						foreach (var z in sel)
+						float yHi = (float)chartScale.GetYByValue(z.Hi + tolPts / 2);
+						float yLo = (float)chartScale.GetYByValue(z.Lo - tolPts / 2);
+						float top = Math.Max(0f, Math.Min(yHi, yLo));
+						float bot = Math.Min(panelH, Math.Max(yHi, yLo));
+						if (bot < 0 || top > panelH) continue;
+						if (bot - top < 4f) { float c0 = (top + bot) / 2f; top = c0 - 2f; bot = c0 + 2f; }
+						using (var bz = new SolidColorBrush(RenderTarget, new Color4(0.545f, 0.361f, 0.965f, 0.13f)))
+							RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, top, colW, bot - top), bz);
+						using (var bb = new SolidColorBrush(RenderTarget, new Color4(0.545f, 0.361f, 0.965f, 0.75f)))
 						{
-							double comb = Math.Abs(z.NetEtf) + Math.Abs(z.NetIdx);
-							double wrel = comb / maxW;
-							float  alpha = wrel >= 0.66 ? 0.18f : wrel >= 0.33 ? 0.11f : 0.06f;
-							float  tickLen = wrel >= 0.66 ? 12f : wrel >= 0.33 ? 9f : 6f;
-							int    pips = wrel >= 0.66 ? 3 : wrel >= 0.33 ? 2 : 1;
-							bool putBoth  = z.NetEtf < 0 && z.NetIdx < 0;
-							bool callBoth = z.NetEtf > 0 && z.NetIdx > 0;
-
-							Color4 cFill, cTickE, cTickI;
-							if (callBoth)      { cFill = new Color4(0.059f, 0.820f, 0.757f, alpha); cTickE = new Color4(0.059f, 0.820f, 0.757f, 1f); cTickI = new Color4(0.498f, 0.906f, 0.875f, 1f); }
-							else if (putBoth)  { cFill = new Color4(0.298f, 0.525f, 1.000f, alpha); cTickE = new Color4(0.298f, 0.525f, 1.000f, 1f); cTickI = new Color4(0.639f, 0.753f, 1.000f, 1f); }
-							else               { cFill = new Color4(1.000f, 0.310f, 0.639f, alpha); cTickE = new Color4(1.000f, 0.310f, 0.639f, 1f); cTickI = new Color4(1.000f, 0.655f, 0.812f, 1f); }
-
-							float yHi = (float)chartScale.GetYByValue(z.Hi);
-							float yLo = (float)chartScale.GetYByValue(z.Lo);
-							float top = Math.Min(yHi, yLo), bot = Math.Max(yHi, yLo);
-							if (bot < 0 || top > panelH) continue;
-							if (bot - top < 6f) { float c0 = (top + bot) / 2f; top = c0 - 3f; bot = c0 + 3f; }
-							top = (float)Math.Round(top); bot = (float)Math.Round(bot);
-
-							// rail: fill + bordi verticali sx/dx (nessun bordo top/bottom)
-							using (var bz = new SolidColorBrush(RenderTarget, cFill))
-								RenderTarget.FillRectangle(new SharpDX.RectangleF(x_r0, top, railW, bot - top), bz);
-							float bA = wrel >= 0.66 ? 1.5f : 1f;
-							using (var bb = new SolidColorBrush(RenderTarget, new Color4(cTickE.R, cTickE.G, cTickE.B, 0.95f)))
-							{
-								RenderTarget.DrawLine(new SharpDX.Vector2(x_r0, top), new SharpDX.Vector2(x_r0, bot), bb, bA);
-								RenderTarget.DrawLine(new SharpDX.Vector2(x_r1, top), new SharpDX.Vector2(x_r1, bot), bb, bA);
-							}
-
-							// muri: ETF a SINISTRA (tacca + quadrato PIENO), INDICE a DESTRA
-							// (tacca + quadrato VUOTO): lato + forma ridondanti, leggibili
-							// anche se i due muri coincidono in y.
-							float yE = (float)Math.Round((float)chartScale.GetYByValue(z.EtfS));
-							float yI = (float)Math.Round((float)chartScale.GetYByValue(z.IdxS));
-							if (yE >= 4 && yE <= panelH - 4)
-								using (var bT = new SolidColorBrush(RenderTarget, cTickE))
-								{
-									RenderTarget.DrawLine(new SharpDX.Vector2(x_r0 - 1 - tickLen, yE), new SharpDX.Vector2(x_r0 - 1, yE), bT, 2f);
-									RenderTarget.FillRectangle(new SharpDX.RectangleF(x_r0 - 17, yE - 2, 4, 4), bT);
-								}
-							if (yI >= 4 && yI <= panelH - 4)
-								using (var bT = new SolidColorBrush(RenderTarget, cTickI))
-								{
-									RenderTarget.DrawLine(new SharpDX.Vector2(x_r1 + 1, yI), new SharpDX.Vector2(x_r1 + 1 + tickLen, yI), bT, 2f);
-									RenderTarget.DrawRectangle(new SharpDX.RectangleF(x_r1 + 13, yI - 2, 4, 4), bT, 1f);
-								}
-							if (Math.Abs(yE - yI) <= 10f)
-								using (var bh = new SolidColorBrush(RenderTarget, new Color4(cTickE.R, cTickE.G, cTickE.B, 0.9f)))
-									RenderTarget.DrawLine(new SharpDX.Vector2(x_r0 + railW / 2f, Math.Min(yE, yI)), new SharpDX.Vector2(x_r0 + railW / 2f, Math.Max(yE, yI)), bh, 1f);
-
-							// etichetta: buffer opaco nel canale dedicato
-							double domS = Math.Abs(z.NetEtf) >= Math.Abs(z.NetIdx) ? z.EtfS : z.IdxS;
-							float yC = (float)chartScale.GetYByValue(z.Center);
-							if (yC >= 8 && yC <= panelH - 8)
-								toLabel.Add(new object[] { domS.ToString("0"), yC, yC, pips, cTickE });
+							DrawDashPattern(RenderTarget, bb, xLeft, xRight, top, 3, 3);
+							DrawDashPattern(RenderTarget, bb, xLeft, xRight, bot, 3, 3);
 						}
-
-						// anti-collisione: pitch minimo 14px tra i centri dei buffer
-						var ord = toLabel.OrderBy(t => (float)t[1]).ToList();
-						for (int i = 1; i < ord.Count; i++)
-						{
-							float yPrev = (float)ord[i - 1][1], yCur = (float)ord[i][1];
-							if (yCur - yPrev < 14f) ord[i][1] = yPrev + 14f;
-						}
-						foreach (var t in ord)
-						{
-							string txt = (string)t[0];
-							float yL = (float)t[1], yReal = (float)t[2];
-							int pips = (int)t[3];
-							var cV = (Color4)t[4];
-							if (yL < 8f || yL > panelH - 8f) continue;
-							int digits = txt.Length;
-							float bufW = Math.Min(62f, 8f + digits * 6f + 4f + 5f * pips);
-							using (var bg = new SolidColorBrush(RenderTarget, new Color4(0.039f, 0.051f, 0.071f, 1f)))
-								RenderTarget.FillRectangle(new SharpDX.RectangleF(x_t0, yL - 6.5f, bufW, 13f), bg);
-							using (var bb2 = new SolidColorBrush(RenderTarget, new Color4(cV.R, cV.G, cV.B, 1f)))
-							{
-								RenderTarget.DrawRectangle(new SharpDX.RectangleF(x_t0, yL - 6.5f, bufW, 13f), bb2, 1f);
-								DrawTextLeft(RenderTarget, tf, bb2, txt, x_t0 + 4, yL - 7.5f);
-								for (int p = 0; p < pips; p++)
-									RenderTarget.FillRectangle(new SharpDX.RectangleF(x_t0 + 8f + digits * 6f + 4f + p * 5f, yL - 1.5f, 3f, 3f), bb2);
-								if (Math.Abs(yL - yReal) > 4f)
-									DrawDashed(RenderTarget, bb2, x_r0 + 5f, x_t0 - 2f, yReal, 2f, 2f);
-							}
-						}
+						using (var bl = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
+							DrawTextLeft(RenderTarget, tf, bl,
+								"⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
+								xRight + 6, (top + bot) / 2 - 7);
 					}
 				}
-
-				// ---- UNA BARRA PER STRIKE (i bin a pixel erano la causa della
-				//      dipendenza dallo zoom: a ogni zoom aggregavano strike
-				//      diversi e rinormalizzavano). Prezzo y reale via GetYByValue;
-				//      SOLO lo SPESSORE si adatta al gap dallo strike adiacente
-				//      (72% del gap, come la larghezza 0.72 delle barre del sito,
-				//      tetto PixelBinSize px): a zoom-out non si sovrappongono,
-				//      ma lunghezze e valori NON cambiano mai.
-				float colW = xRight - xLeft;
-
-				// ---- MODALITÀ ENTRAMBI: NESSUNA BARRA. Solo le zone di confluenza
-				//      (bande disegnate più sopra) con due tacche che indicano dove
-				//      cade esattamente il muro di ciascun libro dentro la zona.
-				//      Le barre sono state eliminate perché un istogramma in questa
-				//      vista costringeva a scegliere fra somma (profilo che non
-				//      rappresenta nessuno dei due libri) e doppia serie (rumore).
-				//      Il dato utile è UNO: dove i due libri confermano lo stesso
-				//      livello.
-				else
+				if (inBoth && (zones == null || zones.Count == 0))
 				{
+					// 0 confluenze: messaggio onesto, non bande vuote: e' il dato
+					// (le due catene presidiano livelli distinti, gap = minGapPts).
+					using (var bNone = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
+						DrawTextLeft(RenderTarget, tf, bNone,
+							string.Format("⧉ 0 confluenze ±{0:0}pt · gap minimo {1:0}pt", tolPts, minGapPts),
+							xLeft, 40);
+				}
+
+				// ---- UNA BARRA PER STRIKE, in TUTTE le modalita': in Entrambi le
+				//      barre sono la SOMMA ETF+indice (griglia 25pt), identico al
+				//      sito. Solo lo SPESSORE si adatta al gap dallo strike vicino
+				//      (72% del gap, tetto PixelBinSize px): le lunghezze no.
 				int   nW   = inWin.Count;
 				var   ys   = new float[nW];
 				for (int i = 0; i < nW; i++) ys[i] = (float)chartScale.GetYByValue(inWin[i].S);
@@ -884,11 +756,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 						// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
 				}
-				}
-				// etichette: i 3 strike piu grossi per |net| nella finestra
-				// (in modalità Entrambi le etichette sono già state messe nel ramo
-				// a due barre, dove si usano i pesi delle due fonti)
-				if (!inBoth)
+
+				// etichette: i 3 strike piu' grossi per |net| nella finestra
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
 						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
@@ -901,13 +770,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 					}
 				}
 
-				// ---- linee: Max Pain (ambra) / Flip (viola). NIENTE linea Spot:
-				//      il grafico ha già la sua (era ridondante e rumorosa).
-				// Le linee partono dall'ULTIMA CANDELA (non dal bordo sinistro del
-				// pannello): attraversare tutta la price action sporcava il grafico.
-				// Margine di 8px a sinistra della candela = la linea "tocca" la
-				// candela senza coprirne il corpo; se non c'è spazio (zoom/scroll
-				// con candela oltre la colonna) si tiene il bordo della colonna.
+				// ---- linee: Max Pain (ambra) / Flip (viola) / Flip IDX (Entrambi).
+				//      NIENTE linea Spot: il grafico ha gia' la sua. Partono
+				//      dall'ULTIMA CANDELA per non attraversare la price action.
 				float xLast = px + 10;
 				try
 				{
@@ -921,29 +786,32 @@ namespace NinjaTrader.NinjaScript.Indicators
 				if (xLast < px + 10) xLast = px + 10;
 				if (xLast > xRight - 2) xLast = xRight - 2;
 
-				var lines = new List<Tuple<float, Color4, string>>();
+				// Tuple a 5 elementi: y, colore, etichetta, dash, gap.
+				// (PRIMA era Tuple<3> ma il disegno leggeva Item4/Item5: CS1061
+				//  a ogni compilazione — fix 13/11.)
+				var lines = new List<Tuple<float, Color4, string, float, float>>();
 				if (hasMaxPain)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain),
-						new Color4(0.98f, 0.75f, 0.25f, 0.95f), "MP " + maxPain.ToString("0")));
+						new Color4(0.98f, 0.75f, 0.25f, 0.95f), "MP " + maxPain.ToString("0"), 6f, 3f));
 				if (hasFlip)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip),
-						new Color4(0.72f, 0.55f, 0.95f, 0.95f), "Flip " + flip.ToString("0")));
+						new Color4(0.72f, 0.55f, 0.95f, 0.95f), "Flip " + flip.ToString("0"), 6f, 3f));
 				// Entrambi: anche il flip dell'ALTRA fonte — i due flip raramente
-				// coincidono ed è proprio la distanza fra i due a dire se il regime
-				// è confermato su ETF e indice o è in divergenza.
-				if (OptSource == GexOiSource.Entrambi && hasFlipIdx && Math.Abs(flipIdx - flip) > 0.01)
+				// coincidono ed e' proprio la distanza fra i due a dire se il regime
+				// e' confermato su ETF e indice o e' in divergenza.
+				if (inBoth && hasFlipIdx && Math.Abs(flipIdx - flip) > 0.01)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx),
-						new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0")));
+						new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0"), 6f, 3f));
 				if (ShowFlip0Dte && hasFlip0)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0),
-						new Color4(0.72f, 0.55f, 0.95f, 0.55f), "Flip0 " + flip0.ToString("0")));
+						new Color4(0.72f, 0.55f, 0.95f, 0.55f), "Flip0 " + flip0.ToString("0"), 6f, 3f));
 
 				// etichette: se due linee sono troppo vicine (flip≈max pain!), allontana le scritte
 				for (int i = 1; i < lines.Count; i++)
 				{
 					float d = lines[i].Item1 - lines[i - 1].Item1;
 					if (Math.Abs(d) < 16)
-						lines[i] = Tuple.Create(lines[i].Item1 + (d >= 0 ? 16f : -16f), lines[i].Item2, lines[i].Item3);
+						lines[i] = Tuple.Create(lines[i].Item1 + (d >= 0 ? 16f : -16f), lines[i].Item2, lines[i].Item3, lines[i].Item4, lines[i].Item5);
 				}
 
 				foreach (var ln in lines)
@@ -952,41 +820,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (yL < 16 || yL > panelH - 16) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 					{
-						if (inBoth)
-						{
-							// interruzione unica: copre rail + tacche + buffer testo
-							float xBreak0 = x_r0 - 17f, xBreak1 = Math.Min(x_t0 + 68f, xRight - 11f);
-							if (xBreak0 > xLast) DrawDashPattern(RenderTarget, bL, xLast, xBreak0, yL, ln.Item4, ln.Item5);
-							if (xBreak1 < xRight - 11f) DrawDashPattern(RenderTarget, bL, xBreak1, xRight - 11f, yL, ln.Item4, ln.Item5);
-							TriLeft(RenderTarget, bL, xRight - 9f, yL);
-						}
-						else
-						{
-							DrawDashPattern(RenderTarget, bL, xLast, xRight, yL, ln.Item4, ln.Item5);
-							DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xLast + 4, yL - 13);
-						}
+						DrawDashPattern(RenderTarget, bL, xLast, xRight, yL, ln.Item4, ln.Item5);
+						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xLast + 4, yL - 13);
 					}
 				}
 
 				// legenda
-				string leg = "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)" + (regimeTxt.Length > 0 ? " · regime " + regimeTxt : "");
-				if (inBoth)
-					leg = "Entrambi: rail = zona confluenza · tacca sinistra + quadrato pieno = muro ETF · tacca destra + quadrato vuoto = muro indice · pallini = peso";
-				else if (inBoth)
-					leg = "Entrambi: nessuna zona di confluenza con la risoluzione attuale";
+				string leg = inBoth
+					? "barre = somma ETF+indice · banda viola = confluenza ⧉ ±" + tolPts.ToString("0") + "pt"
+						+ (zones == null || zones.Count == 0 ? " · oggi nessuna" : " · " + zones.Count + " confl.")
+					: "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)";
+				if (regimeTxt.Length > 0) leg += " · regime " + regimeTxt;
 				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);
-			}
-		}
-
-		// tratteggio verticale (track "0 zone")
-		private static void DrawDashedV(RenderTarget rt, SolidColorBrush b, float x, float y1, float y2, float dash, float gap)
-		{
-			float y = y1;
-			while (y < y2)
-			{
-				float yEnd = Math.Min(y + dash, y2);
-				rt.DrawLine(new SharpDX.Vector2(x, y), new SharpDX.Vector2(x, yEnd), b, 1f);
-				y = yEnd + gap;
 			}
 		}
 
@@ -999,23 +844,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 				float xEnd = Math.Min(x + dash, x2);
 				rt.DrawLine(new SharpDX.Vector2(x, y), new SharpDX.Vector2(xEnd, y), b, 1.2f);
 				x = xEnd + gap;
-			}
-		}
-
-		// triangolo pieno a punta sinistra (marker MP/Flip sul bordo destro)
-		private static void TriLeft(RenderTarget rt, SolidColorBrush b, float xTip, float y)
-		{
-			using (var geo = new SharpDX.Direct2D1.PathGeometry(rt.Factory))
-			{
-				using (var sink = geo.Open())
-				{
-					sink.BeginFigure(new SharpDX.Vector2(xTip + 7f, y - 3.5f), SharpDX.Direct2D1.FigureBegin.Filled);
-					sink.AddLine(new SharpDX.Vector2(xTip + 7f, y + 3.5f));
-					sink.AddLine(new SharpDX.Vector2(xTip, y));
-					sink.EndFigure(SharpDX.Direct2D1.FigureEnd.Closed);
-					sink.Close();
-				}
-				rt.FillGeometry(geo, b);
 			}
 		}
 

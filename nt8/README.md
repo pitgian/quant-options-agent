@@ -23,6 +23,12 @@ VM abbia accesso a internet. HTTP è asincrono: non blocca mai il thread grafico
 
 ## Confluenza (modalità Entrambi)
 
+In Entrambi le barre sono la SOMMA ETF+indice per strike (griglia 25pt in
+scala futures), identiche al sito, e le confluenze sono BANDE VIOLA sulla
+colonna del profilo: una confluenza è un intervallo di PREZZO, quindi nella
+colonna (asse y = prezzo) è un segmento traslucido con bordi tratteggiati ai
+due prezzi e etichetta ⧉ a destra (max 6, le più pesanti).
+
 I muri vengono dai `top_gamma` del piano (GEX aggregato per strike, picchi
 veri), NON dai profili per strike: il rumore dei profili grezzi inventava
 muri. Una zona di confluenza esiste solo se un muro ETF e uno indice cadono
@@ -53,9 +59,12 @@ guasto. Stessa regola e stessi numeri della web app.
 - **Barre per strike** alla propria quota di prezzo: verde = netto ≥ 0
   (call-dominato, pin 🛡), rosso = netto < 0 (put-dominato, trigger ⚡).
   I 3 muri maggiori per |net| sono etichettati con lo strike.
-- **Linee sempre attive**: Spot (blu tratteggiata, prezzo LIVE del grafico),
-  Max Pain (ambra), Flip strutturale (viola) — della fonte selezionata,
-  in scala futures. Etichette con anti-collisione (flip ≈ max pain le separa).
+- **Linee sempre attive**: Max Pain (ambra) e Flip strutturale (viola) della
+  fonte selezionata, in scala futures; in Entrambi anche il Flip dell'altra
+  fonte (la distanza fra i due = regime confermato o in divergenza). La linea
+  Spot NON c'è: il grafico ha già la sua. Partono dall'ultima candela, non dal
+  bordo sinistro, per non attraversare la price action.
+  Etichette con anti-collisione (flip ≈ max pain le separa).
 - **Intestazione**: metrica/borsa/fonte + orario del piano; ambra = stantio.
 - Flip assente nel piano (nessuno zero-crossing) → la linea non viene disegnata:
   non è un errore, è il dato (vedi discussione flip/max pain della scala).
