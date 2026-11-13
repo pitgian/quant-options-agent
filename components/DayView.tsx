@@ -200,7 +200,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
   // su ES raddoppia) e generava muri finti, uno per barra.
   // ETF: profilo nativo (SPY/QQQ) × etf_to_fut_ratio. IDX: già futures.
   const profilesBoth = useMemo(() => {
-    if (!plan || chain !== 'both') return { etf: undefined, idx: undefined, barsEtf: undefined, barsIdx: undefined };
+    if (!plan || chain !== 'both') return { etf: undefined, idx: undefined, zoneTolPts: undefined };
     const pick = (
       all: Array<GexProfileEntry> | undefined,
       wk: Array<GexProfileEntry> | undefined,
@@ -212,9 +212,8 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     return {
       etf: r && etfNat ? etfNat.map(e => ({ ...e, s: Math.round(e.s * r * 10) / 10 })) : undefined,
       idx: pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index),
-      // barre: le _binned 25pt (griglia condivisa, scala futures)
-      barsEtf: pick(plan.gex_profile_binned, plan.gex_profile_week_binned, plan.gex_profile_0dte_binned),
-      barsIdx: pick(plan.gex_profile_index_binned, plan.gex_profile_week_index_binned, plan.gex_profile_0dte_index_binned),
+      // barre: non più usate in 'Entrambi' (solo zone di confluenza)
+      zoneTolPts: undefined, // auto: raggio = (passoEtf + passoIdx)/2 calcolato nel componente
     };
   }, [plan, chain, bucket]);
 
@@ -527,8 +526,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           futEq={futEq}
           zoneEtf={profilesBoth.etf}
           zoneIdx={profilesBoth.idx}
-          barsEtf={profilesBoth.barsEtf}
-          barsIdx={profilesBoth.barsIdx}
+          zoneTolPts={profilesBoth.zoneTolPts}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           Ogni barra è uno strike reale della catena (niente aggregazione):
