@@ -374,9 +374,26 @@ namespace NinjaTrader.NinjaScript.Indicators
 			zones = null;
 			if (perFonte.Count == 2)
 			{
-				zones = BuildZones(perFonte[0], perFonte[1], planSpot);
-				Log(string.Format("GexOiProfile: confluenza -> {0} zone (tol {1}% = {2:0} pt, soglia muro {3}%)",
-					zones.Count, ZoneTolPct, planSpot * ZoneTolPct / 100.0, WallPct), LogLevel.Information);
+				// I MURI si cercano sui profili RAW (risoluzione piena), non sui
+				// binnati: il bin a 25pt introduce aliasing (misurato: dente di
+				// sega 14.9% -> 28.4% del max su ES) e generava muri finti.
+				// ETF: gex_profile*(nativo) x etf_to_fut_ratio -> scala futures.
+				// IDX: gex_profile*_index e' GIA' in scala futures.
+				double etfRatio = TryNum(plan, "etf_to_fut_ratio");
+				List<KeyValuePair<double, double>> rawEtf, rawIdx;
+				if (etfRatio > 0)
+				{
+					rawEtf = RawProfile(plan, "gex_profile" + suffix, etfRatio);
+					if (rawEtf.Count == 0) rawEtf = DictToList(perFonte[0]);
+				}
+				else rawEtf = DictToList(perFonte[0]);
+				rawIdx = RawProfile(plan, idxKeyRaw, 1.0);
+				if (rawIdx.Count == 0) rawIdx = DictToList(perFonte[1]);
+
+				zones = BuildZones(rawEtf, rawIdx, planSpot);
+				Log(string.Format("GexOiProfile: confluenza -> {0} zone (tol {1}% = {2:0} pt, soglia muro {3}% + max locale; raw ETF {4} / IDX {5} punti)",
+					zones.Count, ZoneTolPct, planSpot * ZoneTolPct / 100.0, WallPct, rawEtf.Count, rawIdx.Count),
+					LogLevel.Information);
 			}
 
 			var outBars = new List<ProfileBar>();
@@ -396,36 +413,72 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		// ------------------------------------------------------- zone confluenza
 
-		// Muro = |net| >= WallPct% del massimo della PROPRIA fonte: la soglia è
-		// relativa a ciascun libro, così ETF e indice contribuiscono con un numero
-		// di muri confrontabile anche se i valori assoluti hanno scale diverse
-		// (misurato 14/11: su ES il libro indice pesa 5x l'ETF).
-		private List<KeyValuePair<double, double>> Walls(Dictionary<double, double> src)
+		// Muro = |net| >= WallPct% del massimo della PROPRIA fonte (soglia relativa)
+		// **E massimo locale** entro ±tol. Il massimo locale è essenziale: senza,
+		// qualsiasi bin sopra soglia diventa "muro" e su ES uscivano 12 zone finte
+		// una per barra (il profilo indice alterna 5/6 strike per bin = dente di
+		// sega, e le creste dell'aliasing passavano da muri).
+		private List<KeyValuePair<double, double>> Walls(List<KeyValuePair<double, double>> raw, double tol)
 		{
-			var outp = new List<KeyValuePair<double, double>>();
-			if (src == null || src.Count == 0) return outp;
+			var res = new List<KeyValuePair<double, double>>();
+			if (raw == null || raw.Count < 1) return res;
+			var a = new List<KeyValuePair<double, double>>(raw);
+			a.Sort((p, q) => p.Key.CompareTo(q.Key));
 			double mx = 0;
-			foreach (var v in src.Values) mx = Math.Max(mx, Math.Abs(v));
-			if (mx <= 0) return outp;
-			// BUG 13/11: WallPct è una PERCENTUALE (20 = 20%), non una frazione.
-			// Prima: thr = mx * WallPct = 20x il massimo → nessun muro → 0 zone
-			// (il sito divideva per 100, l'indicatore no: per questo le bande
-			// c'erano sul sito e non su NT).
+			foreach (var kv in a) mx = Math.Max(mx, Math.Abs(kv.Value));
+			if (mx <= 0) return res;
 			double thr = mx * WallPct / 100.0;
-			foreach (var kv in src)
-				if (Math.Abs(kv.Value) >= thr) outp.Add(kv);
-			return outp;
+			for (int i = 0; i < a.Count; i++)
+			{
+				if (Math.Abs(a[i].Value) < thr) continue;
+				double s = a[i].Key;
+				bool isMax = true;
+				for (int j = i - 1; j >= 0 && a[j].Key >= s - tol; j--)
+					if (Math.Abs(a[j].Value) > Math.Abs(a[i].Value)) { isMax = false; break; }
+				if (isMax)
+					for (int j = i + 1; j < a.Count && a[j].Key <= s + tol; j++)
+						if (Math.Abs(a[j].Value) > Math.Abs(a[i].Value)) { isMax = false; break; }
+				if (isMax) res.Add(a[i]);
+			}
+			return res;
 		}
 
-		private List<GexZone> BuildZones(Dictionary<double, double> etf, Dictionary<double, double> idx, double spotRef)
+		// profilo RAW in scala futures: 
+		private List<KeyValuePair<double, double>> RawProfile(Dictionary<string, object> plan, string key, double scale)
+		{
+			var res = new List<KeyValuePair<double, double>>();
+			object[] a = ToArray(plan.TryGetValue(key, out var o) ? o : null);
+			if (a == null) return res;
+			foreach (var eo in a)
+			{
+				var e = eo as Dictionary<string, object>;
+				if (e == null) continue;
+				double s = TryNum(e, "s");
+				if (s <= 0) continue;
+				double net = OptMetric == GexOiMetric.GEX
+					? TryNum(e, "c") + TryNum(e, "p")
+					: TryNum(e, "co") - TryNum(e, "po");
+				res.Add(new KeyValuePair<double, double>(Math.Round(s * scale, 1), net));
+			}
+			return res;
+		}
+
+		private static List<KeyValuePair<double, double>> DictToList(Dictionary<double, double> d)
+		{
+			var res = new List<KeyValuePair<double, double>>();
+			if (d != null) foreach (var kv in d) res.Add(new KeyValuePair<double, double>(kv.Key, kv.Value));
+			return res;
+		}
+
+		private List<GexZone> BuildZones(List<KeyValuePair<double, double>> etf, List<KeyValuePair<double, double>> idx, double spotRef)
 		{
 			var res = new List<GexZone>();
 			if (spotRef <= 0) return res;
 			double tol = spotRef * ZoneTolPct / 100.0;
 			if (tol <= 0) return res;
 
-			var we = Walls(etf);
-			var wi = Walls(idx);
+			var we = Walls(etf, tol);
+			var wi = Walls(idx, tol);
 			if (we.Count == 0 || wi.Count == 0) return res;
 
 			// coppie (muro ETF, muro indice) entro la tolleranza
@@ -583,12 +636,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 					int labelled = 0;
 					foreach (var z in zones)
 					{
-						// estensione da DISEGNARE: almeno ±tolleranza/2 attorno al centro,
-						// altrimenti le zone con i due muri sullo STESSO strike (tipico
-						// su ES: 7550 vs 7550) collassano a 2 pixel e si vedono come una
-						// linea col rombo, non come banda.
+						// estensione da DISEGNARE: almeno ±tolleranza/2 e comunque almeno
+						// una barra piena (griglia 25pt) attorno al centro, altrimenti le
+						// zone con i due muri sullo STESSO strike (tipico su ES: 7550 vs
+						// 7550) si vedono come una barra sporcata, non come banda.
 						double zc = (z.Lo + z.Hi) / 2.0;
-						double zhalf = Math.Max((z.Hi - z.Lo) / 2.0, (spot > 0 ? spot : planSpot) * ZoneTolPct / 100.0 / 2.0);
+						double ztol = (spot > 0 ? spot : planSpot) * ZoneTolPct / 100.0;
+						double zhalf = Math.Max((z.Hi - z.Lo) / 2.0, Math.Max(ztol, 26.0) / 2.0);
 						float yHi = (float)chartScale.GetYByValue(zc + zhalf);   // prezzo piu alto = y minore
 						float yLo = (float)chartScale.GetYByValue(zc - zhalf);
 						float top = Math.Min(yHi, yLo), bot = Math.Max(yHi, yLo);

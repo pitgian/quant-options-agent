@@ -194,10 +194,11 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     return (s: number) => `${idxName} ${fmtNat(s / idxRatio)}${etfRatio ? ` · ${etfName} ${fmtNat(s / etfRatio)}` : ''}`;
   }, [chain, futures, idxName, etfName, etfRatio, idxRatio]);
 
-  // Profili SEPARATI delle due fonti (solo vista 'Entrambi'): servono a
-  // GexHistogram per rilevare le ZONE DI CONFLUENZA. Devono essere le
-  // varianti _binned (griglia 25pt in scala futures condivisa): la raw
-  // indice a 5pt non ha strike in comune e falserebbe la detection.
+  // Profili RAW delle due fonti (solo vista 'Entrambi'), in SCALA FUTURES:
+  // servono a GexHistogram per rilevare muri e ZONE DI CONFLUENZA. Si usano i
+  // raw e NON i _binned: il bin a 25pt introduce aliasing (dente di sega che
+  // su ES raddoppia) e generava muri finti, uno per barra.
+  // ETF: profilo nativo (SPY/QQQ) × etf_to_fut_ratio. IDX: già futures.
   const profilesBoth = useMemo(() => {
     if (!plan || chain !== 'both') return { etf: undefined, idx: undefined };
     const pick = (
@@ -206,9 +207,11 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
       zero: Array<GexProfileEntry> | undefined,
     ): Array<GexProfileEntry> | undefined =>
       bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
+    const r = plan.etf_to_fut_ratio;
+    const etfNat = pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte);
     return {
-      etf: pick(plan.gex_profile_binned, plan.gex_profile_week_binned, plan.gex_profile_0dte_binned),
-      idx: pick(plan.gex_profile_index_binned, plan.gex_profile_week_index_binned, plan.gex_profile_0dte_index_binned),
+      etf: r && etfNat ? etfNat.map(e => ({ ...e, s: Math.round(e.s * r * 10) / 10 })) : undefined,
+      idx: pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index),
     };
   }, [plan, chain, bucket]);
 
@@ -519,8 +522,8 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
             ? (bucket === '0dte' ? (plan?.gex_flip_0dte_native ?? gexFlip?.price) : (plan?.gex_flip_native ?? gexFlip?.price))
             : gexFlip?.price}
           futEq={futEq}
-          profileEtf={profilesBoth.etf}
-          profileIdx={profilesBoth.idx}
+          zoneEtf={profilesBoth.etf}
+          zoneIdx={profilesBoth.idx}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           Ogni barra è uno strike reale della catena (niente aggregazione):

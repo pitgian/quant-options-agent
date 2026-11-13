@@ -59,15 +59,14 @@ export const GexHistogram: React.FC<{
   futEq?: (s: number) => string;
   /** Nome dei futures (ES/NQ) per i testi e la legenda. */
   futName?: string;
-  /** Solo vista 'Entrambi': i due profili _binned SEPARATI, già in scala
-   *  futures. Servono a rilevare le ZONE DI CONFLUENZA (muro del libro ETF +
-   *  muro del libro indice entro una tolleranza). I muri delle due fonti
-   *  quasi mai cadono sullo stesso strike (misurato 14/11 su NQ: 0 su 8, si
-   *  alternano a 25-50 pt), quindi sommare i valori produce un profilo
-   *  sfocato: la confluenza va cercata per ZONA. */
-  profileEtf?: Array<GexProfileEntry>;
-  profileIdx?: Array<GexProfileEntry>;
-  /** Tolleranza zona in % dello spot (default 0,20%: su NQ ~57 pt). */
+  /** Solo vista 'Entrambi': i due profili RAW in scala futures, usati SOLO per
+   *  rilevare i muri e le ZONE DI CONFLUENZA (muro ETF + muro indice entro una
+   *  tolleranza). NON si usano i _binned: il bin a 25pt introduce aliasing
+   *  (misurato su ES: dente di sega 14,9% -> 28,4% del max) che generava muri
+   *  finti, uno per barra. */
+  zoneEtf?: Array<GexProfileEntry>;
+  zoneIdx?: Array<GexProfileEntry>;
+  /** Tolleranza zona in % dello spot (default 0,20%: su NQ ~57 pt, ES ~15 pt). */
   zoneTolPct?: number;
   /** Muro = |net| >= wallPct% del massimo della PROPRIA fonte (default 20%). */
   wallPct?: number;
@@ -78,7 +77,7 @@ export const GexHistogram: React.FC<{
    *  già convertito). Default: idxName. */
   strikeScale?: string;
 }> = ({ profile, spot, idxName, maxPain, flip, futEq, futName, strikeScale,
-       profileEtf, profileIdx, zoneTolPct = 0.2, wallPct = 20 }) => {
+       zoneEtf, zoneIdx, zoneTolPct = 0.2, wallPct = 20 }) => {
   const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
@@ -95,19 +94,36 @@ export const GexHistogram: React.FC<{
   type Zone = { lo: number; hi: number; loR: number; hiR: number; a: number; b: number };
   type Raw = Pick<Zone, 'lo' | 'hi' | 'a' | 'b'>;
   const zones = useMemo<Zone[]>(() => {
-    const A = profileEtf, B = profileIdx;
+    const A = zoneEtf, B = zoneIdx;
     if (!A?.length || !B?.length || !(spot > 0)) return [];
     const tol = (spot * zoneTolPct) / 100;
     const wallFrac = wallPct / 100;
     const val = (e: GexProfileEntry) =>
       metric === 'oi' ? (e.co ?? 0) - (e.po ?? 0) : e.c + e.p;
+    // Muro = |net| >= soglia relativa **E massimo locale entro ±tol**.
+    // Senza il massimo locale qualsiasi punto sopra soglia diventa muro: su ES
+    // uscivano 12 zone finte, una per barra (aliasing del bin 25pt).
     const wallsOf = (arr: Array<GexProfileEntry>): Array<[number, number]> => {
-      const m = new Map<number, number>();
-      for (const e of arr) m.set(e.s, (m.get(e.s) ?? 0) + val(e));
+      const pts = arr
+        .map(e => [e.s, val(e)] as [number, number])
+        .sort((p, q) => p[0] - q[0]);
       let mx = 0;
-      for (const v of m.values()) mx = Math.max(mx, Math.abs(v));
+      for (const [, v] of pts) mx = Math.max(mx, Math.abs(v));
       if (mx <= 0) return [];
-      return [...m.entries()].filter(([, v]) => Math.abs(v) >= mx * wallFrac);
+      const thr = mx * wallFrac;
+      const out: Array<[number, number]> = [];
+      for (let i = 0; i < pts.length; i++) {
+        const [s, v] = pts[i];
+        if (Math.abs(v) < thr) continue;
+        let isMax = true;
+        for (let j = i - 1; j >= 0 && pts[j][0] >= s - tol; j--)
+          if (Math.abs(pts[j][1]) > Math.abs(v)) { isMax = false; break; }
+        if (isMax)
+          for (let j = i + 1; j < pts.length && pts[j][0] <= s + tol; j++)
+            if (Math.abs(pts[j][1]) > Math.abs(v)) { isMax = false; break; }
+        if (isMax) out.push([s, v]);
+      }
+      return out;
     };
     const wa = wallsOf(A), wb = wallsOf(B);
     if (!wa.length || !wb.length) return [];
@@ -132,12 +148,12 @@ export const GexHistogram: React.FC<{
     return out
       .map<Zone>(z => {
         const c = (z.lo + z.hi) / 2;
-        const half = Math.max((z.hi - z.lo) / 2, tol / 2);
+        const half = Math.max((z.hi - z.lo) / 2, Math.max(tol, 26) / 2);
         return { ...z, loR: c - half, hiR: c + half };
       })
       .sort((p, q) => (Math.abs(q.a) + Math.abs(q.b)) - (Math.abs(p.a) + Math.abs(p.b)));
-  }, [profileEtf, profileIdx, spot, metric, zoneTolPct, wallPct]);
-  const bothMode = !!profileEtf?.length && !!profileIdx?.length;
+  }, [zoneEtf, zoneIdx, spot, metric, zoneTolPct, wallPct]);
+  const bothMode = !!zoneEtf?.length && !!zoneIdx?.length;
 
   const bars = useMemo(() => {
     const arr = profile ?? [];
