@@ -115,6 +115,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		private sealed class ProfileBar { public double S; public double Net; }
 
+		// ZONA DI CONFLUENZA (solo modalità Entrambi): muro dell'ETF e muro
+		// dell'indice a distanza <= tolleranza = livello presidiato da ENTRAMBI
+		// i libri. I muri delle due fonti quasi MAI coincidono sullo stesso
+		// strike (misurato 14/11 su NQ: 0 muri in comune su 8, si alternano a
+		// 25-50 pt), quindi sommare i valori produce un profilo sfocato; la
+		// confluenza va cercata per ZONA, non per strike.
+		private sealed class GexZone { public double Lo, Hi, Center, NetEtf, NetIdx; }
+		private List<GexZone> zones;
+
 		// JavaScriptSerializer deserializza gli ARRAY JSON come
 		// System.Collections.ArrayList, NON come object[] (verificato 12/11:
 		// is object[] = False su levels e profili → 0 strike e flip=0).
@@ -152,6 +161,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				OffsetDallaDestraPx            = 150;
 				Lato                           = GexOiLato.Destra;
 				ShowFlip0Dte                   = false;
+				ZoneTolPct                     = 0.20;
+				WallPct                        = 20;
 
 				AddPlot(System.Windows.Media.Brushes.Transparent, "Void");   // plot fittizio: il disegno è tutto in OnRender
 			}
@@ -331,12 +342,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 			// assente da una fonte vale 0: il contributo mancante è zero, non
 			// un dato ignoto — quindi la somma non gonfia né perde nulla.
 			var merged = new Dictionary<double, double>();
+			// profili per fonte tenuti SEPARATI: servono alla detection delle zone
+			// di confluenza (Entrambi), che lavora sui MURI di ciascun libro.
+			var perFonte = new List<Dictionary<double, double>>();
 			int matchedFonte = 0;
 			foreach (string pk in profKeys)
 			{
 				object[] a = ToArray(plan.TryGetValue(pk, out var po) ? po : null);
 				if (a == null) continue;
 				matchedFonte++;
+				var src = new Dictionary<double, double>();
 				foreach (var eo in a)
 				{
 					var e = eo as Dictionary<string, object>;
@@ -352,7 +367,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 					double cur;
 					merged.TryGetValue(k, out cur);
 					merged[k] = cur + net;
+					src[k] = net;
 				}
+				perFonte.Add(src);
+			}
+
+			// ---- MURI + ZONE DI CONFLUENZA (solo Entrambi, con 2 fonti reali)
+			zones = null;
+			if (perFonte.Count == 2)
+			{
+				zones = BuildZones(perFonte[0], perFonte[1], planSpot);
+				Log(string.Format("GexOiProfile: confluenza -> {0} zone (tol {1}% = {2:0} pt, soglia muro {3}%)",
+					zones.Count, ZoneTolPct, planSpot * ZoneTolPct / 100.0, WallPct), LogLevel.Information);
 			}
 
 			var outBars = new List<ProfileBar>();
@@ -370,8 +396,73 @@ namespace NinjaTrader.NinjaScript.Indicators
 				bars == null ? 0 : bars.Count, maxPain, flip, matchedFonte, profKeys.Count), LogLevel.Information);
 		}
 
-		// ---------------------------------------------------------------- render
+		// ------------------------------------------------------- zone confluenza
 
+		// Muro = |net| >= WallPct% del massimo della PROPRIA fonte: la soglia è
+		// relativa a ciascun libro, così ETF e indice contribuiscono con un numero
+		// di muri confrontabile anche se i valori assoluti hanno scale diverse
+		// (misurato 14/11: su ES il libro indice pesa 5x l'ETF).
+		private List<KeyValuePair<double, double>> Walls(Dictionary<double, double> src)
+		{
+			var outp = new List<KeyValuePair<double, double>>();
+			if (src == null || src.Count == 0) return outp;
+			double mx = 0;
+			foreach (var v in src.Values) mx = Math.Max(mx, Math.Abs(v));
+			if (mx <= 0) return outp;
+			double thr = mx * WallPct;
+			foreach (var kv in src)
+				if (Math.Abs(kv.Value) >= thr) outp.Add(kv);
+			return outp;
+		}
+
+		private List<GexZone> BuildZones(Dictionary<double, double> etf, Dictionary<double, double> idx, double spotRef)
+		{
+			var res = new List<GexZone>();
+			if (spotRef <= 0) return res;
+			double tol = spotRef * ZoneTolPct / 100.0;
+			if (tol <= 0) return res;
+
+			var we = Walls(etf);
+			var wi = Walls(idx);
+			if (we.Count == 0 || wi.Count == 0) return res;
+
+			// coppie (muro ETF, muro indice) entro la tolleranza
+			var iv = new List<GexZone>();
+			foreach (var a in we)
+				foreach (var b in wi)
+				{
+					if (Math.Abs(a.Key - b.Key) > tol) continue;
+					iv.Add(new GexZone
+					{
+						Lo = Math.Min(a.Key, b.Key), Hi = Math.Max(a.Key, b.Key),
+						NetEtf = a.Value, NetIdx = b.Value
+					});
+				}
+			if (iv.Count == 0) return res;
+
+			// unisco le zone che si sovrappongono o distano meno di una tolleranza
+			iv.Sort((p, q) => p.Lo.CompareTo(q.Lo));
+			var cur = new GexZone { Lo = iv[0].Lo, Hi = iv[0].Hi, NetEtf = iv[0].NetEtf, NetIdx = iv[0].NetIdx };
+			for (int i = 1; i < iv.Count; i++)
+			{
+				var z = iv[i];
+				if (z.Lo <= cur.Hi + tol)
+				{
+					cur.Hi = Math.Max(cur.Hi, z.Hi);
+					if (Math.Abs(z.NetEtf) > Math.Abs(cur.NetEtf)) cur.NetEtf = z.NetEtf;
+					if (Math.Abs(z.NetIdx) > Math.Abs(cur.NetIdx)) cur.NetIdx = z.NetIdx;
+				}
+				else { res.Add(cur); cur = z; }
+			}
+			res.Add(cur);
+
+			foreach (var z in res) z.Center = (z.Lo + z.Hi) / 2.0;
+			// prima le zone piu "pesanti" (somma dei due muri)
+			res.Sort((p, q) => (Math.Abs(q.NetEtf) + Math.Abs(q.NetIdx)).CompareTo(Math.Abs(p.NetEtf) + Math.Abs(p.NetIdx)));
+			return res;
+		}
+
+		// ---------------------------------------------------------------- render
 		protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
 		{
 			base.OnRender(chartControl, chartScale);
@@ -478,6 +569,41 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
+				// ---- BANDE ZONA DI CONFLUENZA (Entrambi): rettangolo ambra
+				//      semi-trasparente che copre l'estensione verticale della zona,
+				//      disegnato PRIMA delle barre (che restano leggibili sopra).
+				//      E' il dato utile della modalità Entrambi: sommare i valori dava
+				//      un profilo sfocato, perché i muri dei due libri quasi mai
+				//      cadono sullo stesso strike (0 su 8 misurati su NQ).
+				bool zonesOn = OptSource == GexOiSource.Entrambi && zones != null && zones.Count > 0;
+				if (zonesOn)
+				{
+					int labelled = 0;
+					foreach (var z in zones)
+					{
+						float yHi = (float)chartScale.GetYByValue(z.Hi);   // prezzo piu alto = y minore
+						float yLo = (float)chartScale.GetYByValue(z.Lo);
+						float top = Math.Min(yHi, yLo), bot = Math.Max(yHi, yLo);
+						if (bot < 0 || top > panelH) continue;
+						if (bot - top < 2f) { float c0 = (top + bot) / 2f; top = c0 - 1f; bot = c0 + 1f; }
+						var cZone = z.NetEtf < 0 && z.NetIdx < 0
+							? new Color4(0.97f, 0.44f, 0.44f, 0.16f)    // entrambi put: zona di trigger
+							: z.NetEtf > 0 && z.NetIdx > 0
+							? new Color4(0.20f, 0.83f, 0.60f, 0.16f)    // entrambi call: zona di pin
+							: new Color4(0.98f, 0.75f, 0.25f, 0.16f);   // segni discordi: ambra
+						using (var bz = new SolidColorBrush(RenderTarget, cZone))
+							RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, top, xRight - xLeft, bot - top), bz);
+						if (labelled < 4 && bot - top >= 6f)
+						{
+							labelled++;
+							var cTxt = new Color4(0.98f, 0.85f, 0.45f, 0.95f);
+							using (var bt = new SolidColorBrush(RenderTarget, cTxt))
+								DrawTextLeft(RenderTarget, tf, bt,
+									"\u25C6 " + z.Center.ToString("0"), xLeft + 2, Math.Max(top - 12, 20));
+						}
+					}
+				}
+
 				// ---- UNA BARRA PER STRIKE (i bin a pixel erano la causa della
 				//      dipendenza dallo zoom: a ogni zoom aggregavano strike
 				//      diversi e rinormalizzavano). Prezzo y reale via GetYByValue;
@@ -499,7 +625,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 						: i > 0 ? Math.Abs(y - ys[i - 1]) : 10f;
 					float bh  = Math.Max(2f, Math.Min(PixelBinSize, gap * 0.72f));
 					float len = Math.Max(2f, (float)Math.Abs(b.Net) / yMax * colW);
-					var c4 = b.Net >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.90f) : new Color4(0.97f, 0.44f, 0.44f, 0.90f);
+					var c4 = b.Net >= 0
+						? new Color4(0.20f, 0.83f, 0.60f, zonesOn ? 0.65f : 0.90f)
+						: new Color4(0.97f, 0.44f, 0.44f, zonesOn ? 0.65f : 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
@@ -574,9 +702,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 
 				// legenda
-				DrawTextRight(RenderTarget, tf, brush,
-					"verde = net ≥ 0 (pin) · rosso = net < 0 (trg)" + (regimeTxt.Length > 0 ? " · regime " + regimeTxt : ""),
-					xRight, panelH - 18);
+				string leg = "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)" + (regimeTxt.Length > 0 ? " · regime " + regimeTxt : "");
+				if (zonesOn)
+					leg = zones.Count + " zone confluenza \u25C6 (banda = muri ETF+indice entro " + ZoneTolPct.ToString("0.0#") + "%) · " + leg;
+				else if (OptSource == GexOiSource.Entrambi)
+					leg = "nessuna zona confluenza (muri ETF/indice mai entro " + ZoneTolPct.ToString("0.0#") + "%) · " + leg;
+				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);
 			}
 		}
 
@@ -656,5 +787,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[NinjaScriptProperty]
 		[Display(Name = "Mostra anche flip 0DTE", Order = 10, GroupName = "2. Aggiornamento")]
 		public bool ShowFlip0Dte { get; set; }
+
+		[NinjaScriptProperty]
+		[System.ComponentModel.DataAnnotations.Range(0.02, 2.0)]
+		[Display(Name = "Tolleranza zona confluenza (% spot) — solo Entrambi", Order = 11, GroupName = "3. Confluenza")]
+		public double ZoneTolPct { get; set; }
+
+		[NinjaScriptProperty]
+		[System.ComponentModel.DataAnnotations.Range(5.0, 80.0)]
+		[Display(Name = "Soglia muro (% del max della fonte) — solo Entrambi", Order = 12, GroupName = "3. Confluenza")]
+		public double WallPct { get; set; }
 	}
 }
