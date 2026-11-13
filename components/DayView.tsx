@@ -194,6 +194,24 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     return (s: number) => `${idxName} ${fmtNat(s / idxRatio)}${etfRatio ? ` · ${etfName} ${fmtNat(s / etfRatio)}` : ''}`;
   }, [chain, futures, idxName, etfName, etfRatio, idxRatio]);
 
+  // Profili SEPARATI delle due fonti (solo vista 'Entrambi'): servono a
+  // GexHistogram per rilevare le ZONE DI CONFLUENZA. Devono essere le
+  // varianti _binned (griglia 25pt in scala futures condivisa): la raw
+  // indice a 5pt non ha strike in comune e falserebbe la detection.
+  const profilesBoth = useMemo(() => {
+    if (!plan || chain !== 'both') return { etf: undefined, idx: undefined };
+    const pick = (
+      all: Array<GexProfileEntry> | undefined,
+      wk: Array<GexProfileEntry> | undefined,
+      zero: Array<GexProfileEntry> | undefined,
+    ): Array<GexProfileEntry> | undefined =>
+      bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
+    return {
+      etf: pick(plan.gex_profile_binned, plan.gex_profile_week_binned, plan.gex_profile_0dte_binned),
+      idx: pick(plan.gex_profile_index_binned, plan.gex_profile_week_index_binned, plan.gex_profile_0dte_index_binned),
+    };
+  }, [plan, chain, bucket]);
+
   // Profilo GEX COMPLETO (istogramma) della borsa selezionata; in 'Entrambi'
   // le due fonti si SOMMANO per strike (libro aggregato).
   const profileSel = useMemo<Array<GexProfileEntry> | undefined>(() => {
@@ -501,6 +519,8 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
             ? (bucket === '0dte' ? (plan?.gex_flip_0dte_native ?? gexFlip?.price) : (plan?.gex_flip_native ?? gexFlip?.price))
             : gexFlip?.price}
           futEq={futEq}
+          profileEtf={profilesBoth.etf}
+          profileIdx={profilesBoth.idx}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           Ogni barra è uno strike reale della catena (niente aggregazione):

@@ -59,16 +59,75 @@ export const GexHistogram: React.FC<{
   futEq?: (s: number) => string;
   /** Nome dei futures (ES/NQ) per i testi e la legenda. */
   futName?: string;
+  /** Solo vista 'Entrambi': i due profili _binned SEPARATI, già in scala
+   *  futures. Servono a rilevare le ZONE DI CONFLUENZA (muro del libro ETF +
+   *  muro del libro indice entro una tolleranza). I muri delle due fonti
+   *  quasi mai cadono sullo stesso strike (misurato 14/11 su NQ: 0 su 8, si
+   *  alternano a 25-50 pt), quindi sommare i valori produce un profilo
+   *  sfocato: la confluenza va cercata per ZONA. */
+  profileEtf?: Array<GexProfileEntry>;
+  profileIdx?: Array<GexProfileEntry>;
+  /** Tolleranza zona in % dello spot (default 0,20%: su NQ ~57 pt). */
+  zoneTolPct?: number;
+  /** Muro = |net| >= wallPct% del massimo della PROPRIA fonte (default 20%). */
+  wallPct?: number;
   /** Scala dello strike dell'asse X: nel profilo ETF gli strike sono nativi
    *  (SPY/QQQ), nel profilo indici e 'Entrambi' sono in punti futures (ES/NQ).
    *  Va ETICHETTATA nel tooltip e nel footer: lo stesso numero senza scala
    *  fa scambiare NQ per NDX (il libro indice è in NDX ma il profilo è
    *  già convertito). Default: idxName. */
   strikeScale?: string;
-}> = ({ profile, spot, idxName, maxPain, flip, futEq, futName, strikeScale }) => {
+}> = ({ profile, spot, idxName, maxPain, flip, futEq, futName, strikeScale,
+       profileEtf, profileIdx, zoneTolPct = 0.2, wallPct = 20 }) => {
   const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
+
+  // ---- ZONE DI CONFLUENZA (solo quando arrivano ENTRAMBI i profili).
+  // Muro = |net| >= wallPct% del massimo della PROPRIA fonte (soglia relativa:
+  // le due fonti hanno scale diverse — su ES il libro indice pesa 5x l'ETF —
+  // così entrambe contribuiscono con un numero confrontabile di muri).
+  // Zona = muro ETF e muro indice a distanza <= zoneTolPct% dello spot,
+  // con le zone sovrapposte fuse fra loro.
+  type Zone = { lo: number; hi: number; a: number; b: number };
+  const zones = useMemo<Zone[]>(() => {
+    const A = profileEtf, B = profileIdx;
+    if (!A?.length || !B?.length || !(spot > 0)) return [];
+    const tol = (spot * zoneTolPct) / 100;
+    const wallFrac = wallPct / 100;
+    const val = (e: GexProfileEntry) =>
+      metric === 'oi' ? (e.co ?? 0) - (e.po ?? 0) : e.c + e.p;
+    const wallsOf = (arr: Array<GexProfileEntry>): Array<[number, number]> => {
+      const m = new Map<number, number>();
+      for (const e of arr) m.set(e.s, (m.get(e.s) ?? 0) + val(e));
+      let mx = 0;
+      for (const v of m.values()) mx = Math.max(mx, Math.abs(v));
+      if (mx <= 0) return [];
+      return [...m.entries()].filter(([, v]) => Math.abs(v) >= mx * wallFrac);
+    };
+    const wa = wallsOf(A), wb = wallsOf(B);
+    if (!wa.length || !wb.length) return [];
+    const iv: Zone[] = [];
+    for (const [sa, va] of wa)
+      for (const [sb, vb] of wb)
+        if (Math.abs(sa - sb) <= tol)
+          iv.push({ lo: Math.min(sa, sb), hi: Math.max(sa, sb), a: va, b: vb });
+    if (!iv.length) return [];
+    iv.sort((p, q) => p.lo - q.lo);
+    const out: Zone[] = [];
+    let cur: Zone = { ...iv[0] };
+    for (let i = 1; i < iv.length; i++) {
+      const z = iv[i];
+      if (z.lo <= cur.hi + tol) {
+        cur.hi = Math.max(cur.hi, z.hi);
+        if (Math.abs(z.a) > Math.abs(cur.a)) cur.a = z.a;
+        if (Math.abs(z.b) > Math.abs(cur.b)) cur.b = z.b;
+      } else { out.push(cur); cur = { ...z }; }
+    }
+    out.push(cur);
+    return out.sort((p, q) => (Math.abs(q.a) + Math.abs(q.b)) - (Math.abs(p.a) + Math.abs(p.b)));
+  }, [profileEtf, profileIdx, spot, metric, zoneTolPct, wallPct]);
+  const bothMode = !!profileEtf?.length && !!profileIdx?.length;
 
   const bars = useMemo(() => {
     const arr = profile ?? [];
@@ -199,6 +258,26 @@ export const GexHistogram: React.FC<{
           <line x1={M.left} x2={W - M.right} y1={geom.yZero} y2={geom.yZero} stroke="#475569" strokeWidth={0.8} />
           <text x={M.left - 6} y={geom.yZero + 3} textAnchor="end" fontSize={9} fill="#94a3b8">0</text>
 
+          {/* ZONE DI CONFLUENZA (vista Entrambi): banda verticale sulla zona,
+              colore = verso concordato dei due libri. Disegnate PRIMA delle
+              barre così restano leggibili sopra. */}
+          {zones.map((z, i) => {
+            const x1 = geom.x(z.lo), x2 = geom.x(z.hi);
+            const col = z.a < 0 && z.b < 0 ? '#f87171' : z.a > 0 && z.b > 0 ? '#34d399' : '#fbbf24';
+            const lbl = z.a < 0 && z.b < 0 ? 'put condiviso' : z.a > 0 && z.b > 0 ? 'call condiviso' : 'segni discordi';
+            return (
+              <g key={`zona-${i}`}>
+                <rect x={Math.min(x1, x2)} y={M.top} width={Math.max(2, Math.abs(x2 - x1))} height={PLOT_H}
+                      fill={col} opacity={0.18}>
+                  <title>{`Zona confluenza ${z.lo.toFixed(0)}–${z.hi.toFixed(0)} (${lbl}) — muro ETF ${z.a.toFixed(1)} · muro indice ${z.b.toFixed(1)}`}</title>
+                </rect>
+                <text x={(x1 + x2) / 2} y={M.top + 9} textAnchor="middle" fontSize={10} fontWeight="bold" fill={col}>
+                  ◆
+                </text>
+              </g>
+            );
+          })}
+
           {bars.map(b => {
             const [cVal, pVal] = geom.val(b);
             const x = geom.x(b.s) - geom.bw / 2;
@@ -261,6 +340,12 @@ export const GexHistogram: React.FC<{
           <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> Max Pain</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-purple-400" /> Flip</span>
         </span>
+        {bothMode && (
+          <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-400/25 border border-amber-400" />
+            zona confluenza ETF+indice ({zones.length}) — muri dei due libri entro {zoneTolPct.toLocaleString('it-IT')}% dallo spot
+          </span>
+        )}
         <span className="text-[10px] text-gray-500">
           strike in scala {strikeScale ?? idxName} · doppio prezzo nel tooltip: {futName ?? 'futures'} ↔ nativo · passa il mouse sopra le barre per i valori
         </span>
