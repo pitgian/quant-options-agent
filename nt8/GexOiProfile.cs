@@ -95,6 +95,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		// --- stato dati (SOLO thread UI: scritto dentro TriggerCustomEvent) ---
 		private List<ProfileBar> bars;          // profilo netto per strike (scala fut)
+		// Solo modalità Entrambi: i due libri tenuti SEPARATI per il disegno.
+		// Le barre "Entrambi" NON sono la somma: sommare due libri i cui muri
+		// quasi mai coincidono produce un profilo che non rappresenta né l'uno
+		// né l'altro (su ES la somma è dominata dall'indice per l'83%). Si
+		// disegnano quindi due barre per strike: alta = ETF, bassa = indice,
+		// ognuna normalizzata al PROPRIO massimo di finestra per renderle
+		// confrontabili (i valori assoluti restano nei log e nelle etichette).
+		private List<ProfileBar> barsEtf, barsIdx;
 		private DateTime planTime = DateTime.MinValue;
 		private double   planSpot;              // last_price del piano (fallback)
 		private double   maxPain;               // scala fut
@@ -402,6 +410,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			outBars = outBars.OrderBy(b => b.S).ToList();
 			bars = outBars.Count > 0 ? outBars : null;
+
+			// barre per fonte (solo Entrambi): griglia 25pt condivisa, valori assoluti
+			barsEtf = barsIdx = null;
+			if (perFonte.Count == 2)
+			{
+				var le = new List<ProfileBar>();
+				foreach (var kv in perFonte[0]) le.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
+				var li = new List<ProfileBar>();
+				foreach (var kv in perFonte[1]) li.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
+				barsEtf = le.OrderBy(b => b.S).ToList();
+				barsIdx = li.OrderBy(b => b.S).ToList();
+			}
 			string keysTxt = string.Join("+", profKeys.ToArray());
 			fetchError = bars == null ? "profilo '" + keysTxt + "' assente o vuoto" : "";
 			if (profKeys.Count > 1 && matchedFonte < 2 && bars != null)
@@ -674,6 +694,66 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      tetto PixelBinSize px): a zoom-out non si sovrappongono,
 				//      ma lunghezze e valori NON cambiano mai.
 				float colW = xRight - xLeft;
+
+				// ---- MODALITÀ ENTRAMBI: DUE barre per strike (alta = ETF, bassa =
+				//      indice), ognuna normalizzata al PROPRIO massimo di finestra.
+				//      Non si somma: la somma di due libri con muri sfalsati non
+				//      rappresenta né l'uno né l'altro. Normalizzare per fonte
+				//      serve a rendere confrontabili le STRUTTURE (su ES l'indice
+				//      pesa 5x: in scala assoluta l'ETF sarebbe invisibile).
+				bool twoBars = OptSource == GexOiSource.Entrambi && barsEtf != null && barsIdx != null;
+				if (twoBars)
+				{
+					var we = barsEtf.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct).ToList();
+					var wi = barsIdx.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct).ToList();
+					float me = 0.01f, mi = 0.01f;
+					foreach (var b in we) me = Math.Max(me, (float)Math.Abs(b.Net));
+					foreach (var b in wi) mi = Math.Max(mi, (float)Math.Abs(b.Net));
+					var de = new Dictionary<double, double>(); foreach (var b in we) de[b.S] = b.Net;
+					var di = new Dictionary<double, double>(); foreach (var b in wi) di[b.S] = b.Net;
+					var keys = de.Keys.Union(di.Keys).OrderBy(x => x).ToList();
+					int nk = keys.Count;
+					var ky = new float[nk];
+					for (int i = 0; i < nk; i++) ky[i] = (float)chartScale.GetYByValue(keys[i]);
+					for (int i = 0; i < nk; i++)
+					{
+						float y = ky[i];
+						if (y < -20 || y > panelH + 20) continue;
+						float gap = i + 1 < nk ? Math.Abs(ky[i + 1] - y) : i > 0 ? Math.Abs(y - ky[i - 1]) : 10f;
+						float bh = Math.Max(3f, Math.Min(PixelBinSize, gap * 0.78f));
+						float hh = Math.Max(1.2f, bh / 2f - 0.5f);
+						double v;
+						if (de.TryGetValue(keys[i], out v) && v != 0)
+						{
+							float len = Math.Max(2f, (float)Math.Abs(v) / me * colW);
+							var cE = v >= 0 ? new Color4(0.20f, 0.83f, 0.60f, 0.95f) : new Color4(0.97f, 0.44f, 0.44f, 0.95f);
+							using (var bb = new SolidColorBrush(RenderTarget, cE))
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, hh), bb);
+						}
+						if (di.TryGetValue(keys[i], out v) && v != 0)
+						{
+							float len = Math.Max(2f, (float)Math.Abs(v) / mi * colW);
+							// indice: tonalità più chiara per distinguerlo a colpo d'occhio
+							var cI = v >= 0 ? new Color4(0.55f, 0.95f, 0.78f, 0.95f) : new Color4(1.00f, 0.68f, 0.68f, 0.95f);
+							using (var bb = new SolidColorBrush(RenderTarget, cI))
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y + 0.5f, len, hh), bb);
+						}
+					}
+					// etichette sui 3 strike più pesanti (somma dei due |net|)
+					var topK = keys.OrderByDescending(k =>
+					{
+						double a, b2; de.TryGetValue(k, out a); di.TryGetValue(k, out b2);
+						return Math.Abs(a) + Math.Abs(b2);
+					}).Take(3);
+					foreach (var k in topK)
+					{
+						float y = (float)chartScale.GetYByValue(k);
+						if (y < 12 || y > panelH - 6) continue;
+						DrawTextRight(RenderTarget, tf, brush, k.ToString("0"), xLeft, y - 8);
+					}
+				}
+				else
+				{
 				int   nW   = inWin.Count;
 				var   ys   = new float[nW];
 				for (int i = 0; i < nW; i++) ys[i] = (float)chartScale.GetYByValue(inWin[i].S);
@@ -688,21 +768,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 					float bh  = Math.Max(2f, Math.Min(PixelBinSize, gap * 0.72f));
 					float len = Math.Max(2f, (float)Math.Abs(b.Net) / yMax * colW);
 					var c4 = b.Net >= 0
-						? new Color4(0.20f, 0.83f, 0.60f, zonesOn ? 0.65f : 0.90f)
-						: new Color4(0.97f, 0.44f, 0.44f, zonesOn ? 0.65f : 0.90f);
+						? new Color4(0.20f, 0.83f, 0.60f, 0.90f)
+						: new Color4(0.97f, 0.44f, 0.44f, 0.90f);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
 				}
+				}
 				// etichette: i 3 strike piu grossi per |net| nella finestra
-				var topIdx = Enumerable.Range(0, nW)
-					.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
-				foreach (int i in topIdx)
+				// (in modalità Entrambi le etichette sono già state messe nel ramo
+				// a due barre, dove si usano i pesi delle due fonti)
+				if (!twoBars)
 				{
-					float y = ys[i];
-					if (y < 12 || y > panelH - 6) continue;
-					float len = Math.Max(2f, (float)Math.Abs(inWin[i].Net) / yMax * colW);
-					DrawTextRight(RenderTarget, tf, brush, inWin[i].S.ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 8);
+					var topIdx = Enumerable.Range(0, inWin.Count)
+						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
+					foreach (int i in topIdx)
+					{
+						float y = (float)chartScale.GetYByValue(inWin[i].S);
+						if (y < 12 || y > panelH - 6) continue;
+						float len = Math.Max(2f, (float)Math.Abs(inWin[i].Net) / yMax * colW);
+						DrawTextRight(RenderTarget, tf, brush, inWin[i].S.ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 8);
+					}
 				}
 
 				// ---- linee: Max Pain (ambra) / Flip (viola). NIENTE linea Spot:
@@ -765,8 +851,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				// legenda
 				string leg = "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)" + (regimeTxt.Length > 0 ? " · regime " + regimeTxt : "");
-				if (zonesOn)
-					leg = zones.Count + " zone confluenza \u25C6 (banda = muri ETF+indice entro " + ZoneTolPct.ToString("0.0#") + "%) · " + leg;
+				if (twoBars)
+					leg = "barra ALTA = ETF · barra BASSA = indice (ognuna al proprio max) · " + zones.Count + " zone \u25C6";
 				else if (OptSource == GexOiSource.Entrambi)
 					leg = "nessuna zona confluenza (muri ETF/indice mai entro " + ZoneTolPct.ToString("0.0#") + "%) · " + leg;
 				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);

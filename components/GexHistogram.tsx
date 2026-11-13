@@ -59,6 +59,13 @@ export const GexHistogram: React.FC<{
   futEq?: (s: number) => string;
   /** Nome dei futures (ES/NQ) per i testi e la legenda. */
   futName?: string;
+  /** Solo vista 'Entrambi': le due serie _binned (25pt, scala futures) per le
+   *  BARRE. In 'Entrambi' non si somma: si disegnano DUE barre per strike
+   *  (ETF a sinistra, indice a destra), ognuna normalizzata al proprio
+   *  massimo di finestra — la somma di due libri con muri sfalsati non
+   *  rappresenta né l'uno né l'altro. */
+  barsEtf?: Array<GexProfileEntry>;
+  barsIdx?: Array<GexProfileEntry>;
   /** Solo vista 'Entrambi': i due profili RAW in scala futures, usati SOLO per
    *  rilevare i muri e le ZONE DI CONFLUENZA (muro ETF + muro indice entro una
    *  tolleranza). NON si usano i _binned: il bin a 25pt introduce aliasing
@@ -77,7 +84,7 @@ export const GexHistogram: React.FC<{
    *  già convertito). Default: idxName. */
   strikeScale?: string;
 }> = ({ profile, spot, idxName, maxPain, flip, futEq, futName, strikeScale,
-       zoneEtf, zoneIdx, zoneTolPct = 0.2, wallPct = 20 }) => {
+       zoneEtf, zoneIdx, barsEtf, barsIdx, zoneTolPct = 0.2, wallPct = 20 }) => {
   const [winIdx, setWinIdx] = useState(DEFAULT_WIN);
   const [metric, setMetric] = useState<Metric>('gex');
   const [view, setView] = useState<'split' | 'net'>('split');
@@ -163,6 +170,27 @@ export const GexHistogram: React.FC<{
   }, [profile, winIdx, spot]);
 
   const hasOi = useMemo(() => bars.some(b => (b.co ?? 0) + (b.po ?? 0) > 0), [bars]);
+
+  // Vista a DUE barre (solo 'Entrambi'): valori netti per fonte nella finestra,
+  // ognuno normalizzato al proprio massimo. Si disegna ETF a sinistra e indice
+  // a destra dello strike: le strutture restano leggibili e confrontabili
+  // (su ES il libro indice pesa 5x: in scala assoluta l'ETF sparirebbe).
+  const dual = useMemo(() => {
+    if (!barsEtf?.length || !barsIdx?.length) return null;
+    const win = WINDOWS[winIdx];
+    const lo = spot * (1 - win.pct), hi = spot * (1 + win.pct);
+    const netOf = (x: GexProfileEntry) =>
+      metric === 'oi' ? (x.co ?? 0) - (x.po ?? 0) : x.c + x.p;
+    const mE = new Map<number, number>(), mI = new Map<number, number>();
+    for (const x of barsEtf) if (x.s >= lo && x.s <= hi) mE.set(x.s, (mE.get(x.s) ?? 0) + netOf(x));
+    for (const x of barsIdx) if (x.s >= lo && x.s <= hi) mI.set(x.s, (mI.get(x.s) ?? 0) + netOf(x));
+    const keys = [...new Set([...mE.keys(), ...mI.keys()])].sort((a, b) => a - b);
+    if (!keys.length) return null;
+    let mxE = 0, mxI = 0;
+    for (const v of mE.values()) mxE = Math.max(mxE, Math.abs(v));
+    for (const v of mI.values()) mxI = Math.max(mxI, Math.abs(v));
+    return { mE, mI, keysList: keys, mxE: mxE || 1, mxI: mxI || 1 };
+  }, [barsEtf, barsIdx, spot, winIdx, metric]);
 
   const geom = useMemo(() => {
     if (!bars.length) return null;
@@ -304,7 +332,30 @@ export const GexHistogram: React.FC<{
             );
           })}
 
-          {bars.map(b => {
+          {dual ? dual.keysList.map(s => {
+            const e = dual.mE.get(s) ?? 0, i2 = dual.mI.get(s) ?? 0;
+            const xc = geom.x(s);
+            const bwD = Math.max(1, geom.bw / 2);
+            const xE = xc - bwD, xI = xc;
+            const hE = (Math.abs(e) / dual.mxE) * geom.half;
+            const hI = (Math.abs(i2) / dual.mxI) * geom.half;
+            return (
+              <g key={`dual-${s}`}>
+                {e !== 0 && (
+                  <rect x={xE} y={e >= 0 ? geom.yZero - hE : geom.yZero} width={bwD}
+                        height={Math.max(0.5, hE)} fill={e >= 0 ? '#34d399' : '#f87171'} opacity={0.85}>
+                    <title>{`Strike ${strikeScale ?? idxName} ${s.toFixed(0)} — ETF ${metric === 'oi' ? Math.round(e).toLocaleString('it-IT') : e.toFixed(2) + ' Mld'} (barra alta)`}</title>
+                  </rect>
+                )}
+                {i2 !== 0 && (
+                  <rect x={xI} y={i2 >= 0 ? geom.yZero - hI : geom.yZero} width={bwD}
+                        height={Math.max(0.5, hI)} fill={i2 >= 0 ? '#6ee7b7' : '#fca5a5'} opacity={0.85}>
+                    <title>{`Strike ${strikeScale ?? idxName} ${s.toFixed(0)} — indice ${metric === 'oi' ? Math.round(i2).toLocaleString('it-IT') : i2.toFixed(2) + ' Mld'} (barra chiara)`}</title>
+                  </rect>
+                )}
+              </g>
+            );
+          }) : bars.map(b => {
             const [cVal, pVal] = geom.val(b);
             const x = geom.x(b.s) - geom.bw / 2;
             const yTop = geom.barTop(cVal);
@@ -366,6 +417,13 @@ export const GexHistogram: React.FC<{
           <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> Max Pain</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-purple-400" /> Flip</span>
         </span>
+        {dual && (
+          <span className="text-[10px] text-gray-400 flex items-center gap-2">
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400" /> ETF</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-300" /> indice</span>
+            <span className="text-gray-500">ognuna al proprio massimo</span>
+          </span>
+        )}
         {bothMode && (
           <span className="text-[10px] text-gray-400 flex items-center gap-1.5">
             <span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-400/25 border border-amber-400" />
