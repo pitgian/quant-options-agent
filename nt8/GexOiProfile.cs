@@ -22,7 +22,7 @@ using SharpDX.DirectWrite;
 #endregion
 
 // ============================================================================
-//  GexOiProfile — profilo NETTO OI/GEX per strike + linee Spot/MaxPain/Flip
+//  GexOiProfile — profilo NETTO OI/GEX per strike + linee MaxPain/Flip
 //
 //  Dati: NON li ricalcola. Legge il piano già generato dal pipeline
 //  (branch 'data' del repo quant-options-agent — lo stesso JSON che alimenta
@@ -35,7 +35,8 @@ using SharpDX.DirectWrite;
 //
 //  Render: pannello ancorato al bordo destro, una barra per strike alla
 //  SUA quota di prezzo (verde net>=0 = call-dominato/pin, rosso net<0 =
-//  put-dominato/trigger), linee Spot (live dal grafico) / Max Pain / Flip
+//  put-dominato/trigger), linee Max Pain / Flip (la linea Spot NON c'è: il
+//  grafico ha già la sua). Fonte Entrambi = somma ETF+indice per strike.
 //  sempre visibili, badge di freschezza del piano.
 //
 //  RIFERIMENTI: NESSUNO extra — il parsing usa JavaScriptSerializer
@@ -55,7 +56,11 @@ using SharpDX.DirectWrite;
 // usata dal tree (OrderFlowPro): enum a livello GLOBALE, prima dei namespace:
 // risolvono da qualunque namespace il codice generato possa usare.
 public enum GexOiFutures { Auto, ES, NQ }
-public enum GexOiSource  { Indice, ETF }
+// Entrambi = somma ETF + INDICE sullo stesso strike (griglia 25pt in scala
+// futures condivisa dalle due fonti _binned) per leggere le ZONE DI
+// CONFLUENZA. Aggiunto in coda: gli indici dei valori esistenti (Indice=0,
+// ETF=1) restano invariati, i workspace già salvati non si rompono.
+public enum GexOiSource  { Indice, ETF, Entrambi }
 public enum GexOiBucket  { Tutte, Settimana, ZeroDTE }
 public enum GexOiLato    { Sinistra, Destra }
 public enum GexOiMetric  { GEX, OI }
@@ -91,9 +96,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private DateTime planTime = DateTime.MinValue;
 		private double   planSpot;              // last_price del piano (fallback)
 		private double   maxPain;               // scala fut
-		private double   flip;                  // flip strutturale (scala fut)
-		private double   flip0;                 // flip 0DTE (scala fut, opzionale)
+		private double   flip;                  // flip strutturale PRIMARIO (scala fut)
+		private double   flip0;                 // flip 0DTE primario (scala fut, opzionale)
 		private bool     hasFlip, hasFlip0, hasMaxPain;
+		// flip delle DUE fonti, parse separato: in modalità Entrambi si mostrano
+		// entrambi (i due flip raramente coincidono = informazione di confluenza).
+		private double   flipEtf, flipIdx, flip0Etf, flip0Idx;
+		private bool     hasFlipEtf, hasFlipIdx, hasFlip0Etf, hasFlip0Idx;
 		private string   regimeTxt = "";
 		private string   fetchError = "";
 		private DateTime lastFetch = DateTime.MinValue;
@@ -118,7 +127,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			if (State == State.SetDefaults)
 			{
-				Description                    = "Profilo netto OI/GEX per strike (dal piano QuantFlow) + linee Spot/MaxPain/Flip.";
+				Description                    = "Profilo netto OI/GEX per strike (dal piano QuantFlow) + linee MaxPain/Flip.";
 				Name                           = "GexOiProfile";
 				Calculate                      = Calculate.OnPriceChange;
 				IsOverlay                      = true;
@@ -272,8 +281,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			hasFlip = hasFlip0 = false;
 			flip = flip0 = 0;
-			string flipName  = idx ? "GEX-FLIP-IDX"      : "GEX-FLIP";
-			string flip0Name = idx ? "GEX-FLIP-0DTE-IDX" : "GEX-FLIP-0DTE";
+			// I 4 livelli di flip sono TUTTI in scala futures: li parso sempre
+			// tutti e quattro, poi scelgo il primario in base alla modalità.
+			flipEtf = flipIdx = flip0Etf = flip0Idx = 0;
+			hasFlipEtf = hasFlipIdx = hasFlip0Etf = hasFlip0Idx = false;
 			object[] levels = ToArray(plan.TryGetValue("levels", out var levelsObj) ? levelsObj : null);
 			if (levels != null)
 			{
@@ -283,25 +294,48 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (lv == null) continue;
 					string nm = TryStr(lv, "name") ?? "";
 					double pr = TryNum(lv, "price");
-					if (nm == flipName)  { flip  = pr; hasFlip  = pr > 0; }
-					if (nm == flip0Name) { flip0 = pr; hasFlip0 = pr > 0; }
+					if (nm == "GEX-FLIP")          { flipEtf  = pr; hasFlipEtf  = pr > 0; }
+					else if (nm == "GEX-FLIP-IDX") { flipIdx  = pr; hasFlipIdx  = pr > 0; }
+					else if (nm == "GEX-FLIP-0DTE")     { flip0Etf = pr; hasFlip0Etf = pr > 0; }
+					else if (nm == "GEX-FLIP-0DTE-IDX") { flip0Idx = pr; hasFlip0Idx = pr > 0; }
 				}
 			}
+			// primario: in Entrambi si usa l'ETF (come il sito) + l'IDX come linea extra
+			flip    = idx ? flipIdx    : flipEtf;    hasFlip    = idx ? hasFlipIdx    : hasFlipEtf;
+			flip0   = idx ? flip0Idx   : flip0Etf;   hasFlip0   = idx ? hasFlip0Idx   : hasFlip0Etf;
 
-			// profilo per strike: ENTRAMBE le fonti sono già in scala futures
-			string profKey = idx
-				? (OptBucket == GexOiBucket.ZeroDTE  ? "gex_profile_0dte_index"
-				 : OptBucket == GexOiBucket.Settimana ? "gex_profile_week_index"
-				 : "gex_profile_index")
-				: (OptBucket == GexOiBucket.ZeroDTE  ? "gex_profile_0dte_binned"
-				 : OptBucket == GexOiBucket.Settimana ? "gex_profile_week_binned"
-				 : "gex_profile_binned");
+			// ---- profilo per strike: TUTTE le fonti sono già in SCALA FUTURES.
+			//      Indice  -> gex_profile*_index        (raw, passo 5pt)
+			//      ETF     -> gex_profile*_binned       (passo 25pt)
+			//      Entrambi-> gex_profile*_binned + gex_profile*_index_binned.
+			//      ⚠️ Per la somma servono le versioni _binned di ENTRAMBE: la raw
+			//      indice è a 5pt e non ha strike in comune con la griglia 25pt
+			//      ETF → si affiancherebbero i due libri invece di sommarli.
+			string suffix = OptBucket == GexOiBucket.ZeroDTE   ? "_0dte"
+				: OptBucket == GexOiBucket.Settimana ? "_week" : "";
+			string idxKeyRaw    = "gex_profile" + suffix + "_index";
+			string idxKeyBinned = "gex_profile_index" + suffix + "_binned";
+			string etfKeyBinned = "gex_profile" + suffix + "_binned";
 
-			var outBars = new List<ProfileBar>();
-			object[] profArr = ToArray(plan.TryGetValue(profKey, out var profObj) ? profObj : null);
-			if (profArr != null)
+			var profKeys = new List<string>();
+			if (OptSource == GexOiSource.Indice)       profKeys.Add(idxKeyRaw);
+			else if (OptSource == GexOiSource.ETF)     profKeys.Add(etfKeyBinned);
+			else                                     { profKeys.Add(etfKeyBinned); profKeys.Add(idxKeyBinned); }
+
+			// Somma a strike: SOMMA CORRETTA perché entrambe le serie _binned
+			// stanno sulla STESSA griglia 25pt in scala futures (verificato sul
+			// piano live: ETF 22725..34025 passo 25, IDX 22775..34025 passo 25,
+			// 188 strike comuni + strike presenti in una sola fonte). Uno strike
+			// assente da una fonte vale 0: il contributo mancante è zero, non
+			// un dato ignoto — quindi la somma non gonfia né perde nulla.
+			var merged = new Dictionary<double, double>();
+			int matchedFonte = 0;
+			foreach (string pk in profKeys)
 			{
-				foreach (var eo in profArr)
+				object[] a = ToArray(plan.TryGetValue(pk, out var po) ? po : null);
+				if (a == null) continue;
+				matchedFonte++;
+				foreach (var eo in a)
 				{
 					var e = eo as Dictionary<string, object>;
 					if (e == null) continue;
@@ -310,16 +344,28 @@ namespace NinjaTrader.NinjaScript.Indicators
 					double net = OptMetric == GexOiMetric.GEX
 						? TryNum(e, "c") + TryNum(e, "p")
 						: TryNum(e, "co") - TryNum(e, "po");
-					outBars.Add(new ProfileBar { S = s, Net = net });
+					// arrotondo la chiave a 0.1: le due fonti scrivono 25pt esatti,
+					// ma non voglio che un 1e-13 di virgola mobile crei doppioni
+					double k = Math.Round(s, 1);
+					double cur;
+					merged.TryGetValue(k, out cur);
+					merged[k] = cur + net;
 				}
 			}
 
+			var outBars = new List<ProfileBar>();
+			foreach (var kv in merged)
+				outBars.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
+
 			outBars = outBars.OrderBy(b => b.S).ToList();
 			bars = outBars.Count > 0 ? outBars : null;
-			fetchError = bars == null ? "profilo '" + profKey + "' assente o vuoto" : "";
-			Log(string.Format("GexOiProfile[{0}]: piano {1} (raw: {2}) · {3} strike · mp={4} · flip={5}",
+			string keysTxt = string.Join("+", profKeys.ToArray());
+			fetchError = bars == null ? "profilo '" + keysTxt + "' assente o vuoto" : "";
+			if (profKeys.Count > 1 && matchedFonte < 2 && bars != null)
+				fetchError = "solo " + matchedFonte + "/2 fonti nel piano (" + keysTxt + ")";
+			Log(string.Format("GexOiProfile[{0}]: piano {1} (raw: {2}) · {3} strike · mp={4} · flip={5} · fonti={6}/{7}",
 				key, planTime.ToString("HH:mm"), TryStr(plan, "generated_at"),
-				bars == null ? 0 : bars.Count, maxPain, flip), LogLevel.Information);
+				bars == null ? 0 : bars.Count, maxPain, flip, matchedFonte, profKeys.Count), LogLevel.Information);
 		}
 
 		// ---------------------------------------------------------------- render
@@ -377,7 +423,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				&& (DateTime.Now - planTime).TotalMinutes > StaleMinutes;
 
 			string srcName = OptSource == GexOiSource.Indice ? (PlanKey() == "ES" ? "SPX" : "NDX")
-			                                                 : (PlanKey() == "ES" ? "SPY" : "QQQ");
+				: OptSource == GexOiSource.Entrambi
+					? (PlanKey() == "ES" ? "SPY+SPX" : "QQQ+NDX")
+					: (PlanKey() == "ES" ? "SPY" : "QQQ");
 			string title = (OptMetric == GexOiMetric.GEX ? "Net GEX" : "Net OI")
 				+ " · " + (OptBucket == GexOiBucket.ZeroDTE ? "0DTE" : OptBucket == GexOiBucket.Settimana ? "≤7gg" : "Tutte")
 				+ " · " + srcName;
@@ -425,8 +473,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 				float yMax = Math.Max(maxPos, maxNeg);
 
-				float ySpot = (float)chartScale.GetYByValue(spot);
-
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
@@ -467,15 +513,21 @@ namespace NinjaTrader.NinjaScript.Indicators
 					DrawTextRight(RenderTarget, tf, brush, inWin[i].S.ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 8);
 				}
 
-				// ---- linee: Spot (tratteggiata blu) / Max Pain (ambra) / Flip (viola)
+				// ---- linee: Max Pain (ambra) / Flip (viola). NIENTE linea Spot:
+				//      il grafico ha già la sua (era ridondante e rumorosa).
 				var lines = new List<Tuple<float, Color4, string>>();
-				lines.Add(Tuple.Create(ySpot, new Color4(0.42f, 0.66f, 0.95f, 0.9f), "Spot " + spot.ToString("0")));
 				if (hasMaxPain)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain),
 						new Color4(0.98f, 0.75f, 0.25f, 0.95f), "MP " + maxPain.ToString("0")));
 				if (hasFlip)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip),
 						new Color4(0.72f, 0.55f, 0.95f, 0.95f), "Flip " + flip.ToString("0")));
+				// Entrambi: anche il flip dell'ALTRA fonte — i due flip raramente
+				// coincidono ed è proprio la distanza fra i due a dire se il regime
+				// è confermato su ETF e indice o è in divergenza.
+				if (OptSource == GexOiSource.Entrambi && hasFlipIdx && Math.Abs(flipIdx - flip) > 0.01)
+					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx),
+						new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0")));
 				if (ShowFlip0Dte && hasFlip0)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0),
 						new Color4(0.72f, 0.55f, 0.95f, 0.55f), "Flip0 " + flip0.ToString("0")));
@@ -544,7 +596,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public GexOiFutures OptFutures { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name = "Fonte opzioni", Order = 2, GroupName = "1. Dati")]
+		[Display(Name = "Fonte opzioni (Entrambi = ETF+indice sommati)", Order = 2, GroupName = "1. Dati")]
 		public GexOiSource OptSource { get; set; }
 
 		[NinjaScriptProperty]
