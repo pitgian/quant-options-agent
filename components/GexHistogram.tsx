@@ -88,8 +88,12 @@ export const GexHistogram: React.FC<{
   // le due fonti hanno scale diverse — su ES il libro indice pesa 5x l'ETF —
   // così entrambe contribuiscono con un numero confrontabile di muri).
   // Zona = muro ETF e muro indice a distanza <= zoneTolPct% dello spot,
-  // con le zone sovrapposte fuse fra loro.
-  type Zone = { lo: number; hi: number; a: number; b: number };
+  // con le zone sovrapposte fuse fra loro. loR/hiR = estensione da DISEGNARE:
+  // allargata ad almeno ±tolleranza/2 attorno al centro, altrimenti le zone
+  // dove i due muri cadono sullo STESSO strike (tipico su ES: 7550 vs 7550)
+  // collassavano a 2px, invisibili come banda (viste come una linea col ◆).
+  type Zone = { lo: number; hi: number; loR: number; hiR: number; a: number; b: number };
+  type Raw = Pick<Zone, 'lo' | 'hi' | 'a' | 'b'>;
   const zones = useMemo<Zone[]>(() => {
     const A = profileEtf, B = profileIdx;
     if (!A?.length || !B?.length || !(spot > 0)) return [];
@@ -107,15 +111,15 @@ export const GexHistogram: React.FC<{
     };
     const wa = wallsOf(A), wb = wallsOf(B);
     if (!wa.length || !wb.length) return [];
-    const iv: Zone[] = [];
+    const iv: Raw[] = [];
     for (const [sa, va] of wa)
       for (const [sb, vb] of wb)
         if (Math.abs(sa - sb) <= tol)
           iv.push({ lo: Math.min(sa, sb), hi: Math.max(sa, sb), a: va, b: vb });
     if (!iv.length) return [];
     iv.sort((p, q) => p.lo - q.lo);
-    const out: Zone[] = [];
-    let cur: Zone = { ...iv[0] };
+    const out: Raw[] = [];
+    let cur: Raw = { ...iv[0] };
     for (let i = 1; i < iv.length; i++) {
       const z = iv[i];
       if (z.lo <= cur.hi + tol) {
@@ -125,7 +129,13 @@ export const GexHistogram: React.FC<{
       } else { out.push(cur); cur = { ...z }; }
     }
     out.push(cur);
-    return out.sort((p, q) => (Math.abs(q.a) + Math.abs(q.b)) - (Math.abs(p.a) + Math.abs(p.b)));
+    return out
+      .map<Zone>(z => {
+        const c = (z.lo + z.hi) / 2;
+        const half = Math.max((z.hi - z.lo) / 2, tol / 2);
+        return { ...z, loR: c - half, hiR: c + half };
+      })
+      .sort((p, q) => (Math.abs(q.a) + Math.abs(q.b)) - (Math.abs(p.a) + Math.abs(p.b)));
   }, [profileEtf, profileIdx, spot, metric, zoneTolPct, wallPct]);
   const bothMode = !!profileEtf?.length && !!profileIdx?.length;
 
@@ -262,12 +272,12 @@ export const GexHistogram: React.FC<{
               colore = verso concordato dei due libri. Disegnate PRIMA delle
               barre così restano leggibili sopra. */}
           {zones.map((z, i) => {
-            const x1 = geom.x(z.lo), x2 = geom.x(z.hi);
+            const x1 = geom.x(z.loR), x2 = geom.x(z.hiR);
             const col = z.a < 0 && z.b < 0 ? '#f87171' : z.a > 0 && z.b > 0 ? '#34d399' : '#fbbf24';
             const lbl = z.a < 0 && z.b < 0 ? 'put condiviso' : z.a > 0 && z.b > 0 ? 'call condiviso' : 'segni discordi';
             return (
               <g key={`zona-${i}`}>
-                <rect x={Math.min(x1, x2)} y={M.top} width={Math.max(2, Math.abs(x2 - x1))} height={PLOT_H}
+                <rect x={Math.min(x1, x2)} y={M.top} width={Math.max(3, Math.abs(x2 - x1))} height={PLOT_H}
                       fill={col} opacity={0.18}>
                   <title>{`Zona confluenza ${z.lo.toFixed(0)}–${z.hi.toFixed(0)} (${lbl}) — muro ETF ${z.a.toFixed(1)} · muro indice ${z.b.toFixed(1)}`}</title>
                 </rect>

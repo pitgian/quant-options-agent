@@ -364,10 +364,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 					// arrotondo la chiave a 0.1: le due fonti scrivono 25pt esatti,
 					// ma non voglio che un 1e-13 di virgola mobile crei doppioni
 					double k = Math.Round(s, 1);
-					double cur;
-					merged.TryGetValue(k, out cur);
-					merged[k] = cur + net;
-					src[k] = net;
+					merged[k] = (merged.TryGetValue(k, out var acc) ? acc : 0) + net;
+					src[k] = (src.TryGetValue(k, out var accs) ? accs : 0) + net;
 				}
 				perFonte.Add(src);
 			}
@@ -409,7 +407,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 			double mx = 0;
 			foreach (var v in src.Values) mx = Math.Max(mx, Math.Abs(v));
 			if (mx <= 0) return outp;
-			double thr = mx * WallPct;
+			// BUG 13/11: WallPct è una PERCENTUALE (20 = 20%), non una frazione.
+			// Prima: thr = mx * WallPct = 20x il massimo → nessun muro → 0 zone
+			// (il sito divideva per 100, l'indicatore no: per questo le bande
+			// c'erano sul sito e non su NT).
+			double thr = mx * WallPct / 100.0;
 			foreach (var kv in src)
 				if (Math.Abs(kv.Value) >= thr) outp.Add(kv);
 			return outp;
@@ -581,8 +583,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 					int labelled = 0;
 					foreach (var z in zones)
 					{
-						float yHi = (float)chartScale.GetYByValue(z.Hi);   // prezzo piu alto = y minore
-						float yLo = (float)chartScale.GetYByValue(z.Lo);
+						// estensione da DISEGNARE: almeno ±tolleranza/2 attorno al centro,
+						// altrimenti le zone con i due muri sullo STESSO strike (tipico
+						// su ES: 7550 vs 7550) collassano a 2 pixel e si vedono come una
+						// linea col rombo, non come banda.
+						double zc = (z.Lo + z.Hi) / 2.0;
+						double zhalf = Math.Max((z.Hi - z.Lo) / 2.0, (spot > 0 ? spot : planSpot) * ZoneTolPct / 100.0 / 2.0);
+						float yHi = (float)chartScale.GetYByValue(zc + zhalf);   // prezzo piu alto = y minore
+						float yLo = (float)chartScale.GetYByValue(zc - zhalf);
 						float top = Math.Min(yHi, yLo), bot = Math.Max(yHi, yLo);
 						if (bot < 0 || top > panelH) continue;
 						if (bot - top < 2f) { float c0 = (top + bot) / 2f; top = c0 - 1f; bot = c0 + 1f; }
