@@ -36,7 +36,9 @@ using SharpDX.DirectWrite;
 //  Render: pannello ancorato al bordo destro, una barra per strike alla
 //  SUA quota di prezzo (verde net>=0 = call-dominato/pin, rosso net<0 =
 //  put-dominato/trigger), linee Max Pain / Flip (la linea Spot NON c'è: il
-//  grafico ha già la sua). Fonte Entrambi = somma ETF+indice per strike.
+//  grafico ha già la sua; le linee partono dall'ultima candela, non dal bordo
+//  sinistro, per non attraversare la price action). Fonte Entrambi = somma
+//  ETF+indice per strike.
 //  sempre visibili, badge di freschezza del piano.
 //
 //  RIFERIMENTI: NESSUNO extra — il parsing usa JavaScriptSerializer
@@ -515,6 +517,24 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				// ---- linee: Max Pain (ambra) / Flip (viola). NIENTE linea Spot:
 				//      il grafico ha già la sua (era ridondante e rumorosa).
+				// Le linee partono dall'ULTIMA CANDELA (non dal bordo sinistro del
+				// pannello): attraversare tutta la price action sporcava il grafico.
+				// Margine di 8px a sinistra della candela = la linea "tocca" la
+				// candela senza coprirne il corpo; se non c'è spazio (zoom/scroll
+				// con candela oltre la colonna) si tiene il bordo della colonna.
+				float xLast = px + 10;
+				try
+				{
+					if (ChartBars != null && ChartBars.ToIndex >= 0)
+					{
+						float xc = (float)chartControl.GetXByBarIndex(ChartBars, ChartBars.ToIndex);
+						if (!float.IsNaN(xc) && xc > px) xLast = xc - 8f;
+					}
+				}
+				catch { }
+				if (xLast < px + 10) xLast = px + 10;
+				if (xLast > xRight - 2) xLast = xRight - 2;
+
 				var lines = new List<Tuple<float, Color4, string>>();
 				if (hasMaxPain)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain),
@@ -536,8 +556,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				for (int i = 1; i < lines.Count; i++)
 				{
 					float d = lines[i].Item1 - lines[i - 1].Item1;
-					if (Math.Abs(d) < 14)
-						lines[i] = Tuple.Create(lines[i].Item1 + (d >= 0 ? 14f : -14f), lines[i].Item2, lines[i].Item3);
+					if (Math.Abs(d) < 16)
+						lines[i] = Tuple.Create(lines[i].Item1 + (d >= 0 ? 16f : -16f), lines[i].Item2, lines[i].Item3);
 				}
 
 				foreach (var ln in lines)
@@ -546,9 +566,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (yL < 16 || yL > panelH - 16) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 					{
-						DrawDashed(RenderTarget, bL, px + 10, xLeft - 6, yL, 9, 5);
-						RenderTarget.DrawLine(new SharpDX.Vector2(xLeft - 6, yL), new SharpDX.Vector2(xRight, yL), bL, 1f);
-						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, px + 12, yL - 14);
+						DrawDashed(RenderTarget, bL, xLast, xRight, yL, 9, 5);
+						// etichetta ancorata all'INIZIO della linea (subito a destra
+						// della candela), non più al bordo sinistro del pannello.
+						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xLast + 4, yL - 13);
 					}
 				}
 
