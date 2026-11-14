@@ -94,8 +94,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 		}
 
 		// --- stato dati (SOLO thread UI: scritto dentro TriggerCustomEvent) ---
-		private List<ProfileBar> bars;          // profilo netto per strike (scala fut;
-		                                        // in Entrambi = SOMMA ETF+indice, come il sito)
+		private List<ProfileBar> bars;          // profilo netto per strike (scala fut)
+		// Vista Entrambi: i DUE profili grezzi in scala futures, tenuti separati
+		// per il disegno SPECULARE (indice a sinistra, ETF a destra, stesso asse
+		// prezzi). Non si sommano: griglie di strike diverse (SPX ~5pt, SPY $1
+		// ~10pt su ES) -> la somma su bin comuni sfocava entrambi i libri.
+		private List<ProfileBar> twinEtf, twinIdx;
 		private DateTime planTime = DateTime.MinValue;
 		private double   planSpot;              // last_price del piano (fallback)
 		private double   maxPain;               // scala fut
@@ -164,6 +168,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				OffsetDallaDestraPx            = 150;
 				Lato                           = GexOiLato.Destra;
 				ShowFlip0Dte                   = false;
+				ScalaComune                    = false;
 				ZoneTolPct                     = 0;      // 0 = auto (1.5x griglia nativa ETF)
 				WallPct                        = 20;
 
@@ -417,6 +422,35 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 				Log(string.Format("GexOiProfile: confluenza -> {0} zone (tol {1:0}pt) · gap minimo ETF↔indice {2:0}pt · soglia muro {3}%",
 					zones.Count, tol, minGapPts, WallPct), LogLevel.Information);
+			}
+
+			// ---- profili GREZZI per il disegno speculare (solo Entrambi).
+			//      ETF: nativo x etf_to_fut_ratio -> scala futures.
+			//      IDX: gia' in scala futures nel piano.
+			//      Il ratio ETF, se il piano non lo porta, si ricava da
+			//      last_price / spot_etf (stesso fallback del sito).
+			twinEtf = twinIdx = null;
+			if (OptSource == GexOiSource.Entrambi)
+			{
+				double rEtf = TryNum(plan, "etf_to_fut_ratio");
+				if (rEtf <= 0)
+				{
+					double se = TryNum(plan, "spot_etf");
+					if (se > 0 && planSpot > 0) rEtf = planSpot / se;
+				}
+				if (rEtf > 0)
+				{
+					var te = new List<ProfileBar>();
+					foreach (var kv in RawProfile(plan, "gex_profile" + suffix, rEtf))
+						te.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
+					var ti = new List<ProfileBar>();
+					foreach (var kv in RawProfile(plan, idxKeyRaw, 1.0))
+						ti.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
+					twinEtf = te.OrderBy(b => b.S).ToList();
+					twinIdx = ti.OrderBy(b => b.S).ToList();
+					if (twinEtf.Count == 0) twinEtf = null;
+					if (twinIdx.Count == 0) twinIdx = null;
+				}
 			}
 
 			var outBars = new List<ProfileBar>();
@@ -709,8 +743,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      dai top_gamma entro ±tolPts (5 pt di default).
 				float colW = xRight - xLeft;
 				bool inBoth = OptSource == GexOiSource.Entrambi;
+				bool twin = inBoth && twinEtf != null && twinIdx != null
+					&& twinEtf.Count > 0 && twinIdx.Count > 0;
 
-				if (inBoth && zones != null && zones.Count > 0)
+				if (inBoth && !twin && zones != null && zones.Count > 0)
 				{
 					var sel = zones
 						.OrderByDescending(z => Math.Abs(z.NetEtf) + Math.Abs(z.NetIdx))
@@ -745,10 +781,117 @@ namespace NinjaTrader.NinjaScript.Indicators
 							xLeft, 40);
 				}
 
-				// ---- UNA BARRA PER STRIKE, in TUTTE le modalita': in Entrambi le
-				//      barre sono la SOMMA ETF+indice (griglia 25pt), identico al
-				//      sito. Solo lo SPESSORE si adatta al gap dallo strike vicino
-				//      (72% del gap, tetto PixelBinSize px): le lunghezze no.
+				// ---- BARRE. Due rese:
+				//      · fonte singola  -> una barra per strike, dal bordo destro
+				//        della colonna verso sinistra (come il sito).
+				//      · Entrambi       -> PROFILO SPECULARE: INDICI a sinistra della
+				//        spina centrale, ETF a destra, STESSO asse prezzi (verticale,
+				//        scala futures). I due libri non si sommano: hanno griglie di
+				//        strike diverse e la somma li sfocava. Ognuna delle due meta'
+				//        e' normalizzata al PROPRIO massimo (il libro indice pesa
+				//        molto di piu'), oppure a scala comune se ScalaComune=true.
+
+				if (twin)
+				{
+					float spine = xLeft + colW / 2f;
+					float halfW = colW / 2f - 3f;
+					var wI = twinIdx.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct)
+						.OrderBy(b => b.S).ToList();
+					var wE = twinEtf.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct)
+						.OrderBy(b => b.S).ToList();
+					float mxI = 0.0001f, mxE = 0.0001f;
+					foreach (var b in wI) mxI = Math.Max(mxI, (float)Math.Abs(b.Net));
+					foreach (var b in wE) mxE = Math.Max(mxE, (float)Math.Abs(b.Net));
+					float scI = ScalaComune ? Math.Max(mxI, mxE) : mxI;
+					float scE = ScalaComune ? Math.Max(mxI, mxE) : mxE;
+
+					// spina = asse prezzi comune
+					using (var bSp = new SolidColorBrush(RenderTarget, new Color4(0.58f, 0.64f, 0.72f, 0.85f)))
+						RenderTarget.DrawLine(new SharpDX.Vector2(spine, 22), new SharpDX.Vector2(spine, panelH - 22), bSp, 1.2f);
+
+					// meta' INDICI (sinistra) e meta' ETF (destra): tinta di campo
+					using (var bFi = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 0.05f)))
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, 22, colW / 2f, panelH - 44), bFi);
+					using (var bFe = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 0.05f)))
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(spine, 22, colW / 2f, panelH - 44), bFe);
+
+					// bande di confluenza: attraversano TUTTA la colonna
+					if (zones != null)
+						foreach (var z in zones.OrderByDescending(z => Math.Abs(z.NetEtf) + Math.Abs(z.NetIdx)).Take(6))
+						{
+							float yHi = (float)chartScale.GetYByValue(z.Hi + tolPts / 2);
+							float yLo = (float)chartScale.GetYByValue(z.Lo - tolPts / 2);
+							float t0 = Math.Max(22f, Math.Min(yHi, yLo)), b0 = Math.Min(panelH - 22f, Math.Max(yHi, yLo));
+							if (b0 < 22 || t0 > panelH - 22) continue;
+							if (b0 - t0 < 4f) { float c0 = (t0 + b0) / 2f; t0 = c0 - 2f; b0 = c0 + 2f; }
+							using (var bz = new SolidColorBrush(RenderTarget, new Color4(0.655f, 0.545f, 0.980f, 0.16f)))
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, t0, colW, b0 - t0), bz);
+							using (var bb = new SolidColorBrush(RenderTarget, new Color4(0.655f, 0.545f, 0.980f, 0.7f)))
+							{
+								DrawDashPattern(RenderTarget, bb, xLeft, xRight, t0, 3, 3);
+								DrawDashPattern(RenderTarget, bb, xLeft, xRight, b0, 3, 3);
+							}
+							using (var bl = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
+								DrawTextLeft(RenderTarget, tf, bl, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
+									xRight + 4, LabelY((t0 + b0) / 2) - 7);
+						}
+
+					Action<List<ProfileBar>, float, bool> drawHalf = (list, scale, left) =>
+					{
+						var ys2 = new float[list.Count];
+						for (int i = 0; i < list.Count; i++) ys2[i] = (float)chartScale.GetYByValue(list[i].S);
+						for (int i = 0; i < list.Count; i++)
+						{
+							var b = list[i];
+							if (b.Net == 0) continue;
+							float y = ys2[i];
+							if (y < 20 || y > panelH - 20) continue;
+							float gap = i + 1 < list.Count ? Math.Abs(ys2[i + 1] - y)
+								: i > 0 ? Math.Abs(y - ys2[i - 1]) : 8f;
+							float bh = Math.Max(1.5f, Math.Min(PixelBinSize, gap * 0.74f));
+							float len = Math.Max(1.5f, (float)Math.Abs(b.Net) / scale * halfW);
+							var c4 = b.Net >= 0
+								? new Color4(0.204f, 0.827f, 0.600f, 0.92f)
+								: new Color4(0.984f, 0.443f, 0.522f, 0.92f);
+							using (var bb = new SolidColorBrush(RenderTarget, c4))
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(
+									left ? spine - len : spine, y - bh / 2f, len, bh), bb);
+						}
+					};
+					drawHalf(wI, scI, true);    // INDICI a sinistra
+					drawHalf(wE, scE, false);   // ETF a destra
+
+					// intestazioni delle due meta' + massimi (scala dichiarata)
+					string idxNm = PlanKey() == "ES" ? "SPX" : "NDX";
+					string etfNm = PlanKey() == "ES" ? "SPY" : "QQQ";
+					using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 1f)))
+						DrawTextLeft(RenderTarget, tf, bI, "◀ " + idxNm + "  max " + E(mxI), xLeft + 2, 22);
+					using (var bE = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 1f)))
+						DrawTextRight(RenderTarget, tf, bE, etfNm + " ▶  max " + E(mxE), xRight - 2, 22);
+					if (ScalaComune)
+						using (var bS2 = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
+							DrawTextRight(RenderTarget, tf, bS2, "scala comune", xRight - 2, 36);
+
+					// etichette: i 2 muri piu' grossi PER FONTE, all'estremita' della
+					// propria barra (sinistra per l'indice, destra per l'ETF)
+					foreach (var pair in new[] { Tuple.Create(wI, scI, true), Tuple.Create(wE, scE, false) })
+					{
+						var list = pair.Item1; float scale = pair.Item2; bool left = pair.Item3;
+						foreach (int i in Enumerable.Range(0, list.Count)
+							.OrderByDescending(k => Math.Abs(list[k].Net)).Take(2))
+						{
+							float y = (float)chartScale.GetYByValue(list[i].S);
+							if (y < 30 || y > panelH - 24) continue;
+							float len = Math.Max(1.5f, (float)Math.Abs(list[i].Net) / scale * halfW);
+							if (left) DrawTextLeft(RenderTarget, tf, brush, list[i].S.ToString("0"),
+								Math.Max(xLeft + 1, spine - len + 2), LabelY(y) - 7);
+							else DrawTextRight(RenderTarget, tf, brush, list[i].S.ToString("0"),
+								Math.Min(xRight - 1, spine + len - 2), LabelY(y) - 7);
+						}
+					}
+				}
+				else
+				{
 				int   nW   = inWin.Count;
 				var   ys   = new float[nW];
 				for (int i = 0; i < nW; i++) ys[i] = (float)chartScale.GetYByValue(inWin[i].S);
@@ -769,10 +912,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 						// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
 				}
+				}
 
 				// etichette: i 3 strike piu' grossi per |net| nella finestra,
 				// attaccate all'estremo destro della propria barra (xRight),
 				// stessa quota di prezzo, testo semplice senza riquadri.
+				// (in twin le etichette sono gia' state messe per fonte)
+				if (!twin)
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
 						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
@@ -817,10 +963,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 
 				// legenda
-				string leg = inBoth
-					? "barre = somma ETF+indice · banda viola = confluenza ⧉ ±" + tolPts.ToString("0") + "pt"
-						+ (zones == null || zones.Count == 0 ? " · oggi nessuna" : " · " + zones.Count + " confl.")
-					: "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)";
+				string leg = twin
+					? "speculare: ◀ indice | ETF ▶ · asse " + (PlanKey() ?? "fut") + " · verde = pin, rosso = trigger · banda viola = confluenza ⧉ ±"
+						+ tolPts.ToString("0") + "pt"
+						+ (zones == null || zones.Count == 0 ? " (oggi nessuna)" : " (" + zones.Count + ")")
+					: inBoth
+						? "banda viola = confluenza ⧉ ±" + tolPts.ToString("0") + "pt"
+							+ (zones == null || zones.Count == 0 ? " · oggi nessuna" : " · " + zones.Count + " confl.")
+						: "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)";
 				if (regimeTxt.Length > 0) leg += " · regime " + regimeTxt;
 				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);
 			}
@@ -920,6 +1070,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[NinjaScriptProperty]
 		[Display(Name = "Mostra anche flip 0DTE", Order = 10, GroupName = "2. Aggiornamento")]
 		public bool ShowFlip0Dte { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Entrambi: scala comune (invece di una per fonte)", Order = 13, GroupName = "3. Confluenza")]
+		public bool ScalaComune { get; set; }
 
 		[NinjaScriptProperty]
 		[System.ComponentModel.DataAnnotations.Range(0.0, 2.0)]

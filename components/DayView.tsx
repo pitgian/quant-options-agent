@@ -226,6 +226,28 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     };
   }, [plan, chain, bucket]);
 
+  // I DUE PROFILI GREZZI in scala futures (solo vista 'Entrambi'): servono
+  // all'istogramma DOPPIO. Non si sommano: le due catene hanno griglie di strike
+  // diverse (SPY $1 ≈ 10 pt ES, SPX 5 pt ≈ 5 pt ES), quindi la somma su bin 25pt
+  // sfocava entrambi i libri. Qui restano separati e vengono disegnati sullo
+  // STESSO asse prezzi, uno sopra l'altro, per il confronto visivo diretto.
+  const twinProfiles = useMemo(() => {
+    if (!plan || chain !== 'both') return { etf: undefined, idx: undefined };
+    const pick = (
+      all: Array<GexProfileEntry> | undefined,
+      wk: Array<GexProfileEntry> | undefined,
+      zero: Array<GexProfileEntry> | undefined,
+    ): Array<GexProfileEntry> | undefined =>
+      bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
+    const etfNat = pick(plan.gex_profile, plan.gex_profile_week, plan.gex_profile_0dte);
+    return {
+      etf: etfRatio && etfNat
+        ? etfNat.map(e => ({ ...e, s: Math.round(e.s * etfRatio * 10) / 10 }))
+        : undefined,
+      idx: pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index),
+    };
+  }, [plan, chain, bucket, etfRatio]);
+
   // Profilo GEX COMPLETO (istogramma) della borsa selezionata; in 'Entrambi'
   // le due fonti si SOMMANO per strike (libro aggregato).
   const profileSel = useMemo<Array<GexProfileEntry> | undefined>(() => {
@@ -537,19 +559,22 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           futEq={futEq}
           zoneEtf={wallsBoth.etf}
           zoneIdx={wallsBoth.idx}
+          twinEtf={twinProfiles.etf}
+          twinIdx={twinProfiles.idx}
+          etfRatio={etfRatio}
+          idxRatio={idxRatio}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           {chain === 'both'
-            ? <>In 'Entrambi' l'istogramma è identico alle viste singole: barre verticali,
-                una per strike. Le barre sono la <b>somma dei due libri per strike</b> sulla
-                griglia bin 25pt in scala futures (l'unica su cui ETF e indice condividono
-                gli strike): verde = gamma lunga delle call, rosso = gamma corta delle put.
-                Le <b>bande viola ⧉</b> sovrapposte sono le confluenze: un muro della catena
-                {etfName} e uno della catena {idxName} entro 5 pt sullo stesso prezzo {futures},
-                calcolate sui top_gamma delle due fonti presi separatamente (passa il mouse
-                sulla banda per vedere i due muri e i loro GEX). Se bande non ce ne sono è un
-                dato, non un guasto: le due catene hanno griglie di strike diverse e i loro
-                muri più grossi possono stare a ~20 pt di distanza, cioè su due livelli distinti.</>
+            ? <>In 'Entrambi' il grafico è <b>speculare su un unico asse prezzi in punti {futures}</b>:
+                <b> {idxName} sopra</b>, <b> {etfName} sotto</b>. I due libri non vengono sommati — hanno
+                griglie di strike diverse ({idxName} ~5 pt, {etfName} $1 ≈ 10 pt su {futures}) e la somma
+                li sfocava entrambi: specchiati si confrontano direttamente, e dove le due sagome si
+                allineano i due libri presidiano lo stesso livello. Ogni metà è normalizzata al proprio
+                massimo (il libro indice pesa molto di più): con <b>Scala comune</b> vedi le grandezze
+                reali. Le <b>bande viola ⧉</b> sono le confluenze vere (muro {etfName} e muro {idxName}
+                entro 5 pt, dai top_gamma separati). Passa il mouse: il riquadro mostra lo strike più
+                vicino di ciascuna fonte, il suo valore e la distanza fra i due.</>
             : <>Ogni barra è uno strike reale della catena (niente aggregazione):
                 barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
                 sotto = gamma corta delle put (amplifica). La linea blu tratteggiata è lo spot:
