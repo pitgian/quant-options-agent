@@ -143,7 +143,12 @@ export const Ladder: React.FC<{
    *  strike nativo esatto lo mostrano; le altre (spot, livelli prezzo) mostrano
    *  l'equivalente indice ricavato dal ratio. */
   ratios?: { etf?: number; idx?: number };
-}> = ({ levels, spot, futures, stats, maxPerSide = 6, topGamma, ratios }) => {
+  /** Fonte attiva: governa QUALE equivalente nativo mostrare quando il livello
+   *  non porta il suo strike (flip, max pain senza native). In vista ETF deve
+   *  essere SPY/QQQ, non SPX/NDX (bug 14/11: le righe senza native mostravano
+   *  l'equivalente indice anche con la fonte ETF selezionata). */
+  nativePref?: 'etf' | 'index';
+}> = ({ levels, spot, futures, stats, maxPerSide = 6, topGamma, ratios, nativePref = 'etf' }) => {
   const idxName = futures === 'ES' ? 'SPX' : 'NDX';
   const etfName = futures === 'ES' ? 'SPY' : 'QQQ';
   const { above: zonesAbove, below: zonesBelow, gammaByZone, maxAbsGex } = useMemo(
@@ -217,9 +222,17 @@ export const Ladder: React.FC<{
                 </span>
               );
             }
+            // livelli con strike nativo esatto: quello. Senza (flip/max pain
+            // senza native): l'equivalente della fonte ATTIVA, con fallback
+            // sull'altra se il ratio manca.
+            const prefRatio = nativePref === 'index' ? ratios?.idx : ratios?.etf;
+            const prefName = nativePref === 'index' ? idxName : etfName;
+            const altRatio = nativePref === 'index' ? ratios?.etf : ratios?.idx;
+            const altName = nativePref === 'index' ? etfName : idxName;
             const nat = r.native != null
               ? { src: r.nativeSource ?? '', val: r.native }
-              : ratios?.idx ? { src: idxName, val: r.price / ratios.idx } : null;
+              : prefRatio ? { src: prefName, val: r.price / prefRatio }
+              : altRatio ? { src: altName, val: r.price / altRatio } : null;
             if (!nat) return null;
             const cross = ratios?.idx && ratios?.etf
               ? `${idxName} ${fmtNat(r.price / ratios.idx)} · ${etfName} ${fmtNat(r.price / ratios.etf)}`

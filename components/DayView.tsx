@@ -65,7 +65,12 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
   // DOPPIO PREZZO: fattori NATIVO→futures pubblicati dal pipeline. Con questi
   // ogni livello della scala e ogni barra dell'istogramma mostra il prezzo in
   // punti futures E il corrispondente nativo (SPY/QQQ o SPX/NDX).
-  const etfRatio = plan?.etf_to_fut_ratio;
+  // FALLBACK (14/11): il pipeline non sempre pubblicava etf_to_fut_ratio (stava
+  // dentro `if flip0:` → spariva nei giorni senza scadenze 0DTE) e la vista ETF
+  // restava senza doppio prezzo. Il ratio si ricava dal piano stesso:
+  // futures / spot ETF = quanti punti futures vale 1 punto di SPY/QQQ.
+  const etfRatio = plan?.etf_to_fut_ratio
+    ?? (plan?.spot_etf && plan?.last_price ? plan.last_price / plan.spot_etf : undefined);
   const idxRatio = plan?.idx_to_fut_ratio;
 
   // Strike della vista corrente → segmento "≈ ES 7670 · SPX 7646" per il
@@ -484,7 +489,8 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           </p>
         ) : (
           <Ladder levels={optLevels} spot={spot} futures={futures} stats={stats} maxPerSide={7} topGamma={topGammaSel}
-                  ratios={{ etf: etfRatio, idx: idxRatio }} />
+                  ratios={{ etf: etfRatio, idx: idxRatio }}
+                  nativePref={chain === 'index' ? 'index' : 'etf'} />
         )}
         {hasPinBelow === false && optLevels.length > 0 && (
           <p className="text-[10px] text-amber-400/80 leading-relaxed mt-2" title="Sotto lo spot tutto il libro è put comprate: i dealer sono short gamma e il loro hedging vende mentre il prezzo scende">

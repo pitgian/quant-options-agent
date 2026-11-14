@@ -942,9 +942,15 @@ def main() -> None:
         plan.update(index_aggr)
         plan["spot_etf"] = spot_etf
         plan["gamma_regime"] = gex_regime
+        # Il ratio ETF→futures va SEMPRE pubblicato: la UI lo usa per il doppio
+        # prezzo (tooltip dell'istogramma e righe della scala in vista ETF) e per
+        # ricavare gli strike nativi. Prima stava dentro `if flip0:` → nei giorni
+        # senza scadenze 0DTE (weekend, festivi, catena corta) il campo spariva e
+        # la vista ETF restava senza traduzione in futures, mentre la vista
+        # indici continuava a funzionare (bug scoperto 14/11).
+        plan["etf_to_fut_ratio"] = round(ratio, 6)
         if flip0:
             plan["gex_flip_0dte"] = _r5(flip0 * ratio)
-            plan["etf_to_fut_ratio"] = round(ratio, 6)
         if flip0 is not None:
             plan["gex_flip_0dte_native"] = round(flip0, 4)
         if flip is not None:
