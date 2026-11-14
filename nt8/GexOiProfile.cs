@@ -729,20 +729,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
-				// Etichette: SOLO testo (niente riquadri), attaccate all'estremo
-				// destro della barra = bordo destro della colonna (xRight).
-				// Unico accorgimento: se due scritte cadono entro 12px si scosta
-				// la seconda, per non sovrapporle.
-				var usedY = new List<float>();
-				float LabelY(float y)
-				{
-					float yL = y;
-					int g = 0;
-					while (g++ < 8 && usedY.Exists(u => Math.Abs(u - yL) < 12f)) yL += 12f;
-					usedY.Add(yL);
-					return yL;
-				}
-
 				// ---- CONFLUENZA (Entrambi): bande viola sulla colonna. Una
 				//      confluenza e' un INTERVALLO DI PREZZO, quindi nella colonna
 				//      (asse y = prezzo) e' un segmento: rettangolo traslucido largo
@@ -760,6 +746,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 				float spineX = xLeft + colW / 2f;
 				float anchorL = twin ? spineX - GUT / 2f : xLeft;
 				float anchorR = twin ? spineX + GUT / 2f : xRight;
+
+				// PIANO ETICHETTE (declutter da asse prezzi, non "spingi finche' trovi
+				// posto"): rail destro = confluenze + MP/Flip, tutte insieme e in
+				// ordine di prezzo; punte barra = strike, una lista per meta'.
+				// Ogni etichetta spostata ha il suo leader line alla quota vera.
+				var rail = new List<Tuple<float, string, Color4>>();
+				var tipL = new List<Tuple<float, float, string, Color4>>();  // y, x, testo, colore
+				var tipR = new List<Tuple<float, float, string, Color4>>();
+				var cConf = new Color4(0.769f, 0.710f, 0.992f, 1f);
 
 				if (inBoth && !twin && zones != null && zones.Count > 0)
 				{
@@ -781,9 +776,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 							DrawDashPattern(RenderTarget, bb, xLeft, xRight, top, 3, 3);
 							DrawDashPattern(RenderTarget, bb, xLeft, xRight, bot, 3, 3);
 						}
-						using (var bl = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
-							DrawTextLeft(RenderTarget, tf, bl, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
-								xRight + 4, LabelY((top + bot) / 2) - 7);
+						rail.Add(Tuple.Create((top + bot) / 2f, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"), cConf));
 					}
 				}
 				if (inBoth && (zones == null || zones.Count == 0))
@@ -853,9 +846,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 								DrawDashPattern(RenderTarget, bb, xLeft, xRight, t0, 3, 3);
 								DrawDashPattern(RenderTarget, bb, xLeft, xRight, b0, 3, 3);
 							}
-							using (var bl = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
-								DrawTextLeft(RenderTarget, tf, bl, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
-									xRight + 4, LabelY((t0 + b0) / 2) - 7);
+							rail.Add(Tuple.Create((t0 + b0) / 2f, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"), cConf));
 						}
 
 					Action<List<ProfileBar>, float, bool> drawHalf = (list, scale, left) =>
@@ -905,10 +896,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 							float y = (float)chartScale.GetYByValue(list[i].S);
 							if (y < 30 || y > panelH - 24) continue;
 							float len = Math.Max(1.5f, (float)Math.Abs(list[i].Net) / scale * halfW);
-							if (left) DrawTextLeft(RenderTarget, tf, brush, list[i].S.ToString("0"),
-								Math.Max(xLeft + 1, anchorL - len + 2), LabelY(y) - 7);
-							else DrawTextRight(RenderTarget, tf, brush, list[i].S.ToString("0"),
-								Math.Min(xRight - 1, anchorR + len - 2), LabelY(y) - 7);
+							if (left) tipL.Add(Tuple.Create(y, Math.Max(xLeft + 1, anchorL - len + 2),
+								list[i].S.ToString("0"), new Color4(0.75f, 0.78f, 0.83f, 1f)));
+							else tipR.Add(Tuple.Create(y, Math.Min(xRight - 1, anchorR + len - 2),
+								list[i].S.ToString("0"), new Color4(0.75f, 0.78f, 0.83f, 1f)));
 						}
 					}
 				}
@@ -947,8 +938,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 					foreach (int i in topIdx)
 					{
 						float y = (float)chartScale.GetYByValue(inWin[i].S);
-						DrawTextLeft(RenderTarget, tf, brush, inWin[i].S.ToString("0"),
-							xRight + 4, LabelY(y) - 7);
+						tipR.Add(Tuple.Create(y, xRight - 4, inWin[i].S.ToString("0"),
+							new Color4(0.75f, 0.78f, 0.83f, 1f)));
 					}
 				}
 
@@ -1000,7 +991,48 @@ namespace NinjaTrader.NinjaScript.Indicators
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 					{
 						DrawDashPattern(RenderTarget, bL, ln.Item4, ln.Item5, yL, 6, 3);
-						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xRight + 4, LabelY(yL) - 7);
+						rail.Add(Tuple.Create(yL, ln.Item3, ln.Item2));
+					}
+				}
+
+				// ---- ETICHETTE: declutter da asse prezzi + leader line alla quota vera
+				if (rail.Count > 0)
+				{
+					var ysR = new float[rail.Count];
+					for (int i = 0; i < rail.Count; i++) ysR[i] = rail[i].Item1;
+					var adj = Declutter(ysR, 13f, 26f, panelH - 26f);
+					for (int i = 0; i < rail.Count; i++)
+					{
+						float yTrue = rail[i].Item1, yL = adj[i];
+						if (yTrue < 2 || yTrue > panelH - 2) continue;
+						using (var b = new SolidColorBrush(RenderTarget, rail[i].Item3))
+						{
+							if (Math.Abs(yL - yTrue) > 2f)
+							{
+								RenderTarget.DrawLine(new SharpDX.Vector2(xRight, yTrue), new SharpDX.Vector2(xRight + 4, yTrue), b, 1f);
+								RenderTarget.DrawLine(new SharpDX.Vector2(xRight + 4, yTrue), new SharpDX.Vector2(xRight + 4, yL), b, 1f);
+							}
+							DrawTextLeft(RenderTarget, tf, b, rail[i].Item2, xRight + 7, yL - 7);
+						}
+					}
+				}
+				foreach (var side in new[] { Tuple.Create(tipL, true), Tuple.Create(tipR, false) })
+				{
+					var list = side.Item1; bool left = side.Item2;
+					if (list.Count == 0) continue;
+					var ysT = new float[list.Count];
+					for (int i = 0; i < list.Count; i++) ysT[i] = list[i].Item1;
+					var adj = Declutter(ysT, 12f, 30f, panelH - 26f);
+					for (int i = 0; i < list.Count; i++)
+					{
+						float yTrue = list[i].Item1, yL = adj[i], xT = list[i].Item2;
+						using (var b = new SolidColorBrush(RenderTarget, list[i].Item4))
+						{
+							if (Math.Abs(yL - yTrue) > 2f)
+								RenderTarget.DrawLine(new SharpDX.Vector2(xT, yTrue), new SharpDX.Vector2(xT, yL), b, 0.8f);
+							if (left) DrawTextLeft(RenderTarget, tf, b, list[i].Item3, xT, yL - 7);
+							else DrawTextRight(RenderTarget, tf, b, list[i].Item3, xT, yL - 7);
+						}
 					}
 				}
 
@@ -1017,6 +1049,34 @@ namespace NinjaTrader.NinjaScript.Indicators
 				if (regimeTxt.Length > 0) leg += " · regime " + regimeTxt;
 				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);
 			}
+		}
+
+		// Declutter da asse prezzi: prende le quote vere, le ordina e le sposta del
+		// MINIMO indispensabile (passata avanti + passata indietro), mantenendo
+		// l'ordine. Sostituisce il vecchio "spingi giu' di 12px finche' trovi posto",
+		// che sparpagliava le etichette in basso e lontano dal loro livello.
+		private static float[] Declutter(float[] ys, float minGap, float lo, float hi)
+		{
+			int n = ys.Length;
+			var idx = new int[n];
+			for (int i = 0; i < n; i++) idx[i] = i;
+			Array.Sort(idx, (a, b) => ys[a].CompareTo(ys[b]));
+			var outY = new float[n];
+			float prev = lo - minGap;
+			foreach (int i in idx)
+			{
+				float y = Math.Max(ys[i], prev + minGap);
+				outY[i] = y; prev = y;
+			}
+			// se l'ultima sfonda il bordo basso, risali comprimendo verso l'alto
+			float next = hi + minGap;
+			for (int k = idx.Length - 1; k >= 0; k--)
+			{
+				int i = idx[k];
+				float y = Math.Min(outY[i], next - minGap);
+				outY[i] = Math.Max(lo, y); next = outY[i];
+			}
+			return outY;
 		}
 
 		// tratteggio orizzontale con pattern dash/gap generico

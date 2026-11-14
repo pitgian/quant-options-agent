@@ -70,6 +70,26 @@ const fmtNat = (v: number): string =>
   (Math.round(v * 10) / 10).toLocaleString('it-IT', { maximumFractionDigits: 1 });
 const fmtPrice = (v: number): string => Math.round(v).toLocaleString('it-IT');
 
+/** Declutter di una riga di etichette: mantiene l'ORDINE per prezzo e sposta
+ *  ciascuna del minimo indispensabile (passata avanti + passata indietro),
+ *  come fa un asse prezzi. Sostituisce il vecchio "primo posto libero", che
+ *  sparpagliava le etichette su righe casuali e lontano dal loro prezzo. */
+function spreadRow<T extends { cx: number; w: number }>(items: T[], lo: number, hi: number): T[] {
+  const a = [...items].sort((p, q) => p.cx - q.cx);
+  const total = a.reduce((t, c) => t + c.w, 0);
+  const gap = total + (a.length - 1) * 6 <= hi - lo ? 6 : 2;
+  for (let i = 0; i < a.length; i++) {
+    const min = i === 0 ? lo + a[i].w / 2 : a[i - 1].cx + a[i - 1].w / 2 + gap + a[i].w / 2;
+    if (a[i].cx < min) a[i].cx = min;
+  }
+  for (let i = a.length - 1; i >= 0; i--) {
+    const max = i === a.length - 1 ? hi - a[i].w / 2 : a[i + 1].cx - a[i + 1].w / 2 - gap - a[i].w / 2;
+    if (a[i].cx > max) a[i].cx = max;
+  }
+  for (const c of a) c.cx = Math.min(Math.max(c.cx, lo + c.w / 2), hi - c.w / 2);
+  return a;
+}
+
 const medianStep = (arr: Array<GexProfileEntry>): number => {
   const ss = [...new Set(arr.map(e => e.s))].sort((a, b) => a - b);
   const d: number[] = [];
@@ -129,10 +149,10 @@ export const GexHistogram: React.FC<{
     const compact = boxW < 700;
     const W = boxW, SW = boxW;
     const M = { left: compact ? 44 : 74, right: compact ? 12 : 20, top: compact ? 50 : 44, bottom: compact ? 30 : 36 };
-    const SM = { left: compact ? 44 : 74, right: compact ? 12 : 20, top: compact ? 62 : 58, bottom: compact ? 30 : 36 };
-    const GUTTER = compact ? 66 : 46;
-    const H = compact ? 430 : 474;
-    const SH = compact ? 400 : 430;
+    const SM = { left: compact ? 44 : 74, right: compact ? 12 : 20, top: compact ? 90 : 88, bottom: compact ? 30 : 36 };
+    const GUTTER = 73;
+    const H = compact ? 452 : 500;
+    const SH = compact ? 432 : 462;
     const PLOT_W = W - M.left - M.right;
     const PLOT_H = H - M.top - M.bottom;
     const HALF_H = (PLOT_H - GUTTER) / 2;
@@ -142,7 +162,7 @@ export const GexHistogram: React.FC<{
     return { compact, W, H, M, PLOT_W, PLOT_H, GUTTER, HALF_H,
       IDX_BASE, GUT_TOP: IDX_BASE, GUT_BOT: IDX_BASE + GUTTER, ETF_BASE: IDX_BASE + GUTTER,
       SW, SH, SM, SPLOT_W, SPLOT_H, S_ZERO: SM.top + SPLOT_H / 2, S_HALF: SPLOT_H / 2 - 6,
-      tickN: compact ? 5 : 9, chipRows: compact ? 3 : 2, font: compact ? 9 : 9.5 };
+      tickN: compact ? 5 : 9, chipRows: 3, font: compact ? 9 : 9.5 };
   }, [boxW]);
 
   const mirror = !!(twinEtf?.length && twinIdx?.length);
@@ -343,24 +363,19 @@ export const GexHistogram: React.FC<{
     const srcColor = (v: TwinRef['src']) => v === 'idx' ? C.idx : v === 'etf' ? C.etf : C.soft;
     const srcArrow = (v: TwinRef['src']) => v === 'idx' ? '▲' : v === 'etf' ? '▼' : '●';
     const rowY = Array.from({ length: L.chipRows }, (_, i) => L.GUT_TOP + 12 + i * 21);
-    const chips = (twinRefs ?? [])
-      .filter(r => r.price >= x0 && r.price <= x1)
-      .map(r => {
-        const txt = `${L.compact ? r.label.split(' ')[0] : r.label} ${fmtPrice(r.price)}`;
-        return { r, txt, w: txt.length * 5.35 + 22, cx: x(r.price), cx0: x(r.price), row: 0 };
-      })
-      .sort((a, b) => a.cx - b.cx);
-    const endAt = new Array(L.chipRows).fill(-Infinity);
-    for (const c of chips) {
-      c.cx = Math.min(Math.max(c.cx, L.M.left + c.w / 2), L.W - L.M.right - c.w / 2);
-      let row = -1;
-      for (let k = 0; k < L.chipRows; k++) if (c.cx - c.w / 2 >= endAt[k] + 6) { row = k; break; }
-      if (row < 0) {
-        row = endAt.indexOf(Math.min(...endAt));
-        c.cx = endAt[row] + 6 + c.w / 2;
-      }
-      c.row = row;
-      endAt[row] = c.cx + c.w / 2;
+    /* una riga per categoria, sempre la stessa: ▲ indici, ● spot, ▼ ETF.
+       Dentro la riga le etichette restano in ordine di prezzo e si scostano
+       solo quanto basta (spreadRow), con leader line al prezzo vero. */
+    const rowOf = (v: TwinRef['src']) => v === 'idx' ? 0 : v === 'fut' ? 1 : 2;
+    const chips: Array<{ r: TwinRef; txt: string; w: number; cx: number; cx0: number; row: number }> = [];
+    for (let k = 0; k < L.chipRows; k++) {
+      const inRow = (twinRefs ?? [])
+        .filter(r => r.price >= x0 && r.price <= x1 && rowOf(r.src) === k)
+        .map(r => {
+          const txt = `${L.compact ? r.label.split(' ')[0] : r.label} ${fmtPrice(r.price)}`;
+          return { r, txt, w: txt.length * 5.35 + 22, cx: x(r.price), cx0: x(r.price), row: k };
+        });
+      chips.push(...spreadRow(inRow, L.M.left, L.W - L.M.right));
     }
     const tipW = Math.min(250, L.PLOT_W - 8), tipH = 92;
     const tipX = hover ? Math.min(Math.max(hover.x + 14, L.M.left), L.W - L.M.right - tipW) : 0;
@@ -523,12 +538,22 @@ export const GexHistogram: React.FC<{
           <text x={L.M.left - 8} y={L.IDX_BASE + 3} textAnchor="end" fontSize={9} fill={C.idx} opacity={0.9}>0</text>
           <text x={L.M.left - 8} y={L.ETF_BASE + 3} textAnchor="end" fontSize={9} fill={C.etf} opacity={0.9}>0</text>
 
-          {/* identità delle due metà */}
+          {/* titoli d'asse nel margine sinistro: identificano le due metà senza
+              coprire le barre (prima erano chip dentro il grafico) */}
+          {!L.compact && (
+            <g>
+              <text transform={`translate(16 ${L.M.top + L.HALF_H / 2}) rotate(-90)`} textAnchor="middle"
+                fontSize={9.5} fontWeight="bold" fill={C.idx} opacity={0.9}>▲ INDICI · {idxName}</text>
+              <text transform={`translate(16 ${L.ETF_BASE + L.HALF_H / 2}) rotate(-90)`} textAnchor="middle"
+                fontSize={9.5} fontWeight="bold" fill={C.etf} opacity={0.9}>▼ ETF · {etfName}</text>
+            </g>
+          )}
+          {/* marcatori di riga nella fascia: dicono quale categoria sta su quale riga */}
           <g>
-            <rect x={L.M.left + 6} y={L.M.top + 4} width={104} height={17} rx={4} fill={C.panel} stroke={`${C.idx}66`} />
-            <text x={L.M.left + 12} y={L.M.top + 16} fontSize={9.5} fontWeight="bold" fill={C.idx}>▲ INDICI · {idxName}</text>
-            <rect x={L.M.left + 6} y={L.H - L.M.bottom - 21} width={92} height={17} rx={4} fill={C.panel} stroke={`${C.etf}66`} />
-            <text x={L.M.left + 12} y={L.H - L.M.bottom - 9} fontSize={9.5} fontWeight="bold" fill={C.etf}>▼ ETF · {etfName}</text>
+            {[{ g: '▲', c: C.idx }, { g: '●', c: C.spot }, { g: '▼', c: C.etf }].map((m, i) => (
+              <text key={`rm${i}`} x={L.M.left - 9} y={rowY[i] + 3.5} textAnchor="end" fontSize={9}
+                fontWeight="bold" fill={m.c} opacity={0.9}>{m.g}</text>
+            ))}
           </g>
 
           {/* livelli di riferimento: linea nella METÀ della propria catena +
@@ -650,27 +675,20 @@ export const GexHistogram: React.FC<{
   const futOf = (v: number) => singleSrc === 'etf' ? (etfRatio ? v * etfRatio : v) : v;
 
   /* corsia dei livelli: Spot / Max Pain / Flip della fonte attiva */
-  const sRefs = geom ? ([
-    { price: spot, kind: 'spot' as const, label: `Spot ${srcName}` },
-    { price: maxPain ?? 0, kind: 'mp' as const, label: `MP ${srcName}` },
-    { price: flip ?? 0, kind: 'flip' as const, label: `Flip ${srcName}` },
-  ]).filter(r => r.price > 0 && r.price >= geom.x0 && r.price <= geom.x1)
-    .map(r => {
-      const txt = `${L.compact ? r.label.split(' ')[0] : r.label} ${singleSrc === 'etf' ? fmtNat(r.price) : fmtPrice(r.price)}`;
-      return { ...r, txt, w: txt.length * 5.35 + 22, cx: geom.x(r.price), cx0: geom.x(r.price), row: 0 };
-    }).sort((p, q) => p.cx - q.cx) : [];
-  {
-    const endAt = new Array(L.chipRows).fill(-Infinity);
-    for (const c of sRefs) {
-      c.cx = Math.min(Math.max(c.cx, L.SM.left + c.w / 2), L.SW - L.SM.right - c.w / 2);
-      let row = -1;
-      for (let k = 0; k < L.chipRows; k++) if (c.cx - c.w / 2 >= endAt[k] + 6) { row = k; break; }
-      if (row < 0) {
-        row = endAt.indexOf(Math.min(...endAt));
-        c.cx = endAt[row] + 6 + c.w / 2;
-      }
-      c.row = row;
-      endAt[row] = c.cx + c.w / 2;
+  const sRowOf = (k: 'spot' | 'mp' | 'flip') => k === 'spot' ? 0 : k === 'mp' ? 1 : 2;
+  const sRefs: Array<{ price: number; kind: 'spot' | 'mp' | 'flip'; label: string; txt: string; w: number; cx: number; cx0: number; row: number }> = [];
+  if (geom) {
+    const base = [
+      { price: spot, kind: 'spot' as const, label: `Spot ${srcName}` },
+      { price: maxPain ?? 0, kind: 'mp' as const, label: `MP ${srcName}` },
+      { price: flip ?? 0, kind: 'flip' as const, label: `Flip ${srcName}` },
+    ].filter(r => r.price > 0 && r.price >= geom.x0 && r.price <= geom.x1);
+    for (let k = 0; k < L.chipRows; k++) {
+      const inRow = base.filter(r => sRowOf(r.kind) === k).map(r => {
+        const txt = `${L.compact ? r.label.split(' ')[0] : r.label} ${singleSrc === 'etf' ? fmtNat(r.price) : fmtPrice(r.price)}`;
+        return { ...r, txt, w: txt.length * 5.35 + 22, cx: geom.x(r.price), cx0: geom.x(r.price), row: k };
+      });
+      sRefs.push(...spreadRow(inRow, L.SM.left, L.SW - L.SM.right));
     }
   }
   const sRowY = Array.from({ length: L.chipRows }, (_, i) => 16 + i * 21);
@@ -782,18 +800,19 @@ export const GexHistogram: React.FC<{
           <line x1={L.SM.left} x2={L.SW - L.SM.right} y1={L.S_ZERO} y2={L.S_ZERO} stroke="url(#sZero)" strokeWidth={1.5} />
           <text x={L.SM.left - 8} y={L.S_ZERO + 3} textAnchor="end" fontSize={9} fill={C.soft}>0</text>
 
-          {/* identità della fonte + semantica delle due metà */}
-          <g>
-            <rect x={L.SM.left + 6} y={L.SM.top + 4} width={112} height={17} rx={4} fill={C.panel} stroke={`${srcCol}66`} />
-            <text x={L.SM.left + 12} y={L.SM.top + 16} fontSize={9.5} fontWeight="bold" fill={srcCol}>
+          {/* titolo d'asse nel margine sinistro (non copre le barre) */}
+          {!L.compact && (
+            <text transform={`translate(16 ${L.SM.top + L.SPLOT_H / 2}) rotate(-90)`} textAnchor="middle"
+              fontSize={9.5} fontWeight="bold" fill={srcCol} opacity={0.9}>
               {srcArrow} {singleSrc === 'etf' ? 'ETF' : 'INDICI'} · {srcName}
             </text>
-            <text x={L.SM.left + 8} y={L.S_ZERO - 6} fontSize={8.5} fontWeight="bold" fill={C.call} opacity={0.75}>
-              {view === 'net' ? 'net ≥ 0 · call dominate' : 'CALL · gamma lunga'}
-            </text>
-            <text x={L.SM.left + 8} y={L.S_ZERO + 13} fontSize={8.5} fontWeight="bold" fill={C.put} opacity={0.75}>
-              {view === 'net' ? 'net < 0 · put dominate' : 'PUT · gamma corta'}
-            </text>
+          )}
+          {/* marcatori di riga nella corsia: spot / max pain / flip, sempre nello stesso ordine */}
+          <g>
+            {[{ g: '●', c: C.spot }, { g: '◆', c: C.mp }, { g: '⇄', c: C.flip }].map((m, i) => (
+              <text key={`sm${i}`} x={L.SM.left - 9} y={sRowY[i] + 3.5} textAnchor="end" fontSize={9}
+                fontWeight="bold" fill={m.c} opacity={0.9}>{m.g}</text>
+            ))}
           </g>
 
           {/* livelli: linea + chip nella corsia, con la fonte dichiarata */}
