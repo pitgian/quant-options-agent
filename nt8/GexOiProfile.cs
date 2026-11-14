@@ -687,6 +687,36 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
+				// ETICHETTE SUL BORDO DESTRO del pannello (appena prima dell'asse
+				// prezzi), all'altezza esatta del livello: strike top-3, zone ⧉ e
+				// linee MP/Flip. Sfondo opaco + bordo colorato + anti-collisione
+				// verticale (passo 14px): leggibili sopra le candele e niente piu'
+				// scritte flottanti in mezzo al grafico (richiesta 13/11).
+				float xLabR = px + pw - 68;
+				var usedY = new List<float>();
+				void RightLabel(string txt, Color4 col, float yCenter)
+				{
+					if (yCenter < 10 || yCenter > panelH - 10) return;
+					float yL = yCenter;
+					int g = 0;
+					while (g++ < 10 && usedY.Exists(u => Math.Abs(u - yL) < 14f)) yL += 14f;
+					if (yL > panelH - 10)
+					{
+						yL = yCenter; g = 0;
+						while (g++ < 10 && usedY.Exists(u => Math.Abs(u - yL) < 14f)) yL -= 14f;
+					}
+					if (yL < 10) return;
+					usedY.Add(yL);
+					float wTxt = 6.2f * txt.Length + 8;
+					using (var bg = new SolidColorBrush(RenderTarget, new Color4(0.039f, 0.051f, 0.071f, 0.85f)))
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(xLabR - wTxt, yL - 7.5f, wTxt, 15), bg);
+					using (var bb = new SolidColorBrush(RenderTarget, col))
+					{
+						RenderTarget.DrawRectangle(new SharpDX.RectangleF(xLabR - wTxt, yL - 7.5f, wTxt, 15), bb, 1f);
+						DrawTextRight(RenderTarget, tf, bb, txt, xLabR - 4, yL - 7);
+					}
+				}
+
 				// ---- CONFLUENZA (Entrambi): bande viola sulla colonna. Una
 				//      confluenza e' un INTERVALLO DI PREZZO, quindi nella colonna
 				//      (asse y = prezzo) e' un segmento: rettangolo traslucido largo
@@ -716,10 +746,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 							DrawDashPattern(RenderTarget, bb, xLeft, xRight, top, 3, 3);
 							DrawDashPattern(RenderTarget, bb, xLeft, xRight, bot, 3, 3);
 						}
-						using (var bl = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
-							DrawTextLeft(RenderTarget, tf, bl,
-								"⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
-								xRight + 6, (top + bot) / 2 - 7);
+						RightLabel("⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
+							new Color4(0.769f, 0.710f, 0.992f, 1f), (top + bot) / 2);
 					}
 				}
 				if (inBoth && (zones == null || zones.Count == 0))
@@ -758,81 +786,47 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 
 				// etichette: i 3 strike piu' grossi per |net| nella finestra,
-				// ATTACCATE ALL'ESTREMO DESTRO della propria barra (base della
-				// colonna): prima erano ancorate a max(xLeft, xRight-len-38) e
-				// per le barre lunghe finivano clampate a xLeft, flottanti in
-				// mezzo al grafico (richiesta 13/11). Anti-collisione verticale
-				// fra loro: passo minimo 13px.
+				// sul BORDO DESTRO all'altezza della propria barra (non piu'
+				// flottanti a sinistra in mezzo al grafico).
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
 						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
-					var usedY = new List<float>();
 					foreach (int i in topIdx)
 					{
 						float y = (float)chartScale.GetYByValue(inWin[i].S);
-						if (y < 12 || y > panelH - 6) continue;
-						float yL = y;
-						int guard = 0;
-						while (guard++ < 6 && usedY.Exists(u => Math.Abs(u - yL) < 13f)) yL += 13f;
-						if (yL > panelH - 6) continue;
-						usedY.Add(yL);
-						DrawTextRight(RenderTarget, tf, brush, inWin[i].S.ToString("0"), xRight - 4, yL - 7);
+						RightLabel(inWin[i].S.ToString("0"),
+							new Color4(0.75f, 0.78f, 0.83f, 1f), y);
 					}
 				}
 
 				// ---- linee: Max Pain (ambra) / Flip (viola) / Flip IDX (Entrambi).
-				//      NIENTE linea Spot: il grafico ha gia' la sua. Partono
-				//      dall'ULTIMA CANDELA per non attraversare la price action.
-				float xLast = px + 10;
-				try
-				{
-					if (ChartBars != null && ChartBars.ToIndex >= 0)
-					{
-						float xc = (float)chartControl.GetXByBarIndex(ChartBars, ChartBars.ToIndex);
-						if (!float.IsNaN(xc) && xc > px) xLast = xc - 8f;
-					}
-				}
-				catch { }
-				if (xLast < px + 10) xLast = px + 10;
-				if (xLast > xRight - 2) xLast = xRight - 2;
-
-				// Tuple a 5 elementi: y, colore, etichetta, dash, gap.
-				// (PRIMA era Tuple<3> ma il disegno leggeva Item4/Item5: CS1061
-				//  a ogni compilazione — fix 13/11.)
-				var lines = new List<Tuple<float, Color4, string, float, float>>();
+				//      Tratteggiate SULLA colonna del profilo (il livello marcato
+				//      dove vive il profilo) + etichetta sul bordo destro alla
+				//      STESSA quota. NIENTE linea Spot: il grafico ha gia' la sua.
+				var lines = new List<Tuple<float, Color4, string>>();
 				if (hasMaxPain)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain),
-						new Color4(0.98f, 0.75f, 0.25f, 0.95f), "MP " + maxPain.ToString("0"), 6f, 3f));
+						new Color4(0.98f, 0.75f, 0.25f, 0.95f), "MP " + maxPain.ToString("0")));
 				if (hasFlip)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip),
-						new Color4(0.72f, 0.55f, 0.95f, 0.95f), "Flip " + flip.ToString("0"), 6f, 3f));
+						new Color4(0.72f, 0.55f, 0.95f, 0.95f), "Flip " + flip.ToString("0")));
 				// Entrambi: anche il flip dell'ALTRA fonte — i due flip raramente
 				// coincidono ed e' proprio la distanza fra i due a dire se il regime
 				// e' confermato su ETF e indice o e' in divergenza.
 				if (inBoth && hasFlipIdx && Math.Abs(flipIdx - flip) > 0.01)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx),
-						new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0"), 6f, 3f));
+						new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0")));
 				if (ShowFlip0Dte && hasFlip0)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0),
-						new Color4(0.72f, 0.55f, 0.95f, 0.55f), "Flip0 " + flip0.ToString("0"), 6f, 3f));
-
-				// etichette: se due linee sono troppo vicine (flip≈max pain!), allontana le scritte
-				for (int i = 1; i < lines.Count; i++)
-				{
-					float d = lines[i].Item1 - lines[i - 1].Item1;
-					if (Math.Abs(d) < 16)
-						lines[i] = Tuple.Create(lines[i].Item1 + (d >= 0 ? 16f : -16f), lines[i].Item2, lines[i].Item3, lines[i].Item4, lines[i].Item5);
-				}
+						new Color4(0.72f, 0.55f, 0.95f, 0.55f), "Flip0 " + flip0.ToString("0")));
 
 				foreach (var ln in lines)
 				{
 					float yL = ln.Item1;
-					if (yL < 16 || yL > panelH - 16) continue;
+					if (yL < 4 || yL > panelH - 4) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
-					{
-						DrawDashPattern(RenderTarget, bL, xLast, xRight, yL, ln.Item4, ln.Item5);
-						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xLast + 4, yL - 13);
-					}
+						DrawDashPattern(RenderTarget, bL, xLeft, xRight, yL, 6, 3);
+					RightLabel(ln.Item3, ln.Item2, yL);
 				}
 
 				// legenda
