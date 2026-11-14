@@ -121,6 +121,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private int fetching;                   // 0 = idle, 1 = in volo (Interlocked)
 		private System.Timers.Timer timer;      // thread-pool: non dipende dal dispatcher UI
 		private bool loggedGeom;
+		// una sola istanza per pannello: nel workspace ce n'erano due sullo stesso
+		// grafico e il profilo veniva disegnato due volte (etichette doppie)
+		private static readonly System.Collections.Generic.Dictionary<string, Tuple<string, DateTime>> PanelOwner
+			= new System.Collections.Generic.Dictionary<string, Tuple<string, DateTime>>();
+		private readonly string instanceId = Guid.NewGuid().ToString("N").Substring(0, 6);
+		private bool warnedDuplicate;
+		private float twinMaxI, twinMaxE;
 
 		private sealed class ProfileBar { public double S; public double Net; }
 
@@ -683,7 +690,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				+ " · " + (OptBucket == GexOiBucket.ZeroDTE ? "0DTE" : OptBucket == GexOiBucket.Settimana ? "≤7gg" : "Tutte")
 				+ " · " + srcName;
 
-			using (var tf    = new TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Segoe UI", 10f))
+			using (var tf    = new TextFormat(NinjaTrader.Core.Globals.DirectWriteFactory, "Segoe UI", 10f)
+			{ TextAlignment = TextAlignment.Leading, ParagraphAlignment = ParagraphAlignment.Center, WordWrapping = WordWrapping.NoWrap })
 			using (var brush = new SolidColorBrush(RenderTarget, new Color4(0.75f, 0.78f, 0.83f, 1f)))
 			{
 				if (bars == null || bars.Count == 0)
@@ -735,6 +743,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      quanto la colonna, bordi tratteggiati ai due prezzi, etichetta
 				//      ⧉ a destra. Stessa regola del sito: muro ETF e muro indice
 				//      dai top_gamma entro ±tolPts (5 pt di default).
+				try
+				{
+					string pkey = (ChartControl != null ? ChartControl.GetHashCode().ToString() : "0") + "|" + ChartPanel.PanelIndex;
+					lock (PanelOwner)
+					{
+						Tuple<string, DateTime> own;
+						if (PanelOwner.TryGetValue(pkey, out own) && own.Item1 != instanceId
+							&& (DateTime.Now - own.Item2).TotalSeconds < 3)
+						{
+							if (!warnedDuplicate)
+							{
+								warnedDuplicate = true;
+								Log("GexOiProfile: due istanze sullo stesso pannello — disegno solo la prima. Rimuovi il duplicato.", LogLevel.Warning);
+							}
+							return;
+						}
+						PanelOwner[pkey] = Tuple.Create(instanceId, DateTime.Now);
+					}
+				}
+				catch { }
+
 				float colW = xRight - xLeft;
 				bool inBoth = OptSource == GexOiSource.Entrambi;
 				bool twin = inBoth && twinEtf != null && twinIdx != null
@@ -743,6 +772,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				// di GUT px, cosi' l'asse prezzi respira e le etichette non si
 				// attaccano alle barre (richiesta 14/11).
 				const float GUT = 20f;
+				if (twin && colW < 170f) { xLeft = Math.Max(px + 6, xRight - 170f); colW = xRight - xLeft; }
 				float spineX = xLeft + colW / 2f;
 				float anchorL = twin ? spineX - GUT / 2f : xLeft;
 				float anchorR = twin ? spineX + GUT / 2f : xRight;
@@ -788,9 +818,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 					// 0 confluenze: messaggio onesto, non bande vuote: e' il dato
 					// (le due catene presidiano livelli distinti, gap = minGapPts).
 					using (var bNone = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
-						DrawTextLeft(RenderTarget, tf, bNone,
-							string.Format("⧉ 0 confluenze ±{0:0}pt · gap minimo {1:0}pt", tolPts, minGapPts),
-							xLeft, 40);
+						DrawTextLeft(RenderTarget, tf, bNone, string.Format("gap minimo {0:0}pt", minGapPts),
+							xLeft + 2, panelH - 46);
 				}
 
 				// ---- BARRE. Due rese:
@@ -811,9 +840,22 @@ namespace NinjaTrader.NinjaScript.Indicators
 						.OrderBy(b => b.S).ToList();
 					var wE = twinEtf.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct)
 						.OrderBy(b => b.S).ToList();
+					// massimi sul VISIBILE: la finestra ±WindowPct% e' molto piu' ampia
+					// del range inquadrato; con la scala su tutta la finestra i muri
+					// fuori schermo schiacciavano quelli visibili (profilo vuoto).
 					float mxI = 0.0001f, mxE = 0.0001f;
-					foreach (var b in wI) mxI = Math.Max(mxI, (float)Math.Abs(b.Net));
-					foreach (var b in wE) mxE = Math.Max(mxE, (float)Math.Abs(b.Net));
+					foreach (var b in wI)
+					{
+						float y = (float)chartScale.GetYByValue(b.S);
+						if (y < 24 || y > panelH - 24) continue;
+						mxI = Math.Max(mxI, (float)Math.Abs(b.Net));
+					}
+					foreach (var b in wE)
+					{
+						float y = (float)chartScale.GetYByValue(b.S);
+						if (y < 24 || y > panelH - 24) continue;
+						mxE = Math.Max(mxE, (float)Math.Abs(b.Net));
+					}
 					float scI = ScalaComune ? Math.Max(mxI, mxE) : mxI;
 					float scE = ScalaComune ? Math.Max(mxI, mxE) : mxE;
 
@@ -878,16 +920,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 					drawHalf(wI, scI, true);    // INDICI a sinistra
 					drawHalf(wE, scE, false);   // ETF a destra
 
-					// intestazioni delle due meta' + massimi (scala dichiarata)
-					string idxNm = PlanKey() == "ES" ? "SPX" : "NDX";
-					string etfNm = PlanKey() == "ES" ? "SPY" : "QQQ";
-					using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 1f)))
-						DrawTextLeft(RenderTarget, tf, bI, "◀ " + idxNm + "  max " + E(mxI), xLeft + 2, 22);
-					using (var bE = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 1f)))
-						DrawTextRight(RenderTarget, tf, bE, etfNm + " ▶  max " + E(mxE), xRight - 2, 22);
-					if (ScalaComune)
-						using (var bS2 = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
-							DrawTextRight(RenderTarget, tf, bS2, "scala comune", xRight - 2, 36);
+					// niente scritte in alto: la fascia alta e' del legend di NT8
+					twinMaxI = mxI; twinMaxE = mxE;
 
 					// etichette: i 2 muri piu' grossi PER FONTE, all'estremita' della
 					// propria barra (sinistra per l'indice, destra per l'ETF)
@@ -1067,17 +1101,25 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 
 				// legenda
-				string leg = twin
-					? "speculare: ◀ " + iNm + " | " + eNm + " ▶ · asse " + (PlanKey() ?? "fut")
-						+ " · ▲ livelli indice, ▼ livelli ETF · banda viola = confluenza ⧉ ±"
-						+ tolPts.ToString("0") + "pt"
-						+ (zones == null || zones.Count == 0 ? " (oggi nessuna)" : " (" + zones.Count + ")")
-					: inBoth
-						? "banda viola = confluenza ⧉ ±" + tolPts.ToString("0") + "pt"
-							+ (zones == null || zones.Count == 0 ? " · oggi nessuna" : " · " + zones.Count + " confl.")
-						: "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)";
-				if (regimeTxt.Length > 0) leg += " · regime " + regimeTxt;
-				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);
+				if (twin)
+				{
+					string l1 = "◀ " + iNm + " " + E(twinMaxI) + " | " + E(twinMaxE) + " " + eNm + " ▶";
+					string l2 = "⧉ ±" + tolPts.ToString("0") + "pt: "
+						+ (zones == null || zones.Count == 0 ? "0" : zones.Count.ToString())
+						+ (ScalaComune ? " · scala comune" : " · scale proprie");
+					using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 1f)))
+						DrawTextLeft(RenderTarget, tf, bI, l1, xLeft + 2, panelH - 32);
+					using (var bC = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
+						DrawTextLeft(RenderTarget, tf, bC, l2, xLeft + 2, panelH - 18);
+				}
+				else
+				{
+					string leg = inBoth
+						? "⧉ ±" + tolPts.ToString("0") + "pt: " + (zones == null || zones.Count == 0 ? "0" : zones.Count.ToString())
+						: "verde = pin · rosso = trigger";
+					if (regimeTxt.Length > 0) leg += " · " + regimeTxt;
+					DrawTextLeft(RenderTarget, tf, brush, leg, xLeft + 2, panelH - 18);
+				}
 			}
 		}
 
@@ -1138,14 +1180,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 			}
 		}
 
+		// BUG STORICO (trovato 14/11): il box partiva da xRight-280 ma il TextFormat
+		// non aveva TextAlignment, e DirectWrite usa LEADING (sinistra) di default:
+		// ogni etichetta "a destra" veniva scritta 280px PIU' A SINISTRA del previsto
+		// -> numeri sparsi per tutto il grafico. Ora l'allineamento e' esplicito:
+		// TRAILING per finire esattamente a xRight, LEADING per partire da x.
 		private static void DrawTextRight(RenderTarget rt, TextFormat tf, SolidColorBrush b, string txt, float xRight, float y)
 		{
-			rt.DrawText(txt, tf, new SharpDX.RectangleF(xRight - 280, y, 280, 16), b);
+			var prevA = tf.TextAlignment; var prevW = tf.WordWrapping;
+			tf.TextAlignment = TextAlignment.Trailing;
+			tf.WordWrapping = WordWrapping.NoWrap;
+			rt.DrawText(txt, tf, new SharpDX.RectangleF(xRight - 320, y, 320, 16), b);
+			tf.TextAlignment = prevA; tf.WordWrapping = prevW;
 		}
 
 		private static void DrawTextLeft(RenderTarget rt, TextFormat tf, SolidColorBrush b, string txt, float x, float y)
 		{
-			rt.DrawText(txt, tf, new SharpDX.RectangleF(x, y, 220, 15), b);
+			var prevA = tf.TextAlignment; var prevW = tf.WordWrapping;
+			tf.TextAlignment = TextAlignment.Leading;
+			tf.WordWrapping = WordWrapping.NoWrap;
+			rt.DrawText(txt, tf, new SharpDX.RectangleF(x, y, 320, 16), b);
+			tf.TextAlignment = prevA; tf.WordWrapping = prevW;
 		}
 
 		// -------------------------------------------------------------- proprietà
