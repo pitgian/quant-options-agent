@@ -22,7 +22,7 @@ using SharpDX.DirectWrite;
 #endregion
 
 // ============================================================================
-//  GexOiProfile — profilo NETTO OI/GEX per strike + linee MaxPain/Flip
+//  GexOiProfile — profilo OI/GEX per strike + linee MaxPain/Flip
 //
 //  Dati: NON li ricalcola. Legge il piano già generato dal pipeline
 //  (branch 'data' del repo quant-options-agent — lo stesso JSON che alimenta
@@ -32,13 +32,24 @@ using SharpDX.DirectWrite;
 //    fonte ETF    → gex_profile[_0dte/_week]_binned (bin 25-pt)
 //    netto GEX    = c + p        (Mld $, c>=0, p<=0)
 //    netto OI     = co − po      (contratti)
+//    SOMMA (Σ)    = |c| + |p|    (GEX lordo)  /  co + po (OI totale)
+//
+//  VISTA (OptView), come il selettore Call/Put · Net · Σ del sito:
+//    Net   → una barra col segno: dice il LATO (call-dominato/pin · put-
+//            dominato/trigger). Su un libro bilanciato però azzera lo strike
+//            più grosso: SPX 7000 ha 1,32M call + 1,48M put = 2,80M contratti
+//            di OI ma netto −5,9%, cioè invisibile qui e sul sito.
+//    Somma → una barra senza segno = SIZE dello strike. È la lettura giusta
+//            per la domanda "quali sono i livelli più importanti": barra
+//            alta = tanto libro, indipendentemente dal lato.
+//  In 'Somma' le barre sono indaco (non verde/rosso: il colore direbbe un
+//  lato che quella vista non misura) e la scala è il max della SOMMA.
 //
 //  Render: pannello ancorato al bordo destro, una barra per strike alla
-//  SUA quota di prezzo (verde net>=0 = call-dominato/pin, rosso net<0 =
-//  put-dominato/trigger), linee Max Pain / Flip (la linea Spot NON c'è: il
+//  SUA quota di prezzo, linee Max Pain / Flip (la linea Spot NON c'è: il
 //  grafico ha già la sua; le linee partono dall'ultima candela, non dal bordo
-//  sinistro, per non attraversare la price action). Fonte Entrambi = somma
-//  ETF+indice per strike.
+//  sinistro, per non attraversare la price action). Fonte Entrambi = resa
+//  speculare (indici a sinistra, ETF a destra, stesso asse prezzi).
 //  sempre visibili, badge di freschezza del piano.
 //
 //  RIFERIMENTI: NESSUNO extra — il parsing usa JavaScriptSerializer
@@ -66,6 +77,11 @@ public enum GexOiSource  { Indice, ETF, Entrambi }
 public enum GexOiBucket  { Tutte, Settimana, ZeroDTE }
 public enum GexOiLato    { Sinistra, Destra }
 public enum GexOiMetric  { GEX, OI }
+// Vista del profilo. Net = con segno (default, retro-compatibile: gli indici
+// dei valori esistenti non cambiano e i workspace salvati restano identici).
+// Somma = call+put senza segno: la SIZE del livello, la stessa "Σ Call+Put"
+// del sito. Aggiunto in coda, come le altre estensioni.
+public enum GexOiView    { Net, Somma }
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
@@ -172,6 +188,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				OptSource                      = GexOiSource.Indice;
 				OptBucket                      = GexOiBucket.Tutte;
 				OptMetric                      = GexOiMetric.GEX;
+				OptView                        = GexOiView.Net;
 				WindowPct                      = 5;
 				RefreshMinutes                 = 5;
 				StaleMinutes                   = 15;
@@ -381,9 +398,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (e == null) continue;
 					double s = TryNum(e, "s");
 					if (s <= 0) continue;
-					double net = OptMetric == GexOiMetric.GEX
-						? TryNum(e, "c") + TryNum(e, "p")
-						: TryNum(e, "co") - TryNum(e, "po");
+					double net = Val(e);
 					// arrotondo la chiave a 0.1: le due fonti scrivono 25pt esatti,
 					// ma non voglio che un 1e-13 di virgola mobile crei doppioni
 					double k = Math.Round(s, 1);
@@ -514,7 +529,38 @@ namespace NinjaTrader.NinjaScript.Indicators
 			return res;
 		}
 
-		// profilo RAW in scala futures: 
+		// Valore di UNO strike secondo la vista attiva.
+		//
+		// Net   GEX = c + p      (c>=0, p<=0 → la differenza È il netto)
+		// Net   OI  = co − po    (co/po sono moduli positivi)
+		// Somma GEX = |c| + |p|  (gamma LORDA: quanta copertura vive lì)
+		// Somma OI  = co + po    (contratti totali: la size del livello)
+		//
+		// Perché serve: 'Net' risponde a "da che lato pende", non a "quanto è
+		// grande". SPX 7000 (1,32M call + 1,48M put) ha netto −5,9% → in Net
+		// sparisce, ed è invece lo strike più grosso del libro.
+		private double Val(Dictionary<string, object> e)
+		{
+			if (OptView == GexOiView.Somma)
+				return OptMetric == GexOiMetric.GEX
+					? Math.Abs(TryNum(e, "c")) + Math.Abs(TryNum(e, "p"))
+					: TryNum(e, "co") + TryNum(e, "po");
+			return OptMetric == GexOiMetric.GEX
+				? TryNum(e, "c") + TryNum(e, "p")
+				: TryNum(e, "co") - TryNum(e, "po");
+		}
+
+		// Colore barra. In 'Somma' verde/rosso sarebbero una bugia (dicono il
+		// lato, che quella vista non misura): indaco = size, come il Σ del sito.
+		private Color4 BarColor(double v)
+		{
+			if (OptView == GexOiView.Somma) return new Color4(0.51f, 0.55f, 0.97f, 0.92f);
+			return v >= 0
+				? new Color4(0.204f, 0.827f, 0.600f, 0.92f)
+				: new Color4(0.984f, 0.443f, 0.522f, 0.92f);
+		}
+
+		// profilo RAW in scala futures: il valore dipende dalla vista (Val).
 		private List<KeyValuePair<double, double>> RawProfile(Dictionary<string, object> plan, string key, double scale)
 		{
 			var res = new List<KeyValuePair<double, double>>();
@@ -526,9 +572,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				if (e == null) continue;
 				double s = TryNum(e, "s");
 				if (s <= 0) continue;
-				double net = OptMetric == GexOiMetric.GEX
-					? TryNum(e, "c") + TryNum(e, "p")
-					: TryNum(e, "co") - TryNum(e, "po");
+				double net = Val(e);
 				res.Add(new KeyValuePair<double, double>(Math.Round(s * scale, 1), net));
 			}
 			return res;
@@ -686,7 +730,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				: OptSource == GexOiSource.Entrambi
 					? (PlanKey() == "ES" ? "SPY+SPX" : "QQQ+NDX")
 					: (PlanKey() == "ES" ? "SPY" : "QQQ");
-			string title = (OptMetric == GexOiMetric.GEX ? "Net GEX" : "Net OI")
+			string title = (OptView == GexOiView.Somma
+					? (OptMetric == GexOiMetric.GEX ? "Σ GEX |c|+|p|" : "Σ OI call+put")
+					: (OptMetric == GexOiMetric.GEX ? "Net GEX" : "Net OI"))
 				+ " · " + (OptBucket == GexOiBucket.ZeroDTE ? "0DTE" : OptBucket == GexOiBucket.Settimana ? "≤7gg" : "Tutte")
 				+ " · " + srcName;
 
@@ -912,9 +958,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 								: i > 0 ? Math.Abs(y - ys2[i - 1]) : 8f;
 							float bh = Math.Max(1.5f, Math.Min(PixelBinSize, gap * 0.74f));
 							float len = Math.Max(1.5f, (float)Math.Abs(b.Net) / scale * halfW);
-							var c4 = b.Net >= 0
-								? new Color4(0.204f, 0.827f, 0.600f, 0.92f)
-								: new Color4(0.984f, 0.443f, 0.522f, 0.92f);
+							var c4 = BarColor(b.Net);
 							using (var bb = new SolidColorBrush(RenderTarget, c4))
 								RenderTarget.FillRectangle(new SharpDX.RectangleF(
 									left ? anchorL - len : anchorR, y - bh / 2f, len, bh), bb);
@@ -957,9 +1001,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 						: i > 0 ? Math.Abs(y - ys[i - 1]) : 10f;
 					float bh  = Math.Max(2f, Math.Min(PixelBinSize, gap * 0.72f));
 					float len = Math.Max(2f, (float)Math.Abs(b.Net) / yMax * colW);
-					var c4 = b.Net >= 0
-						? new Color4(0.20f, 0.83f, 0.60f, 0.90f)
-						: new Color4(0.97f, 0.44f, 0.44f, 0.90f);
+					var c4 = BarColor(b.Net);
 					using (var bb = new SolidColorBrush(RenderTarget, c4))
 						// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
@@ -1209,6 +1251,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[NinjaScriptProperty]
 		[Display(Name = "Metrica", Order = 4, GroupName = "1. Dati")]
 		public GexOiMetric OptMetric { get; set; }
+
+		// Net = barra col segno (lato). Somma = call+put senza segno (SIZE del
+		// livello): la stessa "Σ Call+Put" del sito, per rispondere a "quali
+		// sono i livelli più importanti" senza che un libro bilanciato sparisca.
+		[NinjaScriptProperty]
+		[Display(Name = "Vista (Somma = call+put, size del livello)", Order = 4, GroupName = "1. Dati")]
+		public GexOiView OptView { get; set; }
 
 		[NinjaScriptProperty]
 		[System.ComponentModel.DataAnnotations.Range(0.5, 20.0)]

@@ -1,6 +1,6 @@
 # GexOiProfile — indicatore NT8
 
-Profilo **netto OI/GEX per strike** sul grafico NinjaTrader, con linee
+Profilo **OI/GEX per strike** sul grafico NinjaTrader, con linee
 **Spot / Max Pain / Flip** sempre visibili. Gli stessi numeri della web app
 QuantFlow: l'indicatore NON ricalcola nulla, legge il piano già generato dal
 pipeline (branch `data` → `data/day_plan.json`, profili già in scala futures
@@ -47,7 +47,8 @@ guasto. Stessa regola e stessi numeri della web app.
 | Futures | Auto | Auto-detect dal nome strumento (ES/MES → piano ES, NQ/MNQ → piano NQ) |
 | Fonte opzioni | Indice | Indice = profilo raw 5-pt (SPX/NDX, parità InsiderFinance) · ETF = bin 25-pt (SPY/QQQ) |
 | Borsa di scadenza | Tutte | 0DTE / ≤7gg / Tutte — identiche al selettore del sito |
-| Metrica | GEX | GEX netto (Mld $, c+p) oppure OI netta (co−po) |
+| Metrica | GEX | GEX (Mld $, c+p) oppure OI (contratti, co−po) |
+| Vista | Net | **Net** = valore col segno (il lato) · **Somma** = call+put senza segno (**la size del livello**), come il chip `Σ Call+Put` del sito |
 | Finestra ±% | 5 | Strike entro ±X% dallo spot live (come il sito) |
 | Refresh (minuti) | 5 | Il pipeline pubblica ogni 5 min in seduta |
 | Piano stantio dopo | 15 min | L'intestazione diventa ambra se il piano è più vecchio |
@@ -56,18 +57,40 @@ guasto. Stessa regola e stessi numeri della web app.
 
 ## Cosa mostra
 
-- **Barre per strike** alla propria quota di prezzo: verde = netto ≥ 0
-  (call-dominato, pin 🛡), rosso = netto < 0 (put-dominato, trigger ⚡).
-  I 3 muri maggiori per |net| sono etichettati con lo strike.
+- **Net** (default) — barre per strike alla propria quota di prezzo: verde =
+  ≥ 0 (call-dominato, pin 🛡), rosso = < 0 (put-dominato, trigger ⚡).
+  I 3 muri maggiori per |valore| sono etichettati con lo strike.
+- **Somma** (`Vista = Somma`) — stesse barre, **senza segno**: OI = `co+po`
+  (contratti totali), GEX = `|c|+|p|` (gamma lorda). Colore **indaco**, scala
+  sul massimo della somma. Barra alta = strike importante, cioè la domanda
+  "quali sono i livelli più grossi", a cui il netto non risponde.
 - **Linee sempre attive**: Max Pain (ambra) e Flip strutturale (viola) della
   fonte selezionata, in scala futures; in Entrambi anche il Flip dell'altra
   fonte (la distanza fra i due = regime confermato o in divergenza). La linea
   Spot NON c'è: il grafico ha già la sua. Partono dall'ultima candela, non dal
   bordo sinistro, per non attraversare la price action.
   Etichette con anti-collisione (flip ≈ max pain le separa).
-- **Intestazione**: metrica/borsa/fonte + orario del piano; ambra = stantio.
+- **Intestazione**: vista/metrica/borsa/fonte + orario del piano; ambra = stantio.
 - Flip assente nel piano (nessuno zero-crossing) → la linea non viene disegnata:
   non è un errore, è il dato (vedi discussione flip/max pain della scala).
+
+## Perché serve la vista Somma
+
+`Net` risponde a "da che lato pende lo strike", NON a "quanto è grande".
+Su un libro bilanciato il netto azzera proprio lo strike più grosso:
+
+| strike | call | put | Σ | netto | netto % |
+|---|---|---|---|---|---|
+| SPX 7000 | 1.323.669 | 1.487.105 | **2.810.774** | −163.436 | −5,9% |
+| SPX 8000 | 1.244.693 | 1.118.719 | **2.363.412** | +125.974 | +5,3% |
+
+Fonte di quei due: LEAPS su numeri tondi (la sola scadenza Dic 2026 vale 1,67M
+dei 2,8M contratti). In `Net` sono invisibili; in `Somma` sono le due barre
+più lunghe del pannello, 6,5x e 5,5x la terza. Nota d'uso: la loro GEX lorda
+è enorme su "Tutte", ma **zero in 0DTE** (stanno 500 pt fuori): sono magneti
+dormienti — contano come struttura, non come pin di giornata. Regola:
+`Somma` + borsa 0DTE/≤7gg per i livelli operativi, `Somma` + Tutte per la
+mappa del libro.
 
 ## Note tecniche
 
