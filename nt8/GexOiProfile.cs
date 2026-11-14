@@ -121,6 +121,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private int fetching;                   // 0 = idle, 1 = in volo (Interlocked)
 		private System.Timers.Timer timer;      // thread-pool: non dipende dal dispatcher UI
 		private bool loggedGeom;
+		// Una sola istanza per pannello: nel workspace ne erano state salvate DUE
+		// sullo stesso grafico (verificato 14/11 su pitgian.xml) e il profilo veniva
+		// disegnato due volte, con etichette doppie = "confusione". La prima che
+		// renderizza rivendica il pannello, le altre si astengono e avvisano.
+		private static readonly System.Collections.Generic.Dictionary<string, Tuple<string, DateTime>> PanelOwner
+			= new System.Collections.Generic.Dictionary<string, Tuple<string, DateTime>>();
+		private readonly string instanceId = Guid.NewGuid().ToString("N").Substring(0, 6);
+		private bool warnedDuplicate;
+		private float twinMaxI, twinMaxE;   // massimi visibili delle due meta' (per la legenda)
 
 		private sealed class ProfileBar { public double S; public double Net; }
 
@@ -735,6 +744,30 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      quanto la colonna, bordi tratteggiati ai due prezzi, etichetta
 				//      ⧉ a destra. Stessa regola del sito: muro ETF e muro indice
 				//      dai top_gamma entro ±tolPts (5 pt di default).
+				// anti-duplicato: se un'altra istanza ha gia' rivendicato questo
+				// pannello in questo frame, non disegno (evita il profilo doppio).
+				try
+				{
+					string pkey = (ChartControl != null ? ChartControl.GetHashCode().ToString() : "0")
+						+ "|" + ChartPanel.PanelIndex;
+					lock (PanelOwner)
+					{
+						Tuple<string, DateTime> own;
+						if (PanelOwner.TryGetValue(pkey, out own) && own.Item1 != instanceId
+							&& (DateTime.Now - own.Item2).TotalSeconds < 3)
+						{
+							if (!warnedDuplicate)
+							{
+								warnedDuplicate = true;
+								Log("GexOiProfile: due istanze sullo stesso pannello — disegno solo la prima. Rimuovi il duplicato (tasto destro > Indicators).", LogLevel.Warning);
+							}
+							return;
+						}
+						PanelOwner[pkey] = Tuple.Create(instanceId, DateTime.Now);
+					}
+				}
+				catch { }
+
 				float colW = xRight - xLeft;
 				bool inBoth = OptSource == GexOiSource.Entrambi;
 				bool twin = inBoth && twinEtf != null && twinIdx != null
@@ -743,6 +776,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 				// di GUT px, cosi' l'asse prezzi respira e le etichette non si
 				// attaccano alle barre (richiesta 14/11).
 				const float GUT = 20f;
+				// in speculare servono due meta' leggibili: se la colonna e' troppo
+				// stretta (default 10% del pannello) la allargo verso sinistra.
+				if (twin && colW < 170f)
+				{
+					xLeft = Math.Max(px + 6, xRight - 170f);
+					colW = xRight - xLeft;
+				}
 				float spineX = xLeft + colW / 2f;
 				float anchorL = twin ? spineX - GUT / 2f : xLeft;
 				float anchorR = twin ? spineX + GUT / 2f : xRight;
@@ -785,8 +825,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 					// (le due catene presidiano livelli distinti, gap = minGapPts).
 					using (var bNone = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
 						DrawTextLeft(RenderTarget, tf, bNone,
-							string.Format("⧉ 0 confluenze ±{0:0}pt · gap minimo {1:0}pt", tolPts, minGapPts),
-							xLeft, 40);
+							string.Format("gap minimo {0:0}pt", minGapPts),
+							xLeft + 2, panelH - 46);
 				}
 
 				// ---- BARRE. Due rese:
@@ -807,9 +847,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 						.OrderBy(b => b.S).ToList();
 					var wE = twinEtf.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct)
 						.OrderBy(b => b.S).ToList();
+					// MASSIMI SUL VISIBILE: la finestra ±WindowPct% copre un range di
+					// prezzo molto piu' ampio di quello inquadrato dal grafico; se la
+					// scala si calcola su tutta la finestra, i muri fuori schermo
+					// schiacciano quelli visibili e il profilo sembra vuoto.
 					float mxI = 0.0001f, mxE = 0.0001f;
-					foreach (var b in wI) mxI = Math.Max(mxI, (float)Math.Abs(b.Net));
-					foreach (var b in wE) mxE = Math.Max(mxE, (float)Math.Abs(b.Net));
+					foreach (var b in wI)
+					{
+						float y = (float)chartScale.GetYByValue(b.S);
+						if (y < 24 || y > panelH - 24) continue;
+						mxI = Math.Max(mxI, (float)Math.Abs(b.Net));
+					}
+					foreach (var b in wE)
+					{
+						float y = (float)chartScale.GetYByValue(b.S);
+						if (y < 24 || y > panelH - 24) continue;
+						mxE = Math.Max(mxE, (float)Math.Abs(b.Net));
+					}
 					float scI = ScalaComune ? Math.Max(mxI, mxE) : mxI;
 					float scE = ScalaComune ? Math.Max(mxI, mxE) : mxE;
 
@@ -874,16 +928,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 					drawHalf(wI, scI, true);    // INDICI a sinistra
 					drawHalf(wE, scE, false);   // ETF a destra
 
-					// intestazioni delle due meta' + massimi (scala dichiarata)
-					string idxNm = PlanKey() == "ES" ? "SPX" : "NDX";
-					string etfNm = PlanKey() == "ES" ? "SPY" : "QQQ";
-					using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 1f)))
-						DrawTextLeft(RenderTarget, tf, bI, "◀ " + idxNm + "  max " + E(mxI), xLeft + 2, 22);
-					using (var bE = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 1f)))
-						DrawTextRight(RenderTarget, tf, bE, etfNm + " ▶  max " + E(mxE), xRight - 2, 22);
-					if (ScalaComune)
-						using (var bS2 = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
-							DrawTextRight(RenderTarget, tf, bS2, "scala comune", xRight - 2, 36);
+					// NIENTE scritte in alto: la fascia alta del pannello e' occupata
+					// dal legend degli indicatori di NT8 (le mie si sovrapponevano).
+					// Identita' delle due meta' e massimi stanno nella legenda in basso.
+					twinMaxI = mxI; twinMaxE = mxE;
 
 					// etichette: i 2 muri piu' grossi PER FONTE, all'estremita' della
 					// propria barra (sinistra per l'indice, destra per l'ETF)
@@ -1037,17 +1085,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 
 				// legenda
-				string leg = twin
-					? "speculare: ◀ " + iNm + " | " + eNm + " ▶ · asse " + (PlanKey() ?? "fut")
-						+ " · ▲ livelli indice, ▼ livelli ETF · banda viola = confluenza ⧉ ±"
-						+ tolPts.ToString("0") + "pt"
-						+ (zones == null || zones.Count == 0 ? " (oggi nessuna)" : " (" + zones.Count + ")")
-					: inBoth
-						? "banda viola = confluenza ⧉ ±" + tolPts.ToString("0") + "pt"
-							+ (zones == null || zones.Count == 0 ? " · oggi nessuna" : " · " + zones.Count + " confl.")
-						: "verde = net ≥ 0 (pin) · rosso = net < 0 (trg)";
-				if (regimeTxt.Length > 0) leg += " · regime " + regimeTxt;
-				DrawTextRight(RenderTarget, tf, brush, leg, xRight, panelH - 18);
+				// legenda: righe CORTE ancorate alla colonna (prima una riga lunga
+				// veniva tagliata dal bordo del pannello).
+				if (twin)
+				{
+					string l1 = "◀ " + iNm + " " + E(twinMaxI) + " | " + E(twinMaxE) + " " + eNm + " ▶";
+					string l2 = "⧉ ±" + tolPts.ToString("0") + "pt: "
+						+ (zones == null || zones.Count == 0 ? "0" : zones.Count.ToString())
+						+ (ScalaComune ? " · scala comune" : " · scale proprie");
+					using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 1f)))
+						DrawTextLeft(RenderTarget, tf, bI, l1, xLeft + 2, panelH - 32);
+					using (var bC = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
+						DrawTextLeft(RenderTarget, tf, bC, l2, xLeft + 2, panelH - 18);
+				}
+				else
+				{
+					string leg = inBoth
+						? "⧉ ±" + tolPts.ToString("0") + "pt: " + (zones == null || zones.Count == 0 ? "0" : zones.Count.ToString())
+						: "verde = pin · rosso = trigger";
+					if (regimeTxt.Length > 0) leg += " · " + regimeTxt;
+					DrawTextLeft(RenderTarget, tf, brush, leg, xLeft + 2, panelH - 18);
+				}
 			}
 		}
 
