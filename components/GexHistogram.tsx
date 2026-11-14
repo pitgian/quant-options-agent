@@ -377,7 +377,12 @@ export const GexHistogram: React.FC<{
         });
       chips.push(...spreadRow(inRow, L.M.left, L.W - L.M.right));
     }
-    const tipW = Math.min(250, L.PLOT_W - 8), tipH = 92;
+    const tipW = Math.min(272, L.PLOT_W - 8), tipH = 100;
+    /* riga di conversione: strike NATIVO → prezzo futures. Senza ratio il
+       nativo non c'è, e prima usciva `7524 → ES 7524` (due volte lo stesso
+       numero): qui si ripiega sul solo futures. */
+    const convRow = (s: number, ratio?: number) =>
+      ratio ? `${fmtNat(s / ratio)} → ${futName} ${fmtPrice(s)}` : `${futName} ${fmtPrice(s)}`;
     const tipX = hover ? Math.min(Math.max(hover.x + 14, L.M.left), L.W - L.M.right - tipW) : 0;
     const tipY = hover ? Math.min(Math.max(hover.y - tipH / 2, L.M.top), L.H - L.M.bottom - tipH) : 0;
 
@@ -612,27 +617,27 @@ export const GexHistogram: React.FC<{
               )}
               <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={7}
                 fill={C.panel} fillOpacity={0.97} stroke="#334155" />
-              <text x={tipX + 12} y={tipY + 19} fontSize={11} fontWeight="bold" fill={C.ink}>
+              <text x={tipX + 12} y={tipY + 21} fontSize={12.5} fontWeight="bold" fill={C.ink}>
                 {futName} {fmtPrice(hover.price)}
               </text>
-              <line x1={tipX + 12} x2={tipX + tipW - 12} y1={tipY + 27} y2={tipY + 27} stroke="#1e293b" />
-              <text x={tipX + 12} y={tipY + 44} fontSize={9.5} fontWeight="bold" fill={C.idx}>▲ {idxName}</text>
-              <text x={tipX + 62} y={tipY + 44} fontSize={9.5} fill={C.soft}>
-                {hI ? `${idxRatio ? fmtNat(hI.s / idxRatio) : fmtPrice(hI.s)} → ${futName} ${fmtPrice(hI.s)}` : '—'}
+              <line x1={tipX + 12} x2={tipX + tipW - 12} y1={tipY + 30} y2={tipY + 30} stroke="#1e293b" />
+              <text x={tipX + 12} y={tipY + 49} fontSize={10.5} fontWeight="bold" fill={C.idx}>▲ {idxName}</text>
+              <text x={tipX + 66} y={tipY + 49} fontSize={11} fontWeight="bold" fill={C.ink} opacity={0.92}>
+                {hI ? convRow(hI.s, idxRatio) : '—'}
               </text>
-              <text x={tipX + tipW - 12} y={tipY + 44} textAnchor="end" fontSize={10} fontWeight="bold"
+              <text x={tipX + tipW - 12} y={tipY + 49} textAnchor="end" fontSize={11} fontWeight="bold"
                 fill={hI ? (val(hI) >= 0 ? C.call : C.put) : C.mute}>
                 {hI ? fmtVal(val(hI), metric) : '—'}
               </text>
-              <text x={tipX + 12} y={tipY + 66} fontSize={9.5} fontWeight="bold" fill={C.etf}>▼ {etfName}</text>
-              <text x={tipX + 62} y={tipY + 66} fontSize={9.5} fill={C.soft}>
-                {hE ? `${etfRatio ? fmtNat(hE.s / etfRatio) : fmtPrice(hE.s)} → ${futName} ${fmtPrice(hE.s)}` : '—'}
+              <text x={tipX + 12} y={tipY + 72} fontSize={10.5} fontWeight="bold" fill={C.etf}>▼ {etfName}</text>
+              <text x={tipX + 66} y={tipY + 72} fontSize={11} fontWeight="bold" fill={C.ink} opacity={0.92}>
+                {hE ? convRow(hE.s, etfRatio) : '—'}
               </text>
-              <text x={tipX + tipW - 12} y={tipY + 66} textAnchor="end" fontSize={10} fontWeight="bold"
+              <text x={tipX + tipW - 12} y={tipY + 72} textAnchor="end" fontSize={11} fontWeight="bold"
                 fill={hE ? (val(hE) >= 0 ? C.call : C.put) : C.mute}>
                 {hE ? fmtVal(val(hE), metric) : '—'}
               </text>
-              <text x={tipX + 12} y={tipY + 84} fontSize={8.5} fill={C.mute}>
+              <text x={tipX + 12} y={tipY + 93} fontSize={9.5} fill={C.mute}>
                 {hI && hE
                   ? `distanza fra i due strike: ${Math.round(Math.abs(hI.s - hE.s))} pt${Math.abs(hI.s - hE.s) <= ZONE_TOL_PT ? ' · ⧉ stesso livello' : ''}`
                   : 'strike più vicino per ciascuna fonte'}
@@ -674,6 +679,18 @@ export const GexHistogram: React.FC<{
   const natOf = (v: number) => singleSrc === 'etf' ? v : (idxRatio ? v / idxRatio : v);
   const futOf = (v: number) => singleSrc === 'etf' ? (etfRatio ? v * etfRatio : v) : v;
 
+  /* DOPPIO PREZZO del tooltip. L'asse della vista 'indici' è GIÀ in punti
+     futures (gex_profile_index arriva convertito dal pipeline), quindi
+     l'intestazione deve chiamare quel numero col nome del FUTURES: prima
+     usava srcName e usciva `SPX 7524 ≈ SPX 7500` — due volte l'indice e mai
+     il futures, che sembrava un errore di scala. A destra va l'altra scala,
+     e solo se il ratio esiste: senza, si stamperebbe due volte lo stesso
+     numero (stessa trappola della vista speculare, vedi convRow). */
+  const axisTxt = (v: number) => singleSrc === 'etf' ? `${etfName} ${fmtNat(v)}` : `${futName} ${fmtPrice(v)}`;
+  const convTxt = (v: number): string => singleSrc === 'etf'
+    ? (etfRatio ? `≈ ${futName} ${fmtPrice(futOf(v))}` : '')
+    : (idxRatio ? `≈ ${idxName} ${fmtNat(natOf(v))}` : '');
+
   /* corsia dei livelli: Spot / Max Pain / Flip della fonte attiva */
   const sRowOf = (k: 'spot' | 'mp' | 'flip') => k === 'spot' ? 0 : k === 'mp' ? 1 : 2;
   const sRefs: Array<{ price: number; kind: 'spot' | 'mp' | 'flip'; label: string; txt: string; w: number; cx: number; cx0: number; row: number }> = [];
@@ -694,7 +711,7 @@ export const GexHistogram: React.FC<{
   const sRowY = Array.from({ length: L.chipRows }, (_, i) => 16 + i * 21);
   const hBar = hoverS && geom ? bars.reduce<null | GexProfileEntry>((best, b) =>
     !best || Math.abs(b.s - hoverS.s) < Math.abs(best.s - hoverS.s) ? b : best, null) : null;
-  const sTipW = Math.min(236, L.SPLOT_W - 8), sTipH = 104;
+  const sTipW = Math.min(262, L.SPLOT_W - 8), sTipH = 112;
   const sTipX = hoverS ? Math.min(Math.max(hoverS.x + 14, L.SM.left), L.SW - L.SM.right - sTipW) : 0;
   const sTipY = hoverS ? Math.min(Math.max(hoverS.y - sTipH / 2, L.SM.top), L.SH - L.SM.bottom - sTipH) : 0;
   const sTicks = geom ? Array.from({ length: L.tickN }, (_, i) => geom.x0 + ((geom.x1 - geom.x0) * i) / (L.tickN - 1)) : [];
@@ -858,30 +875,31 @@ export const GexHistogram: React.FC<{
                 stroke="#e6edf3" strokeWidth={0.8} strokeDasharray="2 3" opacity={0.5} />
               <rect x={sTipX} y={sTipY} width={sTipW} height={sTipH} rx={7}
                 fill={C.panel} fillOpacity={0.97} stroke="#334155" />
-              <text x={sTipX + 12} y={sTipY + 19} fontSize={11} fontWeight="bold" fill={C.ink}>
-                {srcName} {singleSrc === 'etf' ? fmtNat(hBar.s) : fmtPrice(hBar.s)}
+              <text x={sTipX + 12} y={sTipY + 21} fontSize={12.5} fontWeight="bold" fill={C.ink}>
+                {axisTxt(hBar.s)}
               </text>
-              <text x={sTipX + sTipW - 12} y={sTipY + 19} textAnchor="end" fontSize={9.5} fill={C.soft}>
-                {singleSrc === 'etf'
-                  ? `≈ ${futName} ${fmtPrice(futOf(hBar.s))}`
-                  : `≈ ${idxName} ${fmtNat(natOf(hBar.s))}`}
-              </text>
-              <line x1={sTipX + 12} x2={sTipX + sTipW - 12} y1={sTipY + 27} y2={sTipY + 27} stroke="#1e293b" />
-              <text x={sTipX + 12} y={sTipY + 45} fontSize={9.5} fontWeight="bold" fill={C.call}>
+              {convTxt(hBar.s) && (
+                <text x={sTipX + sTipW - 12} y={sTipY + 21} textAnchor="end" fontSize={12.5}
+                  fontWeight="bold" fill={singleSrc === 'etf' ? C.spot : srcCol}>
+                  {convTxt(hBar.s)}
+                </text>
+              )}
+              <line x1={sTipX + 12} x2={sTipX + sTipW - 12} y1={sTipY + 30} y2={sTipY + 30} stroke="#1e293b" />
+              <text x={sTipX + 12} y={sTipY + 49} fontSize={10.5} fontWeight="bold" fill={C.call}>
                 {metric === 'gex' ? 'call GEX' : 'call OI'}
               </text>
-              <text x={sTipX + sTipW - 12} y={sTipY + 45} textAnchor="end" fontSize={10} fontWeight="bold" fill={C.call}>
+              <text x={sTipX + sTipW - 12} y={sTipY + 49} textAnchor="end" fontSize={11} fontWeight="bold" fill={C.call}>
                 {metric === 'gex' ? `${fmtMld(hBar.c)} Mld` : (hBar.co ?? 0).toLocaleString('it-IT')}
               </text>
-              <text x={sTipX + 12} y={sTipY + 64} fontSize={9.5} fontWeight="bold" fill={C.put}>
+              <text x={sTipX + 12} y={sTipY + 68} fontSize={10.5} fontWeight="bold" fill={C.put}>
                 {metric === 'gex' ? 'put GEX' : 'put OI'}
               </text>
-              <text x={sTipX + sTipW - 12} y={sTipY + 64} textAnchor="end" fontSize={10} fontWeight="bold" fill={C.put}>
+              <text x={sTipX + sTipW - 12} y={sTipY + 68} textAnchor="end" fontSize={11} fontWeight="bold" fill={C.put}>
                 {metric === 'gex' ? `${fmtMld(hBar.p)} Mld` : (-(hBar.po ?? 0)).toLocaleString('it-IT')}
               </text>
-              <line x1={sTipX + 12} x2={sTipX + sTipW - 12} y1={sTipY + 73} y2={sTipY + 73} stroke="#1e293b" />
-              <text x={sTipX + 12} y={sTipY + 90} fontSize={9.5} fill={C.soft}>netto</text>
-              <text x={sTipX + sTipW - 12} y={sTipY + 90} textAnchor="end" fontSize={10.5} fontWeight="bold"
+              <line x1={sTipX + 12} x2={sTipX + sTipW - 12} y1={sTipY + 78} y2={sTipY + 78} stroke="#1e293b" />
+              <text x={sTipX + 12} y={sTipY + 97} fontSize={10.5} fill={C.soft}>netto</text>
+              <text x={sTipX + sTipW - 12} y={sTipY + 97} textAnchor="end" fontSize={12} fontWeight="bold"
                 fill={val(hBar) >= 0 ? C.call : C.put}>
                 {fmtVal(val(hBar), metric)} · {val(hBar) >= 0 ? 'pin 🛡' : 'trigger ⚡'}
               </text>
