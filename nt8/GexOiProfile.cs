@@ -810,8 +810,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 					float yL = ln.Item1;
 					if (yL < 4 || yL > panelH - 4) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
+					{
 						DrawDashPattern(RenderTarget, bL, xLeft, xRight, yL, 6, 3);
-					DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xRight + 4, LabelY(yL) - 7);
+						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xRight + 4, LabelY(yL) - 7);
+					}
 				}
 
 				// legenda
