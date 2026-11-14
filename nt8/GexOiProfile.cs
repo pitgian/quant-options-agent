@@ -786,8 +786,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 				// etichette del lato, ordine di prezzo preservato (Declutter).
 				var railL = new List<Tuple<float, string, Color4>>();
 				var railR = new List<Tuple<float, string, Color4>>();
-				var tipL = new List<Tuple<float, float, string, Color4>>();  // y, x, testo, colore
-				var tipR = new List<Tuple<float, float, string, Color4>>();
+				// I numeri degli strike NON vanno piu' sulla punta della barra: li'
+				// finivano SOPRA la barra (il testo partiva dalla punta e andava
+				// verso l'interno) e si leggevano male. Ora entrano nelle stesse
+				// colonne laterali delle etichette di livello, con lo stesso
+				// declutter: niente sovrapposizioni ne' con le barre ne' fra loro.
 				var cConf = new Color4(0.769f, 0.710f, 0.992f, 1f);
 
 				if (inBoth && !twin && zones != null && zones.Count > 0)
@@ -923,21 +926,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 					// niente scritte in alto: la fascia alta e' del legend di NT8
 					twinMaxI = mxI; twinMaxE = mxE;
 
-					// etichette: i 2 muri piu' grossi PER FONTE, all'estremita' della
-					// propria barra (sinistra per l'indice, destra per l'ETF)
+					// numeri: i 2 muri piu' grossi PER FONTE, nella colonna laterale
+					// della propria meta' (indice a sinistra, ETF a destra)
 					foreach (var pair in new[] { Tuple.Create(wI, scI, true), Tuple.Create(wE, scE, false) })
 					{
-						var list = pair.Item1; float scale = pair.Item2; bool left = pair.Item3;
+						var list = pair.Item1; bool left = pair.Item3;
 						foreach (int i in Enumerable.Range(0, list.Count)
 							.OrderByDescending(k => Math.Abs(list[k].Net)).Take(2))
 						{
 							float y = (float)chartScale.GetYByValue(list[i].S);
 							if (y < 30 || y > panelH - 24) continue;
-							float len = Math.Max(1.5f, (float)Math.Abs(list[i].Net) / scale * halfW);
-							if (left) tipL.Add(Tuple.Create(y, Math.Max(xLeft + 1, anchorL - len + 2),
-								list[i].S.ToString("0"), new Color4(0.75f, 0.78f, 0.83f, 1f)));
-							else tipR.Add(Tuple.Create(y, Math.Min(xRight - 1, anchorR + len - 2),
-								list[i].S.ToString("0"), new Color4(0.75f, 0.78f, 0.83f, 1f)));
+							var cNum = new Color4(0.75f, 0.78f, 0.83f, 1f);
+							if (left) railL.Add(Tuple.Create(y, list[i].S.ToString("0"), cNum));
+							else railR.Add(Tuple.Create(y, list[i].S.ToString("0"), cNum));
 						}
 					}
 				}
@@ -965,10 +966,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 				}
 
-				// etichette: i 3 strike piu' grossi per |net| nella finestra,
-				// attaccate all'estremo destro della propria barra (xRight),
-				// stessa quota di prezzo, testo semplice senza riquadri.
-				// (in twin le etichette sono gia' state messe per fonte)
+				// numeri: i 3 strike piu' grossi per |net| nella finestra, nella
+				// colonna laterale destra (mai sopra le barre).
+				// (in twin sono gia' stati messi per fonte)
 				if (!twin)
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
@@ -976,7 +976,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					foreach (int i in topIdx)
 					{
 						float y = (float)chartScale.GetYByValue(inWin[i].S);
-						tipR.Add(Tuple.Create(y, xRight - 4, inWin[i].S.ToString("0"),
+						railR.Add(Tuple.Create(y, inWin[i].S.ToString("0"),
 							new Color4(0.75f, 0.78f, 0.83f, 1f)));
 					}
 				}
@@ -1080,26 +1080,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 						}
 					}
 				}
-				foreach (var side in new[] { Tuple.Create(tipL, true), Tuple.Create(tipR, false) })
-				{
-					var list = side.Item1; bool left = side.Item2;
-					if (list.Count == 0) continue;
-					var ysT = new float[list.Count];
-					for (int i = 0; i < list.Count; i++) ysT[i] = list[i].Item1;
-					var adj = Declutter(ysT, 12f, 30f, panelH - 26f);
-					for (int i = 0; i < list.Count; i++)
-					{
-						float yTrue = list[i].Item1, yL = adj[i], xT = list[i].Item2;
-						using (var b = new SolidColorBrush(RenderTarget, list[i].Item4))
-						{
-							if (Math.Abs(yL - yTrue) > 2f)
-								RenderTarget.DrawLine(new SharpDX.Vector2(xT, yTrue), new SharpDX.Vector2(xT, yL), b, 0.8f);
-							if (left) DrawTextLeft(RenderTarget, tf, b, list[i].Item3, xT, yL - 7);
-							else DrawTextRight(RenderTarget, tf, b, list[i].Item3, xT, yL - 7);
-						}
-					}
-				}
-
 				// legenda
 				if (twin)
 				{
