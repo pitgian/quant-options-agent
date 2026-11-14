@@ -106,6 +106,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private double   flip;                  // flip strutturale PRIMARIO (scala fut)
 		private double   flip0;                 // flip 0DTE primario (scala fut, opzionale)
 		private bool     hasFlip, hasFlip0, hasMaxPain;
+		// max pain delle DUE fonti, separati: nella resa speculare ogni livello
+		// vive nella meta' della propria catena (indice a sinistra, ETF a destra)
+		private double   maxPainEtf, maxPainIdx;
+		private bool     hasMaxPainEtf, hasMaxPainIdx;
 		// flip delle DUE fonti, parse separato: in modalità Entrambi si mostrano
 		// entrambi (i due flip raramente coincidono = informazione di confluenza).
 		private double   flipEtf, flipIdx, flip0Etf, flip0Idx;
@@ -299,6 +303,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 			// Max Pain e flip: entrambi già in SCALA FUTURES nel piano
 			maxPain    = TryNum(plan, idx ? "max_pain_nearest_index" : "max_pain_nearest");
 			hasMaxPain = maxPain > 0;
+			maxPainEtf = TryNum(plan, "max_pain_nearest");
+			maxPainIdx = TryNum(plan, "max_pain_nearest_index");
+			hasMaxPainEtf = maxPainEtf > 0;
+			hasMaxPainIdx = maxPainIdx > 0;
 
 			hasFlip = hasFlip0 = false;
 			flip = flip0 = 0;
@@ -745,6 +753,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 				bool inBoth = OptSource == GexOiSource.Entrambi;
 				bool twin = inBoth && twinEtf != null && twinIdx != null
 					&& twinEtf.Count > 0 && twinIdx.Count > 0;
+				// fascia centrale della resa speculare: le due meta' sono staccate
+				// di GUT px, cosi' l'asse prezzi respira e le etichette non si
+				// attaccano alle barre (richiesta 14/11).
+				const float GUT = 20f;
+				float spineX = xLeft + colW / 2f;
+				float anchorL = twin ? spineX - GUT / 2f : xLeft;
+				float anchorR = twin ? spineX + GUT / 2f : xRight;
 
 				if (inBoth && !twin && zones != null && zones.Count > 0)
 				{
@@ -793,8 +808,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				if (twin)
 				{
-					float spine = xLeft + colW / 2f;
-					float halfW = colW / 2f - 3f;
+					float spine = spineX;
+					float halfW = colW / 2f - GUT / 2f - 2f;
 					var wI = twinIdx.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct)
 						.OrderBy(b => b.S).ToList();
 					var wE = twinEtf.Where(b => Math.Abs(b.S - spot) / spot * 100 <= WindowPct)
@@ -811,9 +826,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 					// meta' INDICI (sinistra) e meta' ETF (destra): tinta di campo
 					using (var bFi = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 0.05f)))
-						RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, 22, colW / 2f, panelH - 44), bFi);
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(xLeft, 22, anchorL - xLeft, panelH - 44), bFi);
 					using (var bFe = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 0.05f)))
-						RenderTarget.FillRectangle(new SharpDX.RectangleF(spine, 22, colW / 2f, panelH - 44), bFe);
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(anchorR, 22, xRight - anchorR, panelH - 44), bFe);
+					// fascia centrale: fondo scuro + due hairline = le meta' sono staccate
+					using (var bG = new SolidColorBrush(RenderTarget, new Color4(0.043f, 0.067f, 0.106f, 0.92f)))
+						RenderTarget.FillRectangle(new SharpDX.RectangleF(anchorL, 22, GUT, panelH - 44), bG);
+					using (var bGl = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 0.45f)))
+						RenderTarget.DrawLine(new SharpDX.Vector2(anchorL, 22), new SharpDX.Vector2(anchorL, panelH - 22), bGl, 1f);
+					using (var bGr = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 0.45f)))
+						RenderTarget.DrawLine(new SharpDX.Vector2(anchorR, 22), new SharpDX.Vector2(anchorR, panelH - 22), bGr, 1f);
 
 					// bande di confluenza: attraversano TUTTA la colonna
 					if (zones != null)
@@ -855,7 +877,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 								: new Color4(0.984f, 0.443f, 0.522f, 0.92f);
 							using (var bb = new SolidColorBrush(RenderTarget, c4))
 								RenderTarget.FillRectangle(new SharpDX.RectangleF(
-									left ? spine - len : spine, y - bh / 2f, len, bh), bb);
+									left ? anchorL - len : anchorR, y - bh / 2f, len, bh), bb);
 						}
 					};
 					drawHalf(wI, scI, true);    // INDICI a sinistra
@@ -884,9 +906,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 							if (y < 30 || y > panelH - 24) continue;
 							float len = Math.Max(1.5f, (float)Math.Abs(list[i].Net) / scale * halfW);
 							if (left) DrawTextLeft(RenderTarget, tf, brush, list[i].S.ToString("0"),
-								Math.Max(xLeft + 1, spine - len + 2), LabelY(y) - 7);
+								Math.Max(xLeft + 1, anchorL - len + 2), LabelY(y) - 7);
 							else DrawTextRight(RenderTarget, tf, brush, list[i].S.ToString("0"),
-								Math.Min(xRight - 1, spine + len - 2), LabelY(y) - 7);
+								Math.Min(xRight - 1, anchorR + len - 2), LabelY(y) - 7);
 						}
 					}
 				}
@@ -934,22 +956,42 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      Tratteggiate SULLA colonna del profilo (il livello marcato
 				//      dove vive il profilo) + etichetta a destra della colonna
 				//      alla STESSA quota, testo semplice. NIENTE linea Spot: il grafico ha gia' la sua.
-				var lines = new List<Tuple<float, Color4, string>>();
-				if (hasMaxPain)
-					lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain),
-						new Color4(0.98f, 0.75f, 0.25f, 0.95f), "MP " + maxPain.ToString("0")));
-				if (hasFlip)
-					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip),
-						new Color4(0.72f, 0.55f, 0.95f, 0.95f), "Flip " + flip.ToString("0")));
-				// Entrambi: anche il flip dell'ALTRA fonte — i due flip raramente
-				// coincidono ed e' proprio la distanza fra i due a dire se il regime
-				// e' confermato su ETF e indice o e' in divergenza.
-				if (inBoth && hasFlipIdx && Math.Abs(flipIdx - flip) > 0.01)
-					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx),
-						new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0")));
-				if (ShowFlip0Dte && hasFlip0)
-					lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0),
-						new Color4(0.72f, 0.55f, 0.95f, 0.55f), "Flip0 " + flip0.ToString("0")));
+				// linee di riferimento. Nella resa SPECULARE ogni livello vive nella
+				// meta' della PROPRIA catena (▲ indice a sinistra, ▼ ETF a destra) e
+				// l'etichetta dichiara la fonte: prima si vedevano "MP" e "Flip"
+				// senza sapere a quale libro appartenessero.
+				var lines = new List<Tuple<float, Color4, string, float, float>>();
+				string iNm = PlanKey() == "ES" ? "SPX" : "NDX";
+				string eNm = PlanKey() == "ES" ? "SPY" : "QQQ";
+				var cMP   = new Color4(0.98f, 0.75f, 0.25f, 0.95f);
+				var cFlip = new Color4(0.72f, 0.55f, 0.95f, 0.95f);
+				if (twin)
+				{
+					if (hasMaxPainIdx) lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPainIdx), cMP,
+						"▲ MP " + iNm + " " + maxPainIdx.ToString("0"), xLeft, anchorL));
+					if (hasMaxPainEtf) lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPainEtf), cMP,
+						"▼ MP " + eNm + " " + maxPainEtf.ToString("0"), anchorR, xRight));
+					if (hasFlipIdx) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx), cFlip,
+						"▲ Flip " + iNm + " " + flipIdx.ToString("0"), xLeft, anchorL));
+					if (hasFlipEtf) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipEtf), cFlip,
+						"▼ Flip " + eNm + " " + flipEtf.ToString("0"), anchorR, xRight));
+					if (ShowFlip0Dte && hasFlip0Idx) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0Idx),
+						new Color4(0.72f, 0.55f, 0.95f, 0.6f), "▲ Flip0 " + iNm + " " + flip0Idx.ToString("0"), xLeft, anchorL));
+					if (ShowFlip0Dte && hasFlip0Etf) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0Etf),
+						new Color4(0.72f, 0.55f, 0.95f, 0.6f), "▼ Flip0 " + eNm + " " + flip0Etf.ToString("0"), anchorR, xRight));
+				}
+				else
+				{
+					if (hasMaxPain) lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain), cMP,
+						"MP " + maxPain.ToString("0"), xLeft, xRight));
+					if (hasFlip) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip), cFlip,
+						"Flip " + flip.ToString("0"), xLeft, xRight));
+					if (inBoth && hasFlipIdx && Math.Abs(flipIdx - flip) > 0.01)
+						lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx),
+							new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0"), xLeft, xRight));
+					if (ShowFlip0Dte && hasFlip0) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0),
+						new Color4(0.72f, 0.55f, 0.95f, 0.55f), "Flip0 " + flip0.ToString("0"), xLeft, xRight));
+				}
 
 				foreach (var ln in lines)
 				{
@@ -957,14 +999,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (yL < 4 || yL > panelH - 4) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 					{
-						DrawDashPattern(RenderTarget, bL, xLeft, xRight, yL, 6, 3);
+						DrawDashPattern(RenderTarget, bL, ln.Item4, ln.Item5, yL, 6, 3);
 						DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xRight + 4, LabelY(yL) - 7);
 					}
 				}
 
 				// legenda
 				string leg = twin
-					? "speculare: ◀ indice | ETF ▶ · asse " + (PlanKey() ?? "fut") + " · verde = pin, rosso = trigger · banda viola = confluenza ⧉ ±"
+					? "speculare: ◀ " + iNm + " | " + eNm + " ▶ · asse " + (PlanKey() ?? "fut")
+						+ " · ▲ livelli indice, ▼ livelli ETF · banda viola = confluenza ⧉ ±"
 						+ tolPts.ToString("0") + "pt"
 						+ (zones == null || zones.Count == 0 ? " (oggi nessuna)" : " (" + zones.Count + ")")
 					: inBoth

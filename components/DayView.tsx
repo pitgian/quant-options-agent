@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { fetchDayPlanFile, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
 import { buildLadderForPlan } from './Ladder';
 import { Ladder } from './Ladder';
-import { GexHistogram, type GexProfileEntry } from './GexHistogram';
+import { GexHistogram, type GexProfileEntry, type TwinRef } from './GexHistogram';
 import { Card, Badge } from './ui';
 
 const fmtGexCompact = new Intl.NumberFormat('it-IT', { notation: 'compact', maximumFractionDigits: 0 });
@@ -247,6 +247,25 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
       idx: pick(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index),
     };
   }, [plan, chain, bucket, etfRatio]);
+
+  // Livelli di riferimento per la vista SPECULARE, con la fonte esplicita:
+  // nella fascia centrale ogni etichetta dice se il livello arriva dalla catena
+  // indici (▲) o ETF (▼); lo spot è il prezzo del futures, comune alle due metà.
+  const twinRefs = useMemo<TwinRef[]>(() => {
+    if (!plan || chain !== 'both') return [];
+    const out: TwinRef[] = [];
+    if (spot > 0) out.push({ price: spot, kind: 'spot', src: 'fut', label: `Spot ${futures}` });
+    const zero = bucket === '0dte';
+    const mpE = plan.max_pain_nearest, mpI = plan.max_pain_nearest_index;
+    if (mpE) out.push({ price: mpE, kind: 'mp', src: 'etf', label: `MP ${etfName}` });
+    if (mpI) out.push({ price: mpI, kind: 'mp', src: 'idx', label: `MP ${idxName}` });
+    const fE = zero ? plan.gex_flip_0dte : flipEtf?.price;
+    const fI = zero ? plan.gex_flip_0dte_index : flipIdx?.price;
+    const tag = zero ? 'Flip0' : 'Flip';
+    if (fE) out.push({ price: fE, kind: 'flip', src: 'etf', label: `${tag} ${etfName}` });
+    if (fI) out.push({ price: fI, kind: 'flip', src: 'idx', label: `${tag} ${idxName}` });
+    return out;
+  }, [plan, chain, bucket, spot, futures, etfName, idxName, flipEtf, flipIdx]);
 
   // Profilo GEX COMPLETO (istogramma) della borsa selezionata; in 'Entrambi'
   // le due fonti si SOMMANO per strike (libro aggregato).
@@ -563,6 +582,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           twinIdx={twinProfiles.idx}
           etfRatio={etfRatio}
           idxRatio={idxRatio}
+          twinRefs={twinRefs}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           {chain === 'both'
