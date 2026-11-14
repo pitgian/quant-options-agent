@@ -583,6 +583,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           etfRatio={etfRatio}
           idxRatio={idxRatio}
           twinRefs={twinRefs}
+          singleSrc={chain === 'index' ? 'index' : 'etf'}
         />
         <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
           {chain === 'both'
