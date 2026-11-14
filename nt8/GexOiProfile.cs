@@ -757,16 +757,26 @@ namespace NinjaTrader.NinjaScript.Indicators
 						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
 				}
 
-				// etichette: i 3 strike piu' grossi per |net| nella finestra
+				// etichette: i 3 strike piu' grossi per |net| nella finestra,
+				// ATTACCATE ALL'ESTREMO DESTRO della propria barra (base della
+				// colonna): prima erano ancorate a max(xLeft, xRight-len-38) e
+				// per le barre lunghe finivano clampate a xLeft, flottanti in
+				// mezzo al grafico (richiesta 13/11). Anti-collisione verticale
+				// fra loro: passo minimo 13px.
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
 						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
+					var usedY = new List<float>();
 					foreach (int i in topIdx)
 					{
 						float y = (float)chartScale.GetYByValue(inWin[i].S);
 						if (y < 12 || y > panelH - 6) continue;
-						float len = Math.Max(2f, (float)Math.Abs(inWin[i].Net) / yMax * colW);
-						DrawTextRight(RenderTarget, tf, brush, inWin[i].S.ToString("0"), Math.Max(xLeft, xRight - len - 38), y - 8);
+						float yL = y;
+						int guard = 0;
+						while (guard++ < 6 && usedY.Exists(u => Math.Abs(u - yL) < 13f)) yL += 13f;
+						if (yL > panelH - 6) continue;
+						usedY.Add(yL);
+						DrawTextRight(RenderTarget, tf, brush, inWin[i].S.ToString("0"), xRight - 4, yL - 7);
 					}
 				}
 
