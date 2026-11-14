@@ -687,34 +687,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
 					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
 
-				// ETICHETTE SUL BORDO DESTRO del pannello (appena prima dell'asse
-				// prezzi), all'altezza esatta del livello: strike top-3, zone ⧉ e
-				// linee MP/Flip. Sfondo opaco + bordo colorato + anti-collisione
-				// verticale (passo 14px): leggibili sopra le candele e niente piu'
-				// scritte flottanti in mezzo al grafico (richiesta 13/11).
-				float xLabR = px + pw - 68;
+				// Etichette: SOLO testo (niente riquadri), attaccate all'estremo
+				// destro della barra = bordo destro della colonna (xRight).
+				// Unico accorgimento: se due scritte cadono entro 12px si scosta
+				// la seconda, per non sovrapporle.
 				var usedY = new List<float>();
-				void RightLabel(string txt, Color4 col, float yCenter)
+				float LabelY(float y)
 				{
-					if (yCenter < 10 || yCenter > panelH - 10) return;
-					float yL = yCenter;
+					float yL = y;
 					int g = 0;
-					while (g++ < 10 && usedY.Exists(u => Math.Abs(u - yL) < 14f)) yL += 14f;
-					if (yL > panelH - 10)
-					{
-						yL = yCenter; g = 0;
-						while (g++ < 10 && usedY.Exists(u => Math.Abs(u - yL) < 14f)) yL -= 14f;
-					}
-					if (yL < 10) return;
+					while (g++ < 8 && usedY.Exists(u => Math.Abs(u - yL) < 12f)) yL += 12f;
 					usedY.Add(yL);
-					float wTxt = 6.2f * txt.Length + 8;
-					using (var bg = new SolidColorBrush(RenderTarget, new Color4(0.039f, 0.051f, 0.071f, 0.85f)))
-						RenderTarget.FillRectangle(new SharpDX.RectangleF(xLabR - wTxt, yL - 7.5f, wTxt, 15), bg);
-					using (var bb = new SolidColorBrush(RenderTarget, col))
-					{
-						RenderTarget.DrawRectangle(new SharpDX.RectangleF(xLabR - wTxt, yL - 7.5f, wTxt, 15), bb, 1f);
-						DrawTextRight(RenderTarget, tf, bb, txt, xLabR - 4, yL - 7);
-					}
+					return yL;
 				}
 
 				// ---- CONFLUENZA (Entrambi): bande viola sulla colonna. Una
@@ -746,8 +730,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 							DrawDashPattern(RenderTarget, bb, xLeft, xRight, top, 3, 3);
 							DrawDashPattern(RenderTarget, bb, xLeft, xRight, bot, 3, 3);
 						}
-						RightLabel("⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
-							new Color4(0.769f, 0.710f, 0.992f, 1f), (top + bot) / 2);
+						using (var bl = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
+							DrawTextLeft(RenderTarget, tf, bl, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"),
+								xRight + 4, LabelY((top + bot) / 2) - 7);
 					}
 				}
 				if (inBoth && (zones == null || zones.Count == 0))
@@ -786,23 +771,23 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 
 				// etichette: i 3 strike piu' grossi per |net| nella finestra,
-				// sul BORDO DESTRO all'altezza della propria barra (non piu'
-				// flottanti a sinistra in mezzo al grafico).
+				// attaccate all'estremo destro della propria barra (xRight),
+				// stessa quota di prezzo, testo semplice senza riquadri.
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
 						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
 					foreach (int i in topIdx)
 					{
 						float y = (float)chartScale.GetYByValue(inWin[i].S);
-						RightLabel(inWin[i].S.ToString("0"),
-							new Color4(0.75f, 0.78f, 0.83f, 1f), y);
+						DrawTextLeft(RenderTarget, tf, brush, inWin[i].S.ToString("0"),
+							xRight + 4, LabelY(y) - 7);
 					}
 				}
 
 				// ---- linee: Max Pain (ambra) / Flip (viola) / Flip IDX (Entrambi).
 				//      Tratteggiate SULLA colonna del profilo (il livello marcato
-				//      dove vive il profilo) + etichetta sul bordo destro alla
-				//      STESSA quota. NIENTE linea Spot: il grafico ha gia' la sua.
+				//      dove vive il profilo) + etichetta a destra della colonna
+				//      alla STESSA quota, testo semplice. NIENTE linea Spot: il grafico ha gia' la sua.
 				var lines = new List<Tuple<float, Color4, string>>();
 				if (hasMaxPain)
 					lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain),
@@ -826,7 +811,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (yL < 4 || yL > panelH - 4) continue;
 					using (var bL = new SolidColorBrush(RenderTarget, ln.Item2))
 						DrawDashPattern(RenderTarget, bL, xLeft, xRight, yL, 6, 3);
-					RightLabel(ln.Item3, ln.Item2, yL);
+					DrawTextLeft(RenderTarget, tf, bL, ln.Item3, xRight + 4, LabelY(yL) - 7);
 				}
 
 				// legenda
