@@ -596,12 +596,14 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
                 reali. Le <b>bande viola ⧉</b> sono le confluenze vere (muro {etfName} e muro {idxName}
                 entro 5 pt, dai top_gamma separati). Passa il mouse: il riquadro mostra lo strike più
                 vicino di ciascuna fonte, il suo valore e la distanza fra i due.</>
-            : <>Ogni barra è uno strike reale della catena (niente aggregazione):
-                barre verdi sopra lo zero = gamma lunga delle call (respinge); barre rosse
-                sotto = gamma corta delle put (amplifica). La linea blu tratteggiata è lo spot:
-                le barre più alte vicino alla linea sono i pin di scadenza, le code rosse lontane
+            : <>{/* la descrizione dei COLORI sta nella legenda sotto il grafico,
+                  che cambia con la modalità (Call/Put · Net · Σ): qui niente
+                  "verde sopra / rosso sotto", che in Σ sarebbe falso. */}
+              Ogni barra è uno strike reale della catena (niente aggregazione). La linea blu tratteggiata
+                è lo spot: le barre più alte vicino alla linea sono i pin di scadenza, quelle lontane
                 sono l'assicurazione anti-crollo. Il selettore qui sopra cambia la finestra di
-                zoom (±1,5% zona del denaro, ±20% libro completo).</>}        </p>
+                zoom (±1,5% zona del denaro, ±20% libro completo); Call/Put · Net · Σ cambia cosa
+                disegnare: le due gambe, la loro differenza o la loro somma (size del livello).</>}        </p>
       </Card>
     </div>
   );
