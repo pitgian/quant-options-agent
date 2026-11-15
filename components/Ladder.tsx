@@ -62,6 +62,7 @@ const GexBar: React.FC<{ g?: { net: number; parts: string[] }; max: number }> = 
 
 const KIND_META: Record<string, { chip: string; title: string }> = {
   magnet: { chip: 'bg-violet-500/15 text-violet-300 border-violet-500/30', title: 'Magnete: il prezzo tende a tornarci' },
+  cage: { chip: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30', title: 'GABBIA (pin a doppia barriera): call e put entrambe grosse e in equilibrio su questo strike — sotto il livello le put fanno da pavimento, sopra le call da soffitto. Il prezzo tende a restare dentro: è il pin più solido, e il netto ~0 lo nascondeva' },
   barrier: { chip: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', title: 'Barriera: il prezzo tende a respingersi' },
   trigger: { chip: 'bg-amber-500/15 text-amber-300 border-amber-500/30', title: 'Trigger: superato il livello, il movimento accelera' },
   pivot: { chip: 'bg-blue-500/10 text-blue-300 border-blue-500/20', title: 'Riferimento pivot della giornata' },
@@ -283,7 +284,8 @@ export const Ladder: React.FC<{
             </span>
           )}
           <span className={`text-[10.5px] font-extrabold uppercase px-1.5 py-0.5 rounded border ${meta.chip}`} title={meta.title}>
-            {r.kind === 'magnet' ? '🧲 magnete'
+            {r.kind === 'cage' ? '⛓ gabbia'
+              : r.kind === 'magnet' ? '🧲 magnete'
               : r.kind === 'barrier' ? `🛡 barriera${r.side ? ` ${r.side}` : ''}`
               : r.kind === 'trigger' ? `⚡ trigger${r.side ? ` ${r.side}` : ''}`
               : 'pivot'}

@@ -22,8 +22,8 @@ separato futuro con modelli decisionali dedicati.
 2. **🔔 Stato dell'asta** (`AuctionState`… no: integrato in DayView) — lettura
    AMT: tipo di apertura vs value di ieri, posizione nella value, IB, VWAP
 3. **🎯 La scala** (`Ladder.tsx`) — i livelli opzioni fusi in zone a 5 punti,
-   spot inline, distanza in punti, badge meccanismo (🧲 magnete / 🛡 barriera /
-   ⚡ trigger), ★ confluenze e **barra GEX integrata per riga** (verde pin /
+   spot inline, distanza in punti, badge meccanismo (🧲 magnete / ⛓ gabbia /
+   🛡 barriera / ⚡ trigger), ★ confluenze e **barra GEX integrata per riga** (verde pin /
    rossa trigger, lunghezza = GEX netto della zona normalizzato sul muro
    massimo). La vecchia tabella gamma separata è stata riassorbita nella
    scala il 06/10 sera. **Flip 0DTE** (07/10): accanto al flip aggregato —
@@ -36,7 +36,7 @@ separato futuro con modelli decisionali dedicati.
    (stessa compute_option_levels/max_pain sullo spot indice, conversione col
    fattore indice→futures ES/SPX) e tagga ogni livello opzioni con
    `chain: 'etf'|'index'`; i livelli indice portano nome con suffisso -IDX
-   (PIN-IDX, GEX-FLIP-IDX, MAXPAIN-*-IDX, MURO-GAMMA-IDX) → track record
+   (PIN-IDX, GEX-FLIP-IDX, MAXPAIN-*-IDX, MURO-GAMMA-IDX, GABBIA-GAMMA-IDX) → track record
    SEPARATO per fonte in level_stats.json (ES:PIN vs ES:PIN-IDX): è la misura
    che dice quale fonte produce livelli più affidabili. Dedup 3pt (ora in
    `dedupe_levels`): un livello indice non viene mai soppresso da un livello
@@ -44,6 +44,18 @@ separato futuro con modelli decisionali dedicati.
    price/AMT o da un altro indice. Se la catena indice è degradata la fonte
    resta assente e la UI mostra avviso; aggregati indice nel piano:
    gamma_regime_index, top_gamma_index, max_pain_*_index, gex_flip_0dte_index.
+   **GABBIE GAMMA** (15/11): livelli `kind: 'cage'` (nome `GABBIA-GAMMA` /
+   `-IDX`) calcolati dalla UI, non dal piano. Uno strike con call e put
+   ENTRAMBE grosse e in equilibrio è un pin a DOPPIA barriera — put =
+   pavimento sotto, call = soffitto sopra — e il suo GEX NETTO è ≈ 0: per
+   questo `top_gamma` (ordinato per |net_gex|) non lo vede MAI e prima la
+   scala mostrava solo muri direzionali e max pain. Criteri relativi alla
+   finestra ±3%: `min/max ≥ 0,55` (le due forze si compensano), entrambe le
+   gambe ≥ 25% della gamba più grossa del giorno, dimensione ≥ 40% dello
+   strike più grosso; score = size×balance, max 2 livelli (uno per lato).
+   Sui profili in scala futures: indice raw, ETF solo `_binned` (il profilo
+   ETF grezzo è in prezzi SPY/QQQ). In confluenza con un muro vince la
+   gabbia come etichetta (il muro resta elencato in ⧉ ×N).
    **Soglia OI per simbolo** (03/11): MIN_CHAIN_OI_BY_SYMBOL={"NDX": 25k} —
    l'OI naturale di NDX su Yahoo è ~50-60k (mercato istituzionale, pochi
    contratti da ~2,8M$): la soglia assoluta 100k la scartava sempre →

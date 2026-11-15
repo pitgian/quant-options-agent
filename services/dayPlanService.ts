@@ -12,7 +12,12 @@ export interface DayPlanLevel {
   name: string;
   nome_it: string;
   price: number;
-  kind: 'magnet' | 'barrier' | 'pivot' | 'reference' | 'trigger';
+  /** 'cage' = GABBIA GAMMA: call e put entrambe grosse e in equilibrio sullo
+   *  stesso strike (pin a doppia barriera: put = pavimento sotto, call =
+   *  soffitto sopra). Non arriva dal piano: la ricava la UI dai profili per
+   *  strike, perché il netto lì è ≈ 0 e top_gamma (ordinato per |net|) la
+   *  scarterebbe sempre. */
+  kind: 'magnet' | 'barrier' | 'pivot' | 'reference' | 'trigger' | 'cage';
   source: 'price' | 'amt' | 'options';
   dist_pts: number;
   gamma?: 'pin' | 'trigger';

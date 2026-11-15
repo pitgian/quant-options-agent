@@ -171,6 +171,67 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
       : plan.top_gamma_index;
     if (chain !== 'index') addGammaWalls(tgEtf, '');
     if (chain !== 'etf') addGammaWalls(tgIdx, '-IDX');
+
+    /* ---- GABBIE GAMMA: pin a DOPPIA BARRIERA ----------------------------
+       Una call e una put ENTRAMBE grosse sullo stesso strike non si
+       annullano: sotto lo strike la put fa da pavimento, sopra la call da
+       soffitto — i market maker si coprono nei due sensi, in momenti diversi
+       del movimento. Il NETTO lì è ≈ 0, quindi top_gamma (ordinato per
+       |net_gex|) le scarta SEMPRE: senza questo passaggio la scala perde
+       proprio i pin più solidi, che sono quelli dove il prezzo resta intrappolato.
+
+       Criteri RELATIVI alla finestra (±3%, la stessa della scala):
+         · entrambe le gambe ≥ 25% della gamba più grande del giorno → non è
+           un muro direzionale travestito (una gamba sola non è una gabbia);
+         · squilibrio minimo: min/max ≥ 0.55 → le due forze si compensano;
+         · dimensione ≥ 40% dello strike più grosso → deve pesare davvero.
+       Score = (size/maxSize) × balance: premia grande E bilanciato.
+       Se ne prendono al massimo 2 (una per lato dello spot, poi si riempie). */
+    const addCages = (
+      prof: Array<{ s: number; c: number; p: number }> | undefined,
+      suffix: string,
+    ) => {
+      if (!prof?.length) return;
+      const win = prof.filter(e => e.s >= spot * 0.97 && e.s <= spot * 1.03 && (e.c || e.p));
+      if (!win.length) return;
+      const maxLeg = Math.max(...win.map(e => Math.max(e.c, -e.p)));
+      const maxSize = Math.max(...win.map(e => e.c - e.p));
+      if (!(maxLeg > 0) || !(maxSize > 0)) return;
+      const cand = win
+        .map(e => {
+          const call = Math.max(0, e.c), put = Math.max(0, -e.p);
+          const size = call + put, mx = Math.max(call, put), mn = Math.min(call, put);
+          return { s: e.s, call, put, bal: mx > 0 ? mn / mx : 0, sn: size / maxSize };
+        })
+        .filter(o => o.sn >= 0.40 && o.bal >= 0.55 && Math.min(o.call, o.put) >= 0.25 * maxLeg)
+        .sort((a, b) => (b.sn * b.bal) - (a.sn * a.bal));
+      if (!cand.length) return;
+      const picked: typeof cand = [];
+      const above = cand.find(o => o.s >= spot);
+      const below = cand.find(o => o.s < spot);
+      if (above) picked.push(above);
+      if (below) picked.push(below);
+      for (const o of cand) { if (picked.length >= 2) break; if (!picked.includes(o)) picked.push(o); }
+      for (const o of picked) {
+        const zone = Math.round(o.s / 5) * 5;
+        out.push({
+          name: `GABBIA-GAMMA${suffix}`,
+          nome_it: `Gabbia gamma (pin) · call ${fmtGexCompact.format(o.call * 1e9)} / put ${fmtGexCompact.format(o.put * 1e9)}`,
+          price: zone,
+          kind: 'cage',
+          source: 'options',
+          dist_pts: Math.round(zone - spot),
+          gamma: 'pin',
+        } as DayPlanLevel);
+      }
+    };
+    // profili in SCALA FUTURES: indice già convertito dal pipeline, ETF solo
+    // nella variante _binned (quella grezza è in prezzi SPY/QQQ e la finestra
+    // ±3% sullo spot futures non la troverebbe mai).
+    const pickBucket = <T,>(all?: T[], wk?: T[], zero?: T[]): T[] | undefined =>
+      bucket === '0dte' ? zero : bucket === 'week' ? wk : all;
+    if (chain !== 'index') addCages(pickBucket(plan.gex_profile_binned, plan.gex_profile_week_binned, plan.gex_profile_0dte_binned), '');
+    if (chain !== 'etf') addCages(pickBucket(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index), '-IDX');
     return out;
   }, [plan, spot, chain, idxName, etfName, etfRatio, idxRatio, bucket]);
 
@@ -520,7 +581,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
               {chain === 'etf' ? 'da ETF (SPY/QQQ)' : chain === 'index' ? `da indici (${idxName})` : `ETF + indici (SPY/QQQ + ${idxName})`}
             </span>
           </div>
-          <span className="text-[13px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 pin · ⚡ trigger · ⧉ confluenza · ●●● peso · barra GEX 🟢 pin / 🔴 trigger</span>
+          <span className="text-[13px] text-gray-500">distanza in punti · 🧲 magnete · ⛓ gabbia · 🛡 pin · ⚡ trigger · ⧉ confluenza · ●●● peso · barra GEX 🟢 pin / 🔴 trigger</span>
         </div>
         {optLevels.length === 0 ? (
           <p className="text-[13px] text-amber-300/90 py-4 leading-relaxed">
@@ -542,6 +603,11 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           La scala mostra SOLO i livelli chiave: i muri gamma più grossi per |GEX| della borsa
           e della fonte scelte (il segno decide il meccanismo: 🛡 pin = respinge, ⚡ trigger = accelera),
           il <b>Max Pain della scadenza vicina</b> (🧲 magnete) e il <b>flip gamma</b> (confine di regime).
+          In più le <b>⛓ GABBIE</b>: strike dove <b>call e put sono entrambe grosse e in equilibrio</b>
+          (min/max ≥ 0,55, ognuna ≥ un quarto della gamba più grossa del giorno). Le due forze non si
+          annullano — agiscono in momenti diversi: sotto il livello le put fanno da pavimento, sopra le
+          call da soffitto. È il <b>gamma pin</b> più solido (il prezzo tende a restare dentro), e il
+          <b>netto lì è ≈ 0</b>: per questo i muri ordinati per |GEX| non lo vedono mai e va cercato a parte.
           Due indicatori DIVERSI: <b>⧉ CONFLUENZA</b> = più livelli sulla stessa zona a 5 punti —
           viola “ETF×{idxName}” quando le due fonti indipendenti (catena ETF e catena indici)
           danno lo stesso livello: la conferma più forte della scala; <b>●●● PESO</b> = importanza

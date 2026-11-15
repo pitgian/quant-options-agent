@@ -243,10 +243,15 @@ export function buildLadder(inputs: LadderInput[], spot: number, bucketSize = 5,
       // dimensione del muro: il GEX più grosso del giorno vale 3 punti
       + Math.round(Math.min(1, Math.max(0, gexW)) * 3);
     // etichetta: il membro più autorevole (AMT > opzioni > prezzo) e, tra i
-    // muri, il pin batte il trigger.
+    // muri, il pin batte il trigger. Dentro le opzioni vince la GABBIA
+    // (call+put in equilibrio): descrive la zona meglio di un muro
+    // direzionale, che comunque resta elencato nella confluenza ⧉ ×N.
     const order = { amt: 0, options: 1, price: 2 };
+    const cageFirst = (m: { kind?: string }) => (m.kind === 'cage' ? -1 : 0);
     const best = [...members].sort((a, b) =>
-      (order[a.family] - order[b.family]) || (b.isNaked ? 1 : 0) - (a.isNaked ? 1 : 0)
+      (order[a.family] - order[b.family])
+      || (cageFirst(a) - cageFirst(b))
+      || (b.isNaked ? 1 : 0) - (a.isNaked ? 1 : 0)
     )[0];
     zones.push({
       price,
