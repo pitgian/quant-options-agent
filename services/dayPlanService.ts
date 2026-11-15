@@ -50,12 +50,25 @@ export interface DayPlan {
   max_pain_nearest?: number;
   max_pain_all?: number;
   gex_flip_0dte?: number;
+  /** GEX flip della borsa ≤7gg, in scala futures (e in strike nativo della
+   *  catena ETF). Calcolato dal pipeline sullo stesso perimetro delle scadenze
+   *  entro 7 giorni: con 0DTE e 'Tutte' sono TRE confini di regime diversi. */
+  gex_flip_week?: number;
+  gex_flip_week_native?: number;
+  gex_flip_week_index?: number;
   /** Regime dal segno del GEX sullo spot: presente anche senza flip. */
   gamma_regime?: 'long' | 'short' | null;
   top_gamma?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   /** Stessi aggregati ma dalla catena INDICE (SPX per ES, NDX per NQ):
    *  assenti se la catena indice è degradata o mancante nello snapshot. */
   gamma_regime_index?: 'long' | 'short' | null;
+  /** Regime gamma per borsa di scadenza (0dte / week). Il regime 'all' resta
+   *  gamma_regime(_index). Servono perché con 0DTE il segno del GEX attorno
+   *  allo spot può essere OPPOSTO a quello strutturale. */
+  gamma_regime_0dte?: 'long' | 'short' | null;
+  gamma_regime_week?: 'long' | 'short' | null;
+  gamma_regime_0dte_index?: 'long' | 'short' | null;
+  gamma_regime_week_index?: 'long' | 'short' | null;
   top_gamma_index?: Array<{ strike: number; strike_fut: number; net_gex: number; sign: 'long' | 'short'; side?: 'call' | 'put' }>;
   /** Max pain e flip della catena ETF in scala NATIVA (SPY/QQQ): per
    *  l'istogramma fonte 'etf', i cui strike sono in scala nativa. */

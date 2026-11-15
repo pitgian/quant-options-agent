@@ -87,14 +87,26 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
   // Fuori scala: PIN/TRIGGER minori, muri gamma piccoli, max pain aggregato,
   // flip 0DTE (resta nell'header). Il track record li continua a giudicare
   // TUTTI lato backend: l'affidabilità storica non si perde.
+  /* NOME DEL FLIP DELLA BORSA SELEZIONATA — unico punto, usato sia dalla scala
+     sia dal badge di regime. Il flip è il confine di regime e cambia col
+     perimetro: 0DTE = scadenze di oggi, ≤7gg = settimana, Tutte = strutturale.
+     Sono valori DIVERSI (misurato il 15/11 sull'indice: 7617 su ≤7gg contro
+     7654 su Tutte, 37 pt). Prima la scala usava SEMPRE il nome strutturale. */
+  const FLIP_SFX = bucket === '0dte' ? '-0DTE' : bucket === 'week' ? '-WEEK' : '';
+  const FLIP_ETF_NAME = `GEX-FLIP${FLIP_SFX}`;
+  const FLIP_IDX_NAME = `GEX-FLIP${FLIP_SFX}-IDX`;
+
   const optLevels: DayPlanLevel[] = useMemo(() => {
     if (!plan) return [];
     const out: DayPlanLevel[] = [];
 
     // flip gamma della fonte (regime boundary, pivot) — con doppio prezzo:
     // nativo esatto se pubblicato dal pipeline, altrimenti ricavato dal ratio.
-    const flipName = chain === 'index' ? 'GEX-FLIP-IDX' : 'GEX-FLIP';
-    const flip = plan.levels.find(l => l.name === flipName);
+    // Se la borsa non ha flip (weekend senza scadenze, catena corta) si usa
+    // quello strutturale: la riga dichiara comunque di che borsa è.
+    const flipName = chain === 'index' ? FLIP_IDX_NAME : FLIP_ETF_NAME;
+    const flip = plan.levels.find(l => l.name === flipName)
+      ?? plan.levels.find(l => l.name === (chain === 'index' ? 'GEX-FLIP-IDX' : 'GEX-FLIP'));
     if (flip) out.push({
       ...flip,
       native: chain === 'index'
@@ -233,22 +245,39 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     if (chain !== 'index') addCages(pickBucket(plan.gex_profile_binned, plan.gex_profile_week_binned, plan.gex_profile_0dte_binned), '');
     if (chain !== 'etf') addCages(pickBucket(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index), '-IDX');
     return out;
-  }, [plan, spot, chain, idxName, etfName, etfRatio, idxRatio, bucket]);
+  }, [plan, spot, chain, idxName, etfName, etfRatio, idxRatio, bucket,
+      FLIP_ETF_NAME, FLIP_IDX_NAME]);
 
   // Flip e regime SECONDO LA FONTE selezionata. Il regime esiste ANCHE senza
   // flip: quando il profilo entro ±10% è tutto positivo/negativo non c'è
   // zero-crossing (flip assente) ma il segno del GEX sullo spot resta
   // definito — così il badge non sfarfalla.
-  const flipEtf = plan?.levels.find(l => l.name === 'GEX-FLIP');
-  const flipIdx = plan?.levels.find(l => l.name === 'GEX-FLIP-IDX');
+  /* FLIP DELLA BORSA SELEZIONATA. Il flip è il confine di regime: con 0DTE
+     deve essere lo zero-crossing delle scadenze di OGGI, con ≤7gg quello della
+     settimana, con Tutte quello strutturale — sono tre valori diversi (misurato
+     il 15/11: SPX 7617 su ≤7gg contro 7654 su Tutte, 37 pt di differenza).
+     Prima la UI mostrava SEMPRE lo strutturale qualunque borsa fosse scelta.
+     Fallback allo strutturale quando la borsa non ha flip (es. weekend: nessuna
+     scadenza oggi → niente flip 0DTE): la riga della scala dice di che borsa è. */
+  const flipEtf = plan?.levels.find(l => l.name === FLIP_ETF_NAME)
+    ?? plan?.levels.find(l => l.name === 'GEX-FLIP');
+  const flipIdx = plan?.levels.find(l => l.name === FLIP_IDX_NAME)
+    ?? plan?.levels.find(l => l.name === 'GEX-FLIP-IDX');
   const gexFlip = chain === 'index' ? flipIdx : flipEtf;
   const flipOther = chain === 'both' ? flipIdx : null;
   const flip0 = chain === 'index' ? plan?.gex_flip_0dte_index : plan?.gex_flip_0dte;
   const flip0Other = chain === 'both' ? plan?.gex_flip_0dte_index : null;
+  // regime: prima il segno rispetto al flip della borsa, poi il regime
+  // pubblicato per QUELLA borsa (0dte/week), infine lo strutturale
+  const regimeOfBucket = chain === 'index'
+    ? (bucket === '0dte' ? plan?.gamma_regime_0dte_index
+      : bucket === 'week' ? plan?.gamma_regime_week_index : plan?.gamma_regime_index)
+    : (bucket === '0dte' ? plan?.gamma_regime_0dte
+      : bucket === 'week' ? plan?.gamma_regime_week : plan?.gamma_regime);
   const regimeNow: 'long' | 'short' | null =
     gexFlip ? (spot > gexFlip.price ? 'long' : 'short')
-            : (chain === 'index' ? (plan?.gamma_regime_index ?? null)
-                                 : (plan?.gamma_regime ?? null));
+            : (regimeOfBucket ?? (chain === 'index' ? (plan?.gamma_regime_index ?? null)
+                                                    : (plan?.gamma_regime ?? null)));
 
   // Doppio prezzo nel tooltip dell'istogramma (vedi commento sopra idxRatio).
   const futEq = useMemo(() => {

@@ -44,6 +44,20 @@ separato futuro con modelli decisionali dedicati.
    price/AMT o da un altro indice. Se la catena indice è degradata la fonte
    resta assente e la UI mostra avviso; aggregati indice nel piano:
    gamma_regime_index, top_gamma_index, max_pain_*_index, gex_flip_0dte_index.
+   **FLIP PER BORSA** (15/11): il flip è il confine di regime e ora esiste per
+   OGNI perimetro — `GEX-FLIP-WEEK[-IDX]` + `gex_flip_week[_index]`, oltre a
+   0DTE e strutturale — e la UI (sito e NT8) usa quello della borsa scelta.
+   Prima mostrava SEMPRE il flip strutturale: su ES il flip ≤7gg e quello su
+   Tutte distano decine di pt (misurato: 7617 contro 7654). Aggiunti anche
+   `gamma_regime_0dte/week[_index]`: con 0DTE il segno del GEX attorno allo
+   spot può essere opposto a quello strutturale. Fallback allo strutturale
+   quando la borsa non ha flip (weekend, catena corta) — la riga lo dichiara.
+   **SCADENZE PASSATE** (15/11): `relevant_expiries` ora le scarta. Il feed le
+   tiene per giorni con gamma/OI stantii e finivano in GEX flip, regime,
+   top_gamma e muri (11,4% della gamma totale il 15/11): il flip strutturale
+   dell'indice era sbagliato di ~50 pt. `regime_at_spot` inoltre non si ferma
+   più al primo strike a zero (NDX: gli strike attorno allo spot possono avere
+   gamma solo nelle scadenze scadute) ma cammina al primo con gamma ≠ 0.
    **GABBIE GAMMA** (15/11): livelli `kind: 'cage'` (nome `GABBIA-GAMMA` /
    `-IDX`) calcolati dalla UI, non dal piano. Uno strike con call e put
    ENTRAMBE grosse e in equilibrio è un pin a DOPPIA barriera — put =

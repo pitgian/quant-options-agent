@@ -131,6 +131,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private double   flip;                  // flip strutturale PRIMARIO (scala fut)
 		private double   flip0;                 // flip 0DTE primario (scala fut, opzionale)
 		private bool     hasFlip, hasFlip0, hasMaxPain;
+		// flip della borsa ≤7gg (il piano ora pubblica GEX-FLIP-WEEK[-IDX]):
+		// il flip è il confine di regime e cambia col perimetro scelto
+		private bool     hasFlipWEtf, hasFlipWIdx;
+		private double   flipWEtf, flipWIdx;
 		// max pain delle DUE fonti, separati: nella resa speculare ogni livello
 		// vive nella meta' della propria catena (indice a sinistra, ETF a destra)
 		private double   maxPainEtf, maxPainIdx;
@@ -348,6 +352,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			hasMaxPainIdx = maxPainIdx > 0;
 
 			hasFlip = hasFlip0 = false;
+			hasFlipWEtf = hasFlipWIdx = false;
+			flipWEtf = flipWIdx = 0;
 			flip = flip0 = 0;
 			// I 4 livelli di flip sono TUTTI in scala futures: li parso sempre
 			// tutti e quattro, poi scelgo il primario in base alla modalità.
@@ -366,10 +372,32 @@ namespace NinjaTrader.NinjaScript.Indicators
 					else if (nm == "GEX-FLIP-IDX") { flipIdx  = pr; hasFlipIdx  = pr > 0; }
 					else if (nm == "GEX-FLIP-0DTE")     { flip0Etf = pr; hasFlip0Etf = pr > 0; }
 					else if (nm == "GEX-FLIP-0DTE-IDX") { flip0Idx = pr; hasFlip0Idx = pr > 0; }
+					else if (nm == "GEX-FLIP-WEEK")     { flipWEtf = pr; hasFlipWEtf = pr > 0; }
+					else if (nm == "GEX-FLIP-WEEK-IDX") { flipWIdx = pr; hasFlipWIdx = pr > 0; }
 				}
 			}
-			// primario: in Entrambi si usa l'ETF (come il sito) + l'IDX come linea extra
-			flip    = idx ? flipIdx    : flipEtf;    hasFlip    = idx ? hasFlipIdx    : hasFlipEtf;
+			// PRIMARIO: il flip della BORSA selezionata — è il confine di regime e
+			// cambia col perimetro (0DTE = scadenze di oggi, ≤7gg = settimana,
+			// Tutte = strutturale; misurato il 15/11 sull'indice: 7617 vs 7654,
+			// 37 pt di differenza). Fallback allo strutturale se quella borsa non
+			// ha flip (weekend senza scadenze, catena corta).
+			if (OptBucket == GexOiBucket.ZeroDTE)
+			{
+				flip  = idx ? flip0Idx : flip0Etf;   hasFlip  = idx ? hasFlip0Idx : hasFlip0Etf;
+			}
+			else if (OptBucket == GexOiBucket.Settimana)
+			{
+				flip  = idx ? flipWIdx : flipWEtf;   hasFlip  = idx ? hasFlipWIdx : hasFlipWEtf;
+			}
+			else
+			{
+				flip  = idx ? flipIdx : flipEtf;     hasFlip  = idx ? hasFlipIdx : hasFlipEtf;
+			}
+			if (!hasFlip)
+			{
+				flip  = idx ? flipIdx : flipEtf;     hasFlip  = idx ? hasFlipIdx : hasFlipEtf;
+			}
+			// flip 0DTE: resta la linea EXTRA opzionale (ShowFlip0Dte)
 			flip0   = idx ? flip0Idx   : flip0Etf;   hasFlip0   = idx ? hasFlip0Idx   : hasFlip0Etf;
 
 			// ---- profilo per strike: TUTTE le fonti sono già in SCALA FUTURES.
