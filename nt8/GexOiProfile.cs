@@ -1024,15 +1024,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 						float halfR    = Math.Max(4f, regEnd - sp);
 						var ys2 = new float[list.Count];
 						for (int i = 0; i < list.Count; i++) ys2[i] = (float)chartScale.GetYByValue(list[i].S);
+						// spessore UNICO per tutte le barre della colonna (vedi PitchGapPx)
+						float bh = Math.Max(1.5f, Math.Min(PixelBinSize, PitchGapPx(ys2, 0f, panelH) * 0.74f));
 						for (int i = 0; i < list.Count; i++)
 						{
 							var b = list[i];
 							if (lati ? (b.Call <= 0 && b.Put <= 0) : b.Net == 0) continue;
 							float y = ys2[i];
 							if (y < 20 || y > panelH - 20) continue;
-							float gap = i + 1 < list.Count ? Math.Abs(ys2[i + 1] - y)
-								: i > 0 ? Math.Abs(y - ys2[i - 1]) : 8f;
-							float bh = Math.Max(1.5f, Math.Min(PixelBinSize, gap * 0.74f));
 							if (lati)
 							{
 								float lenC = (float)b.Call / scale * halfL;
@@ -1107,15 +1106,17 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bC = new SolidColorBrush(RenderTarget, colCall))
 				using (var bP = new SolidColorBrush(RenderTarget, colPut))
 				{
+					// spessore UNICO per tutte le barre (vedi PitchGapPx): con il gap
+					// locale le catene a passi irregolari (NDX) davano barre di
+					// spessore diverso, mentre l'ETF a passi regolari le dava uguali
+					float bhShared = Math.Max(2f, Math.Min(PixelBinSize, PitchGapPx(ys, 0f, panelH) * 0.72f));
 					for (int i = 0; i < nW; i++)
 					{
 						var b = inWin[i];
 						if (lati ? (b.Call <= 0 && b.Put <= 0) : b.Net == 0) continue;
 						float y = ys[i];
 						if (y < -20 || y > panelH + 20) continue;
-						float gap = i + 1 < nW ? Math.Abs(ys[i + 1] - y)
-							: i > 0 ? Math.Abs(y - ys[i - 1]) : 10f;
-						float bh  = Math.Max(2f, Math.Min(PixelBinSize, gap * 0.72f));
+						float bh  = bhShared;
 						if (lati)
 						{
 							// call a SINISTRA della spina, put a DESTRA — stessa scala,
@@ -1315,6 +1316,35 @@ namespace NinjaTrader.NinjaScript.Indicators
 				rt.DrawLine(new SharpDX.Vector2(x, y), new SharpDX.Vector2(xEnd, y), b, 1.2f);
 				x = xEnd + gap;
 			}
+		}
+
+		// Spessore UNIFORME delle barre: UN passo in pixel per tutte, ricavato dai
+		// passi fra strike consecutivi VISIBILI (20° percentile, non il gap locale).
+		//
+		// Perché: prima lo spessore era il 74% della distanza dal prossimo strike.
+		// Con una catena a passi IRREGOLARI — NDX indice ha passi da 5, 10 e 25 pt
+		// nello stesso profilo (misurati sul piano live: 10 valori distinti, min 5
+		// max 25) — le barre venivano alcune sottili e altre spesse. SPY/QQQ e i
+		// profili binnati hanno passi regolari (25/50) o quasi (SPX: solo 5), per
+		// questo lì le barre erano già tutte uguali.
+		//
+		// 20° percentile e non mediana: la mediana (≈10 pt su NDX) renderebbe le
+		// barre più spesse del passo nelle zone fitte (5 pt) e si sovrapporrebbero
+		// in un blocco unico. Il percentile basso resta uniforme senza incollarsi;
+		// l'unico rischio è una coppia isolata a passo doppio, e per questo non è
+		// il minimo assoluto. Lo spessore massimo resta PixelBinSize.
+		private static float PitchGapPx(float[] ys, float lo, float hi)
+		{
+			var gaps = new List<float>();
+			for (int i = 1; i < ys.Length; i++)
+			{
+				if (ys[i] < lo || ys[i] > hi || ys[i - 1] < lo || ys[i - 1] > hi) continue;
+				float d = Math.Abs(ys[i] - ys[i - 1]);
+				if (d > 0.5f) gaps.Add(d);
+			}
+			if (gaps.Count == 0) return 4f;
+			gaps.Sort();
+			return gaps[Math.Min(gaps.Count - 1, (int)(gaps.Count * 0.2f))];
 		}
 
 		private static string E(double v)
