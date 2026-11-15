@@ -594,7 +594,10 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
                 allineano i due libri presidiano lo stesso livello. Ogni metà è normalizzata al proprio
                 massimo (il libro indice pesa molto di più): con <b>Scala comune</b> vedi le grandezze
                 reali. Le <b>bande viola ⧉</b> sono le confluenze vere (muro {etfName} e muro {idxName}
-                entro 5 pt, dai top_gamma separati). Passa il mouse: il riquadro mostra lo strike più
+                entro 5 pt, dai top_gamma separati). Le sagome sono il <b>netto</b> di ciascun libro
+                (call−put): passando a <b>Σ Call+Put</b> diventano la <b>somma dei due lati</b> di quel libro
+                (call+put per l'OI, |call|+|put| per il GEX) — la size dei livelli, che il netto nasconde
+                quando call e put si bilanciano sullo stesso strike. Passa il mouse: il riquadro mostra lo strike più
                 vicino di ciascuna fonte, il suo valore e la distanza fra i due.</>
             : <>{/* la descrizione dei COLORI sta nella legenda sotto il grafico,
                   che cambia con la modalità (Call/Put · Net · Σ): qui niente

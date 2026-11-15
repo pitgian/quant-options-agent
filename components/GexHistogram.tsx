@@ -176,6 +176,13 @@ export const GexHistogram: React.FC<{
    *  È la metrica dei livelli: 'net' è una differenza e su un libro bilanciato
    *  (call e put entrambe enormi) azzera proprio lo strike più grosso. */
   const totOf = (e: GexProfileEntry) => (e.co ?? 0) + (e.po ?? 0);
+  const gross = (e: GexProfileEntry) => metric === 'gex'
+    ? Math.abs(e.c) + Math.abs(e.p)
+    : totOf(e);
+  /* Valore usato dal grafico SPECULARE (Entrambi). Lì non esiste la vista
+     Call/Put (ogni metà è una sagoma sola), quindi restano due letture:
+     Net (default, com'era) e Σ. Il resto della UI chiama `val` = netto. */
+  const mv = (e: GexProfileEntry) => view === 'tot' ? gross(e) : val(e);
 
   /* ------------------------------------------------------- confluenze ⧉ */
   type Zone = { lo: number; hi: number; a: number; b: number; aS: number; bS: number };
@@ -215,8 +222,8 @@ export const GexHistogram: React.FC<{
       arr.filter(e => e.s >= x0 && e.s <= x1).sort((a, b) => a.s - b.s);
     const I = inWin(twinIdx!), E = inWin(twinEtf!);
     if (!I.length && !E.length) return null;
-    const maxI = Math.max(1e-9, ...I.map(e => Math.abs(val(e))));
-    const maxE = Math.max(1e-9, ...E.map(e => Math.abs(val(e))));
+    const maxI = Math.max(1e-9, ...I.map(e => Math.abs(mv(e))));
+    const maxE = Math.max(1e-9, ...E.map(e => Math.abs(mv(e))));
     const shared = Math.max(maxI, maxE);
     const scaleI = commonScale ? shared : maxI;
     const scaleE = commonScale ? shared : maxE;
@@ -325,6 +332,21 @@ export const GexHistogram: React.FC<{
         </div>
       )}
       {mirror && (
+        /* Nella speculare non c'è la vista Call/Put (ogni metà è una sagoma
+           sola): le due letture sono Net e Σ, come l'N T8 (OptView). */
+        <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
+          {(['net', 'tot'] as const).map(v => (
+            <Chip key={v} on={(view === 'tot') === (v === 'tot')} onClick={() => setView(v)}
+              accent="#4f46e5"
+              title={v === 'net'
+                ? 'Sagoma del netto call−put per ciascun libro (il lato)'
+                : 'Sagoma della SOMMA dei due lati per ciascun libro (|call|+|put| o co+po): la size del livello' }>
+              {v === 'net' ? 'Net' : 'Σ Call+Put'}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {mirror && (
         <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
           <Chip on={!commonScale} onClick={() => setCommonScale(false)} accent="#7c3aed"
             title="Ogni metà normalizzata al proprio massimo: le due sagome sono confrontabili nella forma">
@@ -412,7 +434,8 @@ export const GexHistogram: React.FC<{
             <span className="text-gray-500"> sopra · </span>
             <span className="font-bold" style={{ color: C.etf }}>▼ {etfName}</span>
             <span className="text-gray-500">
-              {' '}sotto — asse unico in punti {futName}, netto {metric === 'gex' ? 'GEX' : 'OI'} per strike.
+              {' '}sotto — asse unico in punti {futName}, {view === 'tot'
+                ? `Σ ${metric === 'gex' ? 'GEX' : 'OI'} dei due lati (call+put)` : `netto ${metric === 'gex' ? 'GEX' : 'OI'}`} per strike.
               Dove le due sagome si allineano, i due libri presidiano lo stesso livello.
             </span>
           </div>
@@ -442,7 +465,8 @@ export const GexHistogram: React.FC<{
         </div>
 
         <svg viewBox={`0 0 ${L.W} ${L.H}`} className="w-full select-none" role="img"
-          aria-label={`Profilo speculare ${idxName} sopra e ${etfName} sotto, asse in punti ${futName}`}
+          aria-label={`Profilo speculare ${idxName} sopra e ${etfName} sotto, asse in punti ${futName}, ${
+            view === 'tot' ? 'somma call+put' : 'netto call-put'}`}
           onPointerMove={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             const px = ((e.clientX - r.left) / r.width) * L.W;
@@ -464,14 +488,22 @@ export const GexHistogram: React.FC<{
             <linearGradient id="gPutDn" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={C.putDeep} /><stop offset="100%" stopColor={C.put} />
             </linearGradient>
+            {/* Σ (speculare): indaco — verde/rosso direbbero un lato che
+                quella vista non misura. Verso l'alto per gli indici,
+                verso il basso per l'ETF. */}
+            <linearGradient id="gTotUp" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stopColor={C.totDeep} /><stop offset="100%" stopColor={C.tot} />
+            </linearGradient>
+            <linearGradient id="gTotDn" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={C.totDeep} /><stop offset="100%" stopColor={C.tot} />
+            </linearGradient>
             <linearGradient id="gIdxField" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={C.idx} stopOpacity="0.07" /><stop offset="100%" stopColor={C.idx} stopOpacity="0" />
             </linearGradient>
             <linearGradient id="gEtfField" x1="0" y1="1" x2="0" y2="0">
               <stop offset="0%" stopColor={C.etf} stopOpacity="0.07" /><stop offset="100%" stopColor={C.etf} stopOpacity="0" />
             </linearGradient>
-            <linearGradient id="gSpine" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor={C.idx} stopOpacity="0.5" />
+            <linearGradient id="gSpine" x1="0" y1="0" x2="1" y2="0">              <stop offset="0%" stopColor={C.idx} stopOpacity="0.5" />
               <stop offset="50%" stopColor="#94a3b8" stopOpacity="0.85" />
               <stop offset="100%" stopColor={C.etf} stopOpacity="0.5" />
             </linearGradient>
@@ -535,22 +567,24 @@ export const GexHistogram: React.FC<{
 
           {/* INDICI: barre verso l'ALTO */}
           {I.map(e => {
-            const v = val(e);
+            const v = mv(e);
             if (!v) return null;
             const h = Math.max(0.8, (Math.abs(v) / scaleI) * L.HALF_H);
             return (
               <rect key={`i${e.s}`} x={x(e.s) - bwI / 2} y={L.IDX_BASE - h} width={bwI} height={h}
-                fill={v >= 0 ? 'url(#gCallUp)' : 'url(#gPutUp)'} opacity={0.92} rx={0.6} />
+                fill={view === 'tot' ? 'url(#gTotUp)' : v >= 0 ? 'url(#gCallUp)' : 'url(#gPutUp)'}
+                opacity={0.92} rx={0.6} />
             );
           })}
           {/* ETF: barre verso il BASSO (speculari) */}
           {E.map(e => {
-            const v = val(e);
+            const v = mv(e);
             if (!v) return null;
             const h = Math.max(0.8, (Math.abs(v) / scaleE) * L.HALF_H);
             return (
               <rect key={`e${e.s}`} x={x(e.s) - bwE / 2} y={L.ETF_BASE} width={bwE} height={h}
-                fill={v >= 0 ? 'url(#gCallDn)' : 'url(#gPutDn)'} opacity={0.92} rx={0.6} />
+                fill={view === 'tot' ? 'url(#gTotDn)' : v >= 0 ? 'url(#gCallDn)' : 'url(#gPutDn)'}
+                opacity={0.92} rx={0.6} />
             );
           })}
 
@@ -626,12 +660,12 @@ export const GexHistogram: React.FC<{
               <line x1={hover.x} x2={hover.x} y1={L.M.top} y2={L.H - L.M.bottom}
                 stroke="#e6edf3" strokeWidth={0.8} strokeDasharray="2 3" opacity={0.55} />
               {hI && Math.abs(hI.s - hover.price) < (x1 - x0) * 0.06 && (
-                <circle cx={x(hI.s)} cy={L.IDX_BASE - Math.max(0.8, (Math.abs(val(hI)) / scaleI) * L.HALF_H)}
-                  r={3} fill={val(hI) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
+                <circle cx={x(hI.s)} cy={L.IDX_BASE - Math.max(0.8, (Math.abs(mv(hI)) / scaleI) * L.HALF_H)}
+                  r={3} fill={view === 'tot' ? C.tot : mv(hI) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
               {hE && Math.abs(hE.s - hover.price) < (x1 - x0) * 0.06 && (
-                <circle cx={x(hE.s)} cy={L.ETF_BASE + Math.max(0.8, (Math.abs(val(hE)) / scaleE) * L.HALF_H)}
-                  r={3} fill={val(hE) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
+                <circle cx={x(hE.s)} cy={L.ETF_BASE + Math.max(0.8, (Math.abs(mv(hE)) / scaleE) * L.HALF_H)}
+                  r={3} fill={view === 'tot' ? C.tot : mv(hE) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
               <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={7}
                 fill={C.panel} fillOpacity={0.97} stroke="#334155" />
@@ -644,16 +678,16 @@ export const GexHistogram: React.FC<{
                 {hI ? convRow(hI.s, idxRatio) : '—'}
               </text>
               <text x={tipX + tipW - 12} y={tipY + 49} textAnchor="end" fontSize={11} fontWeight="bold"
-                fill={hI ? (val(hI) >= 0 ? C.call : C.put) : C.mute}>
-                {hI ? fmtVal(val(hI), metric) : '—'}
+                fill={hI ? (view === 'tot' ? C.tot : mv(hI) >= 0 ? C.call : C.put) : C.mute}>
+                {hI ? fmtVal(mv(hI), metric) : '—'}
               </text>
               <text x={tipX + 12} y={tipY + 72} fontSize={10.5} fontWeight="bold" fill={C.etf}>▼ {etfName}</text>
               <text x={tipX + 66} y={tipY + 72} fontSize={11} fontWeight="bold" fill={C.ink} opacity={0.92}>
                 {hE ? convRow(hE.s, etfRatio) : '—'}
               </text>
               <text x={tipX + tipW - 12} y={tipY + 72} textAnchor="end" fontSize={11} fontWeight="bold"
-                fill={hE ? (val(hE) >= 0 ? C.call : C.put) : C.mute}>
-                {hE ? fmtVal(val(hE), metric) : '—'}
+                fill={hE ? (view === 'tot' ? C.tot : mv(hE) >= 0 ? C.call : C.put) : C.mute}>
+                {hE ? fmtVal(mv(hE), metric) : '—'}
               </text>
               <text x={tipX + 12} y={tipY + 93} fontSize={9.5} fill={C.mute}>
                 {hI && hE
@@ -665,12 +699,22 @@ export const GexHistogram: React.FC<{
         </svg>
 
         <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[10px]">
-          <span className="flex items-center gap-1.5 text-gray-400">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.call }} /> call · gamma lunga (pin)
-          </span>
-          <span className="flex items-center gap-1.5 text-gray-400">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.put }} /> put · gamma corta (trigger)
-          </span>
+          {view === 'tot' ? (
+            <span className="flex items-center gap-1.5 text-gray-400">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.tot }} />
+              Σ {metric === 'oi' ? 'OI call+put' : 'gamma lorda |call|+|put|'} per ciascun libro
+              <span className="text-gray-500">(sagoma alta = strike importante)</span>
+            </span>
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5 text-gray-400">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.call }} /> call · gamma lunga (pin)
+              </span>
+              <span className="flex items-center gap-1.5 text-gray-400">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.put }} /> put · gamma corta (trigger)
+              </span>
+            </>
+          )}
           <span className="flex items-center gap-1.5 text-gray-400">
             <span className="inline-block w-3 h-2.5 rounded-sm border" style={{ background: `${C.conf}30`, borderColor: C.conf }} /> confluenza ⧉
           </span>
