@@ -154,17 +154,39 @@ expiries_b = [
     exp_b(3, 6050.0, "CALL", 100, 0.005),
     exp_b(30, 6500.0, "CALL", 5000, 0.0002),
 ]
-buckets = top_gamma_by_bucket(expiries_b, SPOT_B)
+# la funzione restituisce (profili, flip per borsa, regime per borsa)
+buckets, flips, regimes = top_gamma_by_bucket(expiries_b, SPOT_B)
 assert [t["strike"] for t in buckets["0dte"]] == [6000.0], f"0dte: {buckets['0dte']}"
 assert sorted(t["strike"] for t in buckets["week"]) == [6000.0, 6050.0], f"week: {buckets['week']}"
 assert sorted(t["strike"] for t in buckets["all"]) == [6000.0, 6050.0, 6500.0], f"all: {buckets['all']}"
 # scadenza passata: ignorata ovunque
 past = exp_b(-2, 6100.0, "CALL", 999, 0.01)
-buckets2 = top_gamma_by_bucket([past], SPOT_B)
+buckets2, flips2, regimes2 = top_gamma_by_bucket([past], SPOT_B)
 assert buckets2["all"] == [] and buckets2["week"] == [], "scadenza passata non scartata"
+# scadenza passata NON deve entrare nemmeno negli aggregati "strutturali"
+from day_plan import relevant_expiries
+assert relevant_expiries([past], SPOT_B) == [], "la scadenza passata passa relevant_expiries"
 # lato dominante: call 100 vs put 60 → side call
 mixed = exp_b(0, 6000.0, "PUT", 60, 0.01)
-buckets3 = top_gamma_by_bucket([exp_b(0, 6000.0, "CALL", 100, 0.01), mixed], SPOT_B)
+buckets3, flips3, regimes3 = top_gamma_by_bucket(
+    [exp_b(0, 6000.0, "CALL", 100, 0.01), mixed], SPOT_B)
 assert buckets3["0dte"][0]["side"] == "call" and buckets3["0dte"][0]["sign"] == "long"
 
-print("test_day_plan: 14 check OK")
+# --- 10. FLIP e REGIME per borsa: 0dte / week / all NON sono lo stesso valore
+# put sotto lo spot (short) e call sopra (long) → zero-crossing fra i due, su
+# ogni borsa che contiene entrambe le scadenze.
+exp_flip = [
+    exp_b(0,  5950.0, "PUT",  100, 0.01),   # 0dte: negativo
+    exp_b(0,  6000.0, "CALL", 100, 0.01),   # 0dte: positivo → flip ~5975
+    exp_b(30, 6050.0, "CALL", 9000, 0.02),  # solo 'all': molto positivo
+]
+b10, f10, r10 = top_gamma_by_bucket(exp_flip, SPOT_B)
+assert f10["0dte"] is not None and 5950.0 < f10["0dte"] < 6000.0, f"flip 0dte: {f10['0dte']}"
+assert set(r10) == {"0dte", "week", "all"}, f"regimi mancanti: {r10}"
+assert r10["0dte"] in ("long", "short") and r10["all"] in ("long", "short")
+# il flip deve cambiare col perimetro quando cambia il libro (qui 'week' ha
+# solo 0dte+week, 'all' aggiunge la scadenza a 30 giorni con gamma pesante)
+assert f10["week"] == f10["0dte"], f"week {f10['week']} vs 0dte {f10['0dte']}"
+print(f"test_day_plan: flip 0dte={f10['0dte']} week={f10['week']} all={f10['all']} · regimi {r10}")
+
+print("test_day_plan: 17 check OK")
