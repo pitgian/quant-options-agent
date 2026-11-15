@@ -44,8 +44,11 @@ using SharpDX.DirectWrite;
 //            alta = tanto libro, indipendentemente dal lato.
 //    Lati  → le DUE gambe separate dalla spina centrale: call a sinistra,
 //            put a destra, stessa scala. Come "Call/Put" del sito: si vede
-//            com'è composto il libro senza sommare né sottrarre. Solo su
-//            fonte singola: in Entrambi ricade su Net.
+//            com'è composto il libro senza sommare né sottrarre.
+//            In ENTRAMBI diventa AFFIANCATA: due colonne (indici a sinistra,
+//            ETF a destra), ognuna con il proprio asse call/put — quattro
+//            serie ma in due gruppi, così i due libri si confrontano senza
+//            confondersi.
 //  In 'Somma' le barre sono indaco (non verde/rosso: il colore direbbe un
 //  lato che quella vista non misura) e la scala è il max della SOMMA.
 //
@@ -488,12 +491,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				}
 				if (rEtf > 0)
 				{
-					var te = new List<ProfileBar>();
-					foreach (var kv in RawProfile(plan, "gex_profile" + suffix, rEtf))
-						te.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
-					var ti = new List<ProfileBar>();
-					foreach (var kv in RawProfile(plan, idxKeyRaw, 1.0))
-						ti.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
+					var te = RawProfile(plan, "gex_profile" + suffix, rEtf);
+					var ti = RawProfile(plan, idxKeyRaw, 1.0);
 					twinEtf = te.OrderBy(b => b.S).ToList();
 					twinIdx = ti.OrderBy(b => b.S).ToList();
 					if (twinEtf.Count == 0) twinEtf = null;
@@ -603,9 +602,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 		}
 
 		// profilo RAW in scala futures: il valore dipende dalla vista (Val).
-		private List<KeyValuePair<double, double>> RawProfile(Dictionary<string, object> plan, string key, double scale)
+		// Porta anche le due GAMBE: nella resa 'Lati' di Entrambi servono per
+		// disegnare call e put di CIASCUN libro affiancati.
+		private List<ProfileBar> RawProfile(Dictionary<string, object> plan, string key, double scale)
 		{
-			var res = new List<KeyValuePair<double, double>>();
+			var res = new List<ProfileBar>();
 			object[] a = ToArray(plan.TryGetValue(key, out var o) ? o : null);
 			if (a == null) return res;
 			foreach (var eo in a)
@@ -614,8 +615,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 				if (e == null) continue;
 				double s = TryNum(e, "s");
 				if (s <= 0) continue;
-				double net = Val(e);
-				res.Add(new KeyValuePair<double, double>(Math.Round(s * scale, 1), net));
+				double lc, lpp; Legs(e, out lc, out lpp);
+				res.Add(new ProfileBar
+				{
+					S = Math.Round(s * scale, 1), Net = Val(e),
+					Call = lc, Put = lpp
+				});
 			}
 			return res;
 		}
@@ -772,16 +777,17 @@ namespace NinjaTrader.NinjaScript.Indicators
 				: OptSource == GexOiSource.Entrambi
 					? (PlanKey() == "ES" ? "SPY+SPX" : "QQQ+NDX")
 					: (PlanKey() == "ES" ? "SPY" : "QQQ");
-			// Vista Lati = due gambe separate. In 'Entrambi' non si usa (due profili
-			// speculari × due gambe = quattro serie, illeggibile): si ricade su Net,
-			// esattamente come il sito dove la speculare ha solo Net e Σ.
-			bool lati = OptView == GexOiView.Lati && OptSource != GexOiSource.Entrambi;
+			// Vista Lati = due gambe separate. In Entrambi diventa AFFIANCATA: due
+			// colonne (indici a sinistra, ETF a destra), e dentro ognuna call a
+			// sinistra / put a destra del proprio asse — quattro serie ma in due
+			// gruppi distinti, così si confrontano i due libri senza confonderli.
+			bool lati = OptView == GexOiView.Lati;
 			string title = (lati
 					? (OptMetric == GexOiMetric.GEX ? "Call/Put GEX" : "Call/Put OI")
 					: OptView == GexOiView.Somma
 						? (OptMetric == GexOiMetric.GEX ? "Σ GEX |c|+|p|" : "Σ OI call+put")
 						: (OptMetric == GexOiMetric.GEX ? "Net GEX" : "Net OI"))
-				+ (OptView == GexOiView.Lati && !lati ? " (Call/Put: solo fonte singola)" : "")
+				+ (lati && OptSource == GexOiSource.Entrambi ? " · indici ⇠|⇢ ETF" : "")
 				+ " · " + (OptBucket == GexOiBucket.ZeroDTE ? "0DTE" : OptBucket == GexOiBucket.Settimana ? "≤7gg" : "Tutte")
 				+ " · " + srcName;
 
@@ -957,13 +963,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 					{
 						float y = (float)chartScale.GetYByValue(b.S);
 						if (y < 24 || y > panelH - 24) continue;
-						mxI = Math.Max(mxI, (float)Math.Abs(b.Net));
+						mxI = Math.Max(mxI, (float)(lati ? Math.Max(b.Call, b.Put) : Math.Abs(b.Net)));
 					}
 					foreach (var b in wE)
 					{
 						float y = (float)chartScale.GetYByValue(b.S);
 						if (y < 24 || y > panelH - 24) continue;
-						mxE = Math.Max(mxE, (float)Math.Abs(b.Net));
+						mxE = Math.Max(mxE, (float)(lati ? Math.Max(b.Call, b.Put) : Math.Abs(b.Net)));
 					}
 					float scI = ScalaComune ? Math.Max(mxI, mxE) : mxI;
 					float scE = ScalaComune ? Math.Max(mxI, mxE) : mxE;
@@ -1004,28 +1010,70 @@ namespace NinjaTrader.NinjaScript.Indicators
 							railR.Add(Tuple.Create((t0 + b0) / 2f, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"), cConf));
 						}
 
+					var colCallT = new Color4(0.204f, 0.827f, 0.600f, 0.92f);
+					var colPutT  = new Color4(0.984f, 0.443f, 0.522f, 0.92f);
+					// In 'Lati' ogni libro ha il PROPRIO asse al centro della sua
+					// colonna: call verso sinistra, put verso destra. Fuori da 'Lati'
+					// resta la barra unica (netto o somma) dalla spina centrale.
 					Action<List<ProfileBar>, float, bool> drawHalf = (list, scale, left) =>
 					{
+						float regStart = left ? xLeft : anchorR;
+						float regEnd   = left ? anchorL : xRight;
+						float sp       = (regStart + regEnd) / 2f;
+						float halfL    = Math.Max(4f, sp - regStart);
+						float halfR    = Math.Max(4f, regEnd - sp);
 						var ys2 = new float[list.Count];
 						for (int i = 0; i < list.Count; i++) ys2[i] = (float)chartScale.GetYByValue(list[i].S);
 						for (int i = 0; i < list.Count; i++)
 						{
 							var b = list[i];
-							if (b.Net == 0) continue;
+							if (lati ? (b.Call <= 0 && b.Put <= 0) : b.Net == 0) continue;
 							float y = ys2[i];
 							if (y < 20 || y > panelH - 20) continue;
 							float gap = i + 1 < list.Count ? Math.Abs(ys2[i + 1] - y)
 								: i > 0 ? Math.Abs(y - ys2[i - 1]) : 8f;
 							float bh = Math.Max(1.5f, Math.Min(PixelBinSize, gap * 0.74f));
-							float len = Math.Max(1.5f, (float)Math.Abs(b.Net) / scale * halfW);
-							var c4 = BarColor(b.Net);
-							using (var bb = new SolidColorBrush(RenderTarget, c4))
-								RenderTarget.FillRectangle(new SharpDX.RectangleF(
-									left ? anchorL - len : anchorR, y - bh / 2f, len, bh), bb);
+							if (lati)
+							{
+								float lenC = (float)b.Call / scale * halfL;
+								float lenP = (float)b.Put  / scale * halfR;
+								if (lenC > 0.5f)
+									using (var bc = new SolidColorBrush(RenderTarget, colCallT))
+										RenderTarget.FillRectangle(new SharpDX.RectangleF(sp - lenC, y - bh / 2f, lenC, bh), bc);
+								if (lenP > 0.5f)
+									using (var bp = new SolidColorBrush(RenderTarget, colPutT))
+										RenderTarget.FillRectangle(new SharpDX.RectangleF(sp, y - bh / 2f, lenP, bh), bp);
+							}
+							else
+							{
+								float len = Math.Max(1.5f, (float)Math.Abs(b.Net) / scale * halfW);
+								var c4 = BarColor(b.Net);
+								using (var bb = new SolidColorBrush(RenderTarget, c4))
+									RenderTarget.FillRectangle(new SharpDX.RectangleF(
+										left ? anchorL - len : anchorR, y - bh / 2f, len, bh), bb);
+							}
 						}
 					};
 					drawHalf(wI, scI, true);    // INDICI a sinistra
 					drawHalf(wE, scE, false);   // ETF a destra
+
+					if (lati)
+					{
+						// asse di ogni libro (lo zero di call/put) + massimi dichiarati
+						float spI = (xLeft + anchorL) / 2f, spE = (anchorR + xRight) / 2f;
+						using (var bs = new SolidColorBrush(RenderTarget, new Color4(0.58f, 0.64f, 0.72f, 0.6f)))
+						{
+							RenderTarget.DrawLine(new SharpDX.Vector2(spI, 22), new SharpDX.Vector2(spI, panelH - 22), bs, 1f);
+							RenderTarget.DrawLine(new SharpDX.Vector2(spE, 22), new SharpDX.Vector2(spE, panelH - 22), bs, 1f);
+						}
+						string nI = PlanKey() == "ES" ? "SPX" : "NDX";
+						string nE = PlanKey() == "ES" ? "SPY" : "QQQ";
+						// in BASSO, non in alto: la fascia alta è del legend di NT8
+						using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 0.95f)))
+							DrawTextLeft(RenderTarget, tf, bI, "▲ " + nI + " " + E(scI), xLeft + 2, panelH - 12);
+						using (var bE2 = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 0.95f)))
+							DrawTextLeft(RenderTarget, tf, bE2, "▼ " + nE + " " + E(scE), anchorR + 2, panelH - 12);
+					}
 
 					// niente scritte in alto: la fascia alta e' del legend di NT8
 					twinMaxI = mxI; twinMaxE = mxE;
@@ -1338,8 +1386,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 		// livello): la stessa "Σ Call+Put" del sito, per rispondere a "quali
 		// sono i livelli più importanti" senza che un libro bilanciato sparisca.
 		// Lati = call e put SEPARATE (call a sinistra, put a destra della spina):
-		// come "Call/Put" del sito. In 'Entrambi' ricade su Net (quattro serie
-		// sarebbero illeggibili).
+		// come "Call/Put" del sito. In 'Entrambi' diventa AFFIANCATA: due colonne
+		// (indici | ETF), ognuna col proprio asse call/put.
 		[NinjaScriptProperty]
 		[Display(Name = "Vista (Net · Somma · Lati = call a sinistra, put a destra)", Order = 4, GroupName = "1. Dati")]
 		public GexOiView OptView { get; set; }

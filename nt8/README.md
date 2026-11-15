@@ -67,9 +67,15 @@ guasto. Stessa regola e stessi numeri della web app.
 - **Lati** (`Vista = Lati`) — due gambe separate dalla **spina centrale**:
   **call a sinistra** (verde), **put a destra** (rosso), una sola scala per
   entrambe (così la gamba più lunga è quella che pesa di più). È la vista che
-  dice *com'è composto* il libro senza sommare né sottrarre. Solo su fonte
-  singola: con **Entrambi** la vista ricade su Net (due profili speculari ×
-  due gambe = quattro serie, illeggibili) e l'intestazione lo dichiara.
+  dice *com'è composto* il libro senza sommare né sottrarre.
+
+  Con **Entrambi** la vista diventa **AFFIANCATA**: due colonne, *indici a
+  sinistra* e *ETF a destra*, ognuna con il **proprio asse call/put**
+  (call verso l'esterno, put verso il divisore). Quattro serie ma in due
+  gruppi distinti: si confrontano i due libri a colpo d'occhio — dove
+  l'indice ha una gabbia e l'ETF no, e viceversa. Ogni colonna è normalizzata
+  al proprio massimo (`Scala comune` per il confronto assoluto) e in basso
+  dichiara il libro e il suo massimo (▲ SPX 1741 · ▼ SPY 229).
 - **Linee sempre attive**: Max Pain (ambra) e Flip strutturale (viola) della
   fonte selezionata, in scala futures; in Entrambi anche il Flip dell'altra
   fonte (la distanza fra i due = regime confermato o in divergenza). La linea
