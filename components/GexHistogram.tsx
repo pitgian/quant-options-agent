@@ -425,10 +425,13 @@ export const GexHistogram: React.FC<{
     const LANE_DN_TOP = L.H - L.M.bottom - LANE;
     const laneY = (half: 'up' | 'dn', row: number) =>
       (half === 'up' ? L.M.top : LANE_DN_TOP) + 16 + row * 21;
-    /* la riga dipende dal TIPO (non dalla fonte): lo spot ha la sua, max pain
-       e flip le loro. Nell'ETF la riga 0 (spot) resta libera: lo spot futures
-       è uno solo e vive nella metà superiore. */
-    const rowOf = (r: TwinRef) => r.kind === 'spot' ? 0 : r.kind === 'mp' ? 1 : 2;
+    /* La riga dipende dal TIPO. SOPRA: spot, max pain, flip (righe 0-1-2, come
+       la vista singola). SOTTO: max pain e flip partono dalla riga 0, cioè
+       ANCORATE al bordo SUPERIORE della corsia (subito sotto le barre), non
+       appoggiate al bordo inferiore lontano dal grafico. */
+    const rowOf = (r: TwinRef, half: 'up' | 'dn') =>
+      half === 'up' ? (r.kind === 'spot' ? 0 : r.kind === 'mp' ? 1 : 2)
+                    : (r.kind === 'mp' ? 0 : 1);
     type Chip = { r: TwinRef; txt: string; w: number; cx: number; cx0: number; half: 'up' | 'dn'; row: number };
     const chips: Chip[] = [];
     const buildRow = (half: 'up' | 'dn', row: number, list: TwinRef[]) =>
@@ -439,9 +442,9 @@ export const GexHistogram: React.FC<{
         return { r, txt, w: txt.length * 6.2 + 30, cx: x(r.price), cx0: x(r.price), half, row };
       }), L.M.left, L.W - L.M.right));
     { const up = refsInWin.filter(r => r.src !== 'etf');
-      for (let k = 0; k < ROWS; k++) buildRow('up', k, up.filter(r => rowOf(r) === k));
+      for (let k = 0; k < ROWS; k++) buildRow('up', k, up.filter(r => rowOf(r, 'up') === k));
       const dn = refsInWin.filter(r => r.src === 'etf');
-      for (let k = 1; k < ROWS; k++) buildRow('dn', k, dn.filter(r => rowOf(r) === k)); }
+      for (let k = 0; k < ROWS - 1; k++) buildRow('dn', k, dn.filter(r => rowOf(r, 'dn') === k)); }
     const tipW = Math.min(272, L.PLOT_W - 8), tipH = 100;
     /* riga di conversione: strike NATIVO → prezzo futures. Senza ratio il
        nativo non c'è, e prima usciva `7524 → ES 7524` (due volte lo stesso
@@ -645,8 +648,8 @@ export const GexHistogram: React.FC<{
               { g: '●', c: C.spot, y: laneY('up', 0) },
               { g: '◆', c: C.mp, y: laneY('up', 1) },
               { g: '⇄', c: C.flip, y: laneY('up', 2) },
-              { g: '◆', c: C.mp, y: laneY('dn', 1) },
-              { g: '⇄', c: C.flip, y: laneY('dn', 2) },
+              { g: '◆', c: C.mp, y: laneY('dn', 0) },
+              { g: '⇄', c: C.flip, y: laneY('dn', 1) },
             ].map((m, i) => (
               <text key={`rm${i}`} x={L.M.left - 9} y={m.y + 3.5} textAnchor="end" fontSize={10}
                 fontWeight="bold" fill={m.c} opacity={0.9}>{m.g}</text>
