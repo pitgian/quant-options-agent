@@ -1024,8 +1024,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 						float halfR    = Math.Max(4f, regEnd - sp);
 						var ys2 = new float[list.Count];
 						for (int i = 0; i < list.Count; i++) ys2[i] = (float)chartScale.GetYByValue(list[i].S);
-						// spessore UNICO per tutte le barre della colonna (vedi PitchGapPx)
-						float bh = Math.Max(1.5f, Math.Min(PixelBinSize, PitchGapPx(ys2, 0f, panelH) * 0.74f));
+						// spessore UNICO per tutte le barre della colonna (vedi BarThicknessPx)
+						float bh = BarThicknessPx(PitchGapPx(ys2, 0f, panelH));
 						for (int i = 0; i < list.Count; i++)
 						{
 							var b = list[i];
@@ -1106,10 +1106,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 				using (var bC = new SolidColorBrush(RenderTarget, colCall))
 				using (var bP = new SolidColorBrush(RenderTarget, colPut))
 				{
-					// spessore UNICO per tutte le barre (vedi PitchGapPx): con il gap
+					// spessore UNICO per tutte le barre (vedi BarThicknessPx): con il gap
 					// locale le catene a passi irregolari (NDX) davano barre di
 					// spessore diverso, mentre l'ETF a passi regolari le dava uguali
-					float bhShared = Math.Max(2f, Math.Min(PixelBinSize, PitchGapPx(ys, 0f, panelH) * 0.72f));
+					float bhShared = BarThicknessPx(PitchGapPx(ys, 0f, panelH));
 					for (int i = 0; i < nW; i++)
 					{
 						var b = inWin[i];
@@ -1333,6 +1333,22 @@ namespace NinjaTrader.NinjaScript.Indicators
 		// in un blocco unico. Il percentile basso resta uniforme senza incollarsi;
 		// l'unico rischio è una coppia isolata a passo doppio, e per questo non è
 		// il minimo assoluto. Lo spessore massimo resta PixelBinSize.
+		// Spessore finale della barra, in banda [55% · 100%] di PixelBinSize:
+		//   · non più di PixelBinSize → è il cursore "Spessore max barra"
+		//   · non meno del 55% di esso → il cursore allarga ANCHE le catene
+		//     fitte. Prima lo spessore era solo `passo × 0.72`: su NDX indice,
+		//     dove il passo sullo schermo è ~5 px, restava a 3-4 px e il cursore
+		//     muoveva soltanto l'ETF (passo ~25 px, quindi già al cap).
+		// In zone molto fitte il floor può superare il passo: le barre si
+		// toccano per 1-2 px (aspetto da volume profile), senza fondersi.
+		private float BarThicknessPx(float pitch)
+		{
+			float floor = PixelBinSize * 0.55f;
+			float bh = Math.Max(pitch, floor);           // 2. allarga le fitte
+			bh = Math.Min(bh, PixelBinSize);             // 1. cap = cursore
+			return Math.Max(1.5f, bh);
+		}
+
 		private static float PitchGapPx(float[] ys, float lo, float hi)
 		{
 			var gaps = new List<float>();

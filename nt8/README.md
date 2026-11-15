@@ -53,6 +53,7 @@ guasto. Stessa regola e stessi numeri della web app.
 | Refresh (minuti) | 5 | Il pipeline pubblica ogni 5 min in seduta |
 | Piano stantio dopo | 15 min | L'intestazione diventa ambra se il piano è più vecchio |
 | Larghezza pannello % | 22 | Larghezza del profilo sul bordo destro |
+| Spessore max barra (px) | 10 | Spessore delle barre: lo spessore effettivo sta fra il 55% e il 100% di questo valore, uguale per tutte le barre. Prima dipendeva dal passo fra strike, e su NDX indice (passi da 5 px sullo schermo) le barre restavano sottili e il cursore muoveva solo l'ETF |
 | Mostra anche flip 0DTE | no | Aggiunge la linea flip 0DTE (quando esiste nel piano) |
 
 ## Cosa mostra
