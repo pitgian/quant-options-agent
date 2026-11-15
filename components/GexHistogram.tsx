@@ -429,7 +429,7 @@ export const GexHistogram: React.FC<{
     return (
       <div ref={wrapRef}>
         <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
-          <div className="text-[11.5px] leading-relaxed max-w-[420px]">
+          <div className="text-[13px] leading-relaxed max-w-[460px]">
             <span className="font-bold" style={{ color: C.idx }}>▲ {idxName}</span>
             <span className="text-gray-500"> sopra · </span>
             <span className="font-bold" style={{ color: C.etf }}>▼ {etfName}</span>
@@ -442,7 +442,7 @@ export const GexHistogram: React.FC<{
           {controls}
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap mb-1.5 text-[11.5px]">
+        <div className="flex items-center gap-3 flex-wrap mb-1.5 text-[13px]">
           {zones.length > 0 ? (
             <span className="font-extrabold px-2 py-0.5 rounded-md border"
               style={{ color: C.conf, borderColor: `${C.conf}55`, background: `${C.conf}14` }}>
@@ -698,7 +698,7 @@ export const GexHistogram: React.FC<{
           )}
         </svg>
 
-        <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[11.5px]">
+        <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[13px]">
           {view === 'tot' ? (
             <span className="flex items-center gap-1.5 text-gray-400">
               <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.tot }} />
@@ -784,7 +784,7 @@ export const GexHistogram: React.FC<{
   return (
     <div ref={wrapRef}>
       <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
-        <div className="text-[11.5px] leading-relaxed max-w-[430px]">
+        <div className="text-[13px] leading-relaxed max-w-[470px]">
           <span className="font-bold" style={{ color: srcCol }}>{srcArrow} {srcName}</span>
           <span className="text-gray-500">
             {' '}— {metric === 'gex' ? 'GEX' : 'Open Interest'} per strike
@@ -1025,7 +1025,7 @@ export const GexHistogram: React.FC<{
         <p className="text-[12px] text-gray-500 py-6 text-center">Nessun dato per questo perimetro.</p>
       )}
 
-      <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[11.5px]">
+      <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[13px]">
         {view === 'tot' ? (
           <span className="flex items-center gap-1.5 text-gray-400">
             <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.tot }} />
