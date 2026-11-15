@@ -155,7 +155,10 @@ export const GexHistogram: React.FC<{
     const W = boxW, SW = boxW;
     const M = { left: compact ? 44 : 74, right: compact ? 12 : 20, top: compact ? 50 : 44, bottom: compact ? 30 : 36 };
     const SM = { left: compact ? 44 : 74, right: compact ? 12 : 20, top: compact ? 90 : 88, bottom: compact ? 30 : 36 };
-    const GUTTER = 73;
+    /* Divisore fra le due metà: solo una fessura. Le etichette Spot/MP/Flip
+       NON vivono più qui (occupavano 73px di fascia centrale): stanno DENTRO
+       la metà della propria catena, come la corsia della vista singola. */
+    const GUTTER = 16;
     const H = compact ? 452 : 500;
     const SH = compact ? 432 : 462;
     const PLOT_W = W - M.left - M.right;
@@ -165,7 +168,7 @@ export const GexHistogram: React.FC<{
     const SPLOT_W = SW - SM.left - SM.right;
     const SPLOT_H = SH - SM.top - SM.bottom;
     return { compact, W, H, M, PLOT_W, PLOT_H, GUTTER, HALF_H,
-      IDX_BASE, GUT_TOP: IDX_BASE, GUT_BOT: IDX_BASE + GUTTER, ETF_BASE: IDX_BASE + GUTTER,
+      IDX_BASE, GUT_TOP: IDX_BASE, ETF_BASE: IDX_BASE + GUTTER,
       SW, SH, SM, SPLOT_W, SPLOT_H, S_ZERO: SM.top + SPLOT_H / 2, S_HALF: SPLOT_H / 2 - 6,
       tickN: compact ? 5 : 9, chipRows: 3, font: compact ? 9 : 9.5 };
   }, [boxW]);
@@ -233,7 +236,11 @@ export const GexHistogram: React.FC<{
       return Math.max(1.1, Math.min(18, (st / (x1 - x0)) * L.PLOT_W * 0.74));
     };
     return { x0, x1, I, E, maxI, maxE, scaleI, scaleE, x, bwI: bwOf(I), bwE: bwOf(E) };
-  }, [mirror, twinIdx, twinEtf, spot, winIdx, metric, commonScale]);
+    /* `view` DEVE stare nelle dipendenze: i massimi per metà (maxI/maxE) sono
+       calcolati sul valore della vista attiva (mv). Senza, passando Net→Σ la
+       scala restava quella del netto e le barre del lordo sbordavano sopra il
+       grafico (y negativa, verificate col DOM). */
+  }, [mirror, twinIdx, twinEtf, spot, winIdx, metric, commonScale, view]);
 
   const nearest = (arr: Array<GexProfileEntry>, price: number): GexProfileEntry | null => {
     if (!arr.length) return null;
@@ -402,21 +409,30 @@ export const GexHistogram: React.FC<{
     const kindColor = (k: TwinRef['kind']) => k === 'spot' ? C.spot : k === 'mp' ? C.mp : C.flip;
     const srcColor = (v: TwinRef['src']) => v === 'idx' ? C.idx : v === 'etf' ? C.etf : C.soft;
     const srcArrow = (v: TwinRef['src']) => v === 'idx' ? '▲' : v === 'etf' ? '▼' : '●';
-    const rowY = Array.from({ length: L.chipRows }, (_, i) => L.GUT_TOP + 12 + i * 21);
-    /* una riga per categoria, sempre la stessa: ▲ indici, ● spot, ▼ ETF.
-       Dentro la riga le etichette restano in ordine di prezzo e si scostano
-       solo quanto basta (spreadRow), con leader line al prezzo vero. */
-    const rowOf = (v: TwinRef['src']) => v === 'idx' ? 0 : v === 'fut' ? 1 : 2;
-    const chips: Array<{ r: TwinRef; txt: string; w: number; cx: number; cx0: number; row: number }> = [];
-    for (let k = 0; k < L.chipRows; k++) {
-      const inRow = (twinRefs ?? [])
-        .filter(r => r.price >= x0 && r.price <= x1 && rowOf(r.src) === k)
-        .map(r => {
-          const txt = `${L.compact ? r.label.split(' ')[0] : r.label} ${fmtPrice(r.price)}`;
-          return { r, txt, w: txt.length * 5.35 + 22, cx: x(r.price), cx0: x(r.price), row: k };
-        });
-      chips.push(...spreadRow(inRow, L.M.left, L.W - L.M.right));
-    }
+    /* ETICHETTE DENTRO LE METÀ (come la corsia della vista singola): i livelli
+       della catena indici (▲) e lo spot futures (●) nella metà SUPERIORE, i
+       livelli della catena ETF (▼) in quella INFERIORE. Niente più fascia
+       centrale da 73px: sopra e sotto restano due strisce sottili, il resto è
+       grafico. LANE è la loro altezza, uguale per le due metà (simmetria). */
+    const refsInWin = (twinRefs ?? []).filter(r => r.price >= x0 && r.price <= x1);
+    const UP_ROWS = 2;   // riga 0 = livelli indici, riga 1 = spot futures
+    const DN_ROWS = 1;   // riga 0 = livelli ETF
+    const LANE = Math.max(UP_ROWS, DN_ROWS) * 21 + 10;
+    const barH = Math.max(24, L.HALF_H - LANE);
+    const laneY = (half: 'up' | 'dn', row: number) =>
+      (half === 'up' ? L.M.top : L.ETF_BASE) + 16 + row * 21;
+    type Chip = { r: TwinRef; txt: string; w: number; cx: number; cx0: number; half: 'up' | 'dn'; row: number };
+    const chips: Chip[] = [];
+    const buildRow = (half: 'up' | 'dn', row: number, list: TwinRef[]) =>
+      chips.push(...spreadRow(list.map(r => {
+        const txt = `${L.compact ? r.label.split(' ')[0] : r.label} ${fmtPrice(r.price)}`;
+        /* larghezza stimata: 10.5px bold ≈ 6.2px/carattere (con 5.35 i chip si
+           toccavano — MP e Flip sullo stesso prezzo sembravano un blocco solo) */
+        return { r, txt, w: txt.length * 6.2 + 30, cx: x(r.price), cx0: x(r.price), half, row };
+      }), L.M.left, L.W - L.M.right));
+    buildRow('up', 0, refsInWin.filter(r => r.src === 'idx'));
+    buildRow('up', 1, refsInWin.filter(r => r.src === 'fut'));
+    buildRow('dn', 0, refsInWin.filter(r => r.src === 'etf'));
     const tipW = Math.min(272, L.PLOT_W - 8), tipH = 100;
     /* riga di conversione: strike NATIVO → prezzo futures. Senza ratio il
        nativo non c'è, e prima usciva `7524 → ES 7524` (due volte lo stesso
@@ -528,17 +544,17 @@ export const GexHistogram: React.FC<{
             <line key={i} x1={x(s)} x2={x(s)} y1={L.M.top} y2={L.H - L.M.bottom}
               stroke={C.grid} strokeWidth={0.6} strokeDasharray="2 5" opacity={0.7} />
           ))}
-          {/* tacche di scala per metà */}
+          {/* tacche di scala per metà (barH = altezza utile, lane esclusa) */}
           {[0.5, 1].map(f => (
             <g key={`si${f}`}>
-              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE - L.HALF_H * f} y2={L.IDX_BASE - L.HALF_H * f}
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE - barH * f} y2={L.IDX_BASE - barH * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.IDX_BASE - L.HALF_H * f + 3} textAnchor="end" fontSize={9.5} fill={C.idx} opacity={0.85}>
+              <text x={L.M.left - 8} y={L.IDX_BASE - barH * f + 3} textAnchor="end" fontSize={9.5} fill={C.idx} opacity={0.85}>
                 {fmtVal(scaleI * f, metric)}
               </text>
-              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE + L.HALF_H * f} y2={L.ETF_BASE + L.HALF_H * f}
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE + LANE + barH * f} y2={L.ETF_BASE + LANE + barH * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.ETF_BASE + L.HALF_H * f + 3} textAnchor="end" fontSize={9.5} fill={C.etf} opacity={0.85}>
+              <text x={L.M.left - 8} y={L.ETF_BASE + LANE + barH * f + 3} textAnchor="end" fontSize={9.5} fill={C.etf} opacity={0.85}>
                 {fmtVal(scaleE * f, metric)}
               </text>
             </g>
@@ -569,34 +585,42 @@ export const GexHistogram: React.FC<{
           {I.map(e => {
             const v = mv(e);
             if (!v) return null;
-            const h = Math.max(0.8, (Math.abs(v) / scaleI) * L.HALF_H);
+            const h = Math.max(0.8, (Math.abs(v) / scaleI) * barH);
             return (
               <rect key={`i${e.s}`} x={x(e.s) - bwI / 2} y={L.IDX_BASE - h} width={bwI} height={h}
                 fill={view === 'tot' ? 'url(#gTotUp)' : v >= 0 ? 'url(#gCallUp)' : 'url(#gPutUp)'}
                 opacity={0.92} rx={0.6} />
             );
           })}
-          {/* ETF: barre verso il BASSO (speculari) */}
+          {/* ETF: barre verso il BASSO (speculari), zero sotto la propria corsia */}
           {E.map(e => {
             const v = mv(e);
             if (!v) return null;
-            const h = Math.max(0.8, (Math.abs(v) / scaleE) * L.HALF_H);
+            const h = Math.max(0.8, (Math.abs(v) / scaleE) * barH);
             return (
-              <rect key={`e${e.s}`} x={x(e.s) - bwE / 2} y={L.ETF_BASE} width={bwE} height={h}
+              <rect key={`e${e.s}`} x={x(e.s) - bwE / 2} y={L.ETF_BASE + LANE} width={bwE} height={h}
                 fill={view === 'tot' ? 'url(#gTotDn)' : v >= 0 ? 'url(#gCallDn)' : 'url(#gPutDn)'}
                 opacity={0.92} rx={0.6} />
             );
           })}
 
-          {/* FASCIA CENTRALE: separa le due metà e ospita le etichette dei livelli */}
+          {/* CORSIE dei livelli DENTRO le due metà (come la vista singola):
+              sopra la striscia di INDICI + spot, sotto quella dell'ETF. La
+              fascia centrale resta solo un divisore sottile. */}
+          <rect x={L.M.left} y={L.M.top} width={L.PLOT_W} height={LANE} fill="url(#gGutter)" />
+          <rect x={L.M.left} y={L.ETF_BASE} width={L.PLOT_W} height={LANE} fill="url(#gGutter)" />
+          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.M.top + LANE} y2={L.M.top + LANE} stroke={C.idx} strokeWidth={1} opacity={0.35} />
+          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE + LANE} y2={L.ETF_BASE + LANE} stroke={C.etf} strokeWidth={1} opacity={0.35} />
+
+          {/* DIVISORE fra le due metà: una fessura, non una fascia */}
           <rect x={L.M.left} y={L.GUT_TOP} width={L.PLOT_W} height={L.GUTTER} fill="url(#gGutter)" />
-          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE} y2={L.IDX_BASE} stroke="url(#gSpine)" strokeWidth={1.4} />
-          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE} y2={L.ETF_BASE} stroke="url(#gSpine)" strokeWidth={1.4} />
+          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE} y2={L.IDX_BASE} stroke="url(#gSpine)" strokeWidth={1.2} />
+          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE} y2={L.ETF_BASE} stroke="url(#gSpine)" strokeWidth={1.2} />
           <text x={L.M.left - 8} y={L.IDX_BASE + 3} textAnchor="end" fontSize={10} fill={C.idx} opacity={0.9}>0</text>
-          <text x={L.M.left - 8} y={L.ETF_BASE + 3} textAnchor="end" fontSize={10} fill={C.etf} opacity={0.9}>0</text>
+          <text x={L.M.left - 8} y={L.ETF_BASE + LANE + 3} textAnchor="end" fontSize={10} fill={C.etf} opacity={0.9}>0</text>
 
           {/* titoli d'asse nel margine sinistro: identificano le due metà senza
-              coprire le barre (prima erano chip dentro il grafico) */}
+              coprire le barre */}
           {!L.compact && (
             <g>
               <text transform={`translate(16 ${L.M.top + L.HALF_H / 2}) rotate(-90)`} textAnchor="middle"
@@ -605,29 +629,34 @@ export const GexHistogram: React.FC<{
                 fontSize={10.5} fontWeight="bold" fill={C.etf} opacity={0.9}>▼ ETF · {etfName}</text>
             </g>
           )}
-          {/* marcatori di riga nella fascia: dicono quale categoria sta su quale riga */}
+          {/* marcatori di categoria accanto a ogni corsia: ▲● sopra, ▼ sotto */}
           <g>
-            {[{ g: '▲', c: C.idx }, { g: '●', c: C.spot }, { g: '▼', c: C.etf }].map((m, i) => (
-              <text key={`rm${i}`} x={L.M.left - 9} y={rowY[i] + 3.5} textAnchor="end" fontSize={10}
+            {([
+              { g: '▲', c: C.idx, y: laneY('up', 0) },
+              { g: '●', c: C.spot, y: laneY('up', 1) },
+              { g: '▼', c: C.etf, y: laneY('dn', 0) },
+            ]).map((m, i) => (
+              <text key={`rm${i}`} x={L.M.left - 9} y={m.y + 3.5} textAnchor="end" fontSize={10}
                 fontWeight="bold" fill={m.c} opacity={0.9}>{m.g}</text>
             ))}
           </g>
 
-          {/* livelli di riferimento: linea nella METÀ della propria catena +
-              etichetta nella fascia centrale che dice fonte e prezzo */}
+          {/* livelli di riferimento: chip nella corsia della PROPRIA metà, guida
+              verticale tratteggiata sul prezzo che attraversa solo quella metà */}
           {chips.map((c, i) => {
             const kc = kindColor(c.r.kind), sc = srcColor(c.r.src);
-            const lx = c.cx0, cy = rowY[c.row];
-            const y1 = c.r.src === 'etf' ? cy + 9 : L.M.top - 2;
-            const y2 = c.r.src === 'idx' ? cy - 9 : L.H - L.M.bottom + 2;
+            const lx = c.cx0, cy = laneY(c.half, c.row);
+            const up = c.half === 'up';
+            const yGuideTop = up ? L.M.top + LANE : L.ETF_BASE + LANE;
+            const yGuideBot = up ? L.IDX_BASE : L.ETF_BASE + LANE + barH;
+            const yBase = up ? L.IDX_BASE : L.ETF_BASE + LANE;
             return (
               <g key={`r${i}`}>
-                <line x1={lx} x2={lx} y1={y1} y2={y2} stroke={kc} strokeWidth={1.2}
+                <line x1={lx} x2={lx} y1={yGuideTop} y2={yGuideBot} stroke={kc} strokeWidth={1.2}
                   strokeDasharray={c.r.kind === 'spot' ? '4 3' : '6 3'} opacity={0.85} />
-                <circle cx={lx} cy={c.r.src === 'idx' ? L.IDX_BASE : c.r.src === 'etf' ? L.ETF_BASE : cy}
-                  r={2.6} fill={kc} opacity={0.95} />
+                <circle cx={lx} cy={yBase} r={2.6} fill={kc} opacity={0.95} />
                 {Math.abs(c.cx - lx) > 3 && (
-                  <line x1={c.cx} x2={lx} y1={cy} y2={c.r.src === 'idx' ? L.IDX_BASE : L.ETF_BASE}
+                  <line x1={c.cx} x2={lx} y1={cy} y2={yGuideTop}
                     stroke={kc} strokeWidth={0.8} strokeDasharray="2 2" opacity={0.6} />
                 )}
                 <rect x={c.cx - c.w / 2} y={cy - 8.5} width={c.w} height={17} rx={5}
@@ -637,8 +666,8 @@ export const GexHistogram: React.FC<{
                   <tspan fill={kc}>{c.txt}</tspan>
                 </text>
                 <title>{`${c.r.label} ${fmtPrice(c.r.price)} ${futName} — ${
-                  c.r.src === 'idx' ? `catena INDICI (${idxName}), metà superiore`
-                  : c.r.src === 'etf' ? `catena ETF (${etfName}), metà inferiore`
+                  c.r.src === 'idx' ? `catena INDICI (${idxName}), corsia della metà superiore`
+                  : c.r.src === 'etf' ? `catena ETF (${etfName}), corsia della metà inferiore`
                   : `prezzo live del futures ${futName}, comune alle due metà`}`}</title>
               </g>
             );
@@ -660,11 +689,11 @@ export const GexHistogram: React.FC<{
               <line x1={hover.x} x2={hover.x} y1={L.M.top} y2={L.H - L.M.bottom}
                 stroke="#e6edf3" strokeWidth={0.8} strokeDasharray="2 3" opacity={0.55} />
               {hI && Math.abs(hI.s - hover.price) < (x1 - x0) * 0.06 && (
-                <circle cx={x(hI.s)} cy={L.IDX_BASE - Math.max(0.8, (Math.abs(mv(hI)) / scaleI) * L.HALF_H)}
+                <circle cx={x(hI.s)} cy={L.IDX_BASE - Math.max(0.8, (Math.abs(mv(hI)) / scaleI) * barH)}
                   r={3} fill={view === 'tot' ? C.tot : mv(hI) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
               {hE && Math.abs(hE.s - hover.price) < (x1 - x0) * 0.06 && (
-                <circle cx={x(hE.s)} cy={L.ETF_BASE + Math.max(0.8, (Math.abs(mv(hE)) / scaleE) * L.HALF_H)}
+                <circle cx={x(hE.s)} cy={L.ETF_BASE + LANE + Math.max(0.8, (Math.abs(mv(hE)) / scaleE) * barH)}
                   r={3} fill={view === 'tot' ? C.tot : mv(hE) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
               <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={7}
@@ -724,8 +753,8 @@ export const GexHistogram: React.FC<{
             <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5" style={{ background: C.flip }} /> Flip</span>
           </span>
           <span className="text-gray-500">
-            nella fascia centrale: <b style={{ color: C.idx }}>▲</b> livello della catena {idxName} ·{' '}
-            <b style={{ color: C.etf }}>▼</b> livello della catena {etfName}
+            corsie dentro le metà: <b style={{ color: C.idx }}>▲</b> livelli {idxName} sopra,{' '}
+            <b style={{ color: C.etf }}>▼</b> livelli {etfName} sotto, <b style={{ color: C.spot }}>●</b> spot futures
           </span>
           <span className="text-gray-600 ml-auto">passa il mouse: valori delle due fonti a confronto</span>
         </div>
