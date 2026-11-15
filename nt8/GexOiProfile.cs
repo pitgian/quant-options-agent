@@ -1242,7 +1242,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				// LEGENDA — UNA riga sola per Entrambi. Prima erano tre righe
 				// sovrapposte (◀ SPX…SPY ▶ / ⧉ … / ▲ SPX…▼ SPY) con i nomi dei
 				// libri ripetuti due volte: qui ogni informazione appare una volta.
-				//   ▲ libro · ▼ libro · [call/put] · confluenze · [gap] · scala
+				//   ▲ libro · ▼ libro · [call/put] · confluenze
 				if (twin)
 				{
 					var pp = new List<string>();
@@ -1251,8 +1251,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (lati) pp.Add("call ◀|▶ put");
 					int nz = zones == null ? 0 : zones.Count;
 					pp.Add("⧉ ±" + tolPts.ToString("0") + "pt: " + nz.ToString());
-					if (nz == 0) pp.Add("gap " + minGapPts.ToString("0") + "pt");
-					pp.Add(ScalaComune ? "scala comune" : "scale proprie");
+					// niente "gap x pt" e niente "scale proprie": non servono
+					// (richiesta 15/11) — restano solo i nomi dei libri col massimo,
+					// il verso call/put e il numero di confluenze.
 					using (var bL = new SolidColorBrush(RenderTarget, new Color4(0.75f, 0.78f, 0.83f, 1f)))
 						DrawTextLeft(RenderTarget, tf, bL, string.Join("  ·  ", pp.ToArray()), xLeft + 2, panelH - 18);
 				}
