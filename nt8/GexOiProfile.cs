@@ -1084,7 +1084,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 					{
 						var list = pair.Item1; bool left = pair.Item3;
 						foreach (int i in Enumerable.Range(0, list.Count)
-							.OrderByDescending(k => Math.Abs(list[k].Net)).Take(2))
+							// in Lati il netto di una gabbia è ≈0: il rango è la gamba più grossa
+							.OrderByDescending(k => lati ? Math.Max(list[k].Call, list[k].Put)
+								: Math.Abs(list[k].Net)).Take(2))
 						{
 							float y = (float)chartScale.GetYByValue(list[i].S);
 							if (y < 30 || y > panelH - 24) continue;
