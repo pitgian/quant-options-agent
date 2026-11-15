@@ -84,6 +84,11 @@ guasto. Stessa regola e stessi numeri della web app.
   bordo sinistro, per non attraversare la price action.
   Etichette con anti-collisione (flip ≈ max pain le separa).
 - **Intestazione**: vista/metrica/borsa/fonte + orario del piano; ambra = stantio.
+- **Legenda in basso**: UNA riga sola per tutte le informazioni — `▲ SPX max ·
+  ▼ SPY max · [call ◀|▶ put] · ⧉ ±5pt: n · [gap x pt] · scala`. Prima erano
+  tre righe sovrapposte con i nomi dei libri ripetuti due volte. La legenda
+  segue la vista: in Lati dice call/put, in Somma dice "Σ (indaco)", in Net
+  dice verde=pin / rosso=trigger.
 - Flip assente nel piano (nessuno zero-crossing) → la linea non viene disegnata:
   non è un errore, è il dato (vedi discussione flip/max pain della scala).
 

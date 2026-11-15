@@ -928,15 +928,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 						railR.Add(Tuple.Create((top + bot) / 2f, "⧉ " + ((z.Lo + z.Hi) / 2).ToString("0"), cConf));
 					}
 				}
-				if (inBoth && (zones == null || zones.Count == 0))
-				{
-					// 0 confluenze: messaggio onesto, non bande vuote: e' il dato
-					// (le due catene presidiano livelli distinti, gap = minGapPts).
-					using (var bNone = new SolidColorBrush(RenderTarget, new Color4(0.55f, 0.60f, 0.66f, 1f)))
-						DrawTextLeft(RenderTarget, tf, bNone, string.Format("gap minimo {0:0}pt", minGapPts),
-							xLeft + 2, panelH - 46);
-				}
-
 				// ---- BARRE. Due rese:
 				//      · fonte singola  -> una barra per strike, dal bordo destro
 				//        della colonna verso sinistra (come il sito).
@@ -1065,13 +1056,6 @@ namespace NinjaTrader.NinjaScript.Indicators
 							RenderTarget.DrawLine(new SharpDX.Vector2(spI, 22), new SharpDX.Vector2(spI, panelH - 22), bs, 1f);
 							RenderTarget.DrawLine(new SharpDX.Vector2(spE, 22), new SharpDX.Vector2(spE, panelH - 22), bs, 1f);
 						}
-						string nI = PlanKey() == "ES" ? "SPX" : "NDX";
-						string nE = PlanKey() == "ES" ? "SPY" : "QQQ";
-						// in BASSO, non in alto: la fascia alta è del legend di NT8
-						using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 0.95f)))
-							DrawTextLeft(RenderTarget, tf, bI, "▲ " + nI + " " + E(scI), xLeft + 2, panelH - 12);
-						using (var bE2 = new SolidColorBrush(RenderTarget, new Color4(0.984f, 0.749f, 0.141f, 0.95f)))
-							DrawTextLeft(RenderTarget, tf, bE2, "▼ " + nE + " " + E(scE), anchorR + 2, panelH - 12);
 					}
 
 					// niente scritte in alto: la fascia alta e' del legend di NT8
@@ -1255,23 +1239,33 @@ namespace NinjaTrader.NinjaScript.Indicators
 						}
 					}
 				}
-				// legenda
+				// LEGENDA — UNA riga sola per Entrambi. Prima erano tre righe
+				// sovrapposte (◀ SPX…SPY ▶ / ⧉ … / ▲ SPX…▼ SPY) con i nomi dei
+				// libri ripetuti due volte: qui ogni informazione appare una volta.
+				//   ▲ libro · ▼ libro · [call/put] · confluenze · [gap] · scala
 				if (twin)
 				{
-					string l1 = "◀ " + iNm + " " + E(twinMaxI) + " | " + E(twinMaxE) + " " + eNm + " ▶";
-					string l2 = "⧉ ±" + tolPts.ToString("0") + "pt: "
-						+ (zones == null || zones.Count == 0 ? "0" : zones.Count.ToString())
-						+ (ScalaComune ? " · scala comune" : " · scale proprie");
-					using (var bI = new SolidColorBrush(RenderTarget, new Color4(0.133f, 0.827f, 0.933f, 1f)))
-						DrawTextLeft(RenderTarget, tf, bI, l1, xLeft + 2, panelH - 32);
-					using (var bC = new SolidColorBrush(RenderTarget, new Color4(0.769f, 0.710f, 0.992f, 1f)))
-						DrawTextLeft(RenderTarget, tf, bC, l2, xLeft + 2, panelH - 18);
+					var pp = new List<string>();
+					pp.Add("▲ " + iNm + " " + E(twinMaxI));
+					pp.Add("▼ " + eNm + " " + E(twinMaxE));
+					if (lati) pp.Add("call ◀|▶ put");
+					int nz = zones == null ? 0 : zones.Count;
+					pp.Add("⧉ ±" + tolPts.ToString("0") + "pt: " + nz.ToString());
+					if (nz == 0) pp.Add("gap " + minGapPts.ToString("0") + "pt");
+					pp.Add(ScalaComune ? "scala comune" : "scale proprie");
+					using (var bL = new SolidColorBrush(RenderTarget, new Color4(0.75f, 0.78f, 0.83f, 1f)))
+						DrawTextLeft(RenderTarget, tf, bL, string.Join("  ·  ", pp.ToArray()), xLeft + 2, panelH - 18);
 				}
 				else
 				{
-					string leg = inBoth
-						? "⧉ ±" + tolPts.ToString("0") + "pt: " + (zones == null || zones.Count == 0 ? "0" : zones.Count.ToString())
+					// legenda coerente con la VISTA: in Lati i colori sono call/put,
+					// in Somma la barra è indaco — prima diceva sempre
+					// "verde = pin · rosso = trigger" anche quando non era vero.
+					string leg = lati ? "call ◀ | ▶ put"
+						: OptView == GexOiView.Somma ? "Σ = call + put (indaco)"
 						: "verde = pin · rosso = trigger";
+					if (inBoth && !lati)
+						leg = "⧉ ±" + tolPts.ToString("0") + "pt: " + (zones == null ? 0 : zones.Count);
 					if (regimeTxt.Length > 0) leg += " · " + regimeTxt;
 					DrawTextLeft(RenderTarget, tf, brush, leg, xLeft + 2, panelH - 18);
 				}
