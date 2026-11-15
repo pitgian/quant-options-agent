@@ -42,6 +42,10 @@ using SharpDX.DirectWrite;
 //    Somma → una barra senza segno = SIZE dello strike. È la lettura giusta
 //            per la domanda "quali sono i livelli più importanti": barra
 //            alta = tanto libro, indipendentemente dal lato.
+//    Lati  → le DUE gambe separate dalla spina centrale: call a sinistra,
+//            put a destra, stessa scala. Come "Call/Put" del sito: si vede
+//            com'è composto il libro senza sommare né sottrarre. Solo su
+//            fonte singola: in Entrambi ricade su Net.
 //  In 'Somma' le barre sono indaco (non verde/rosso: il colore direbbe un
 //  lato che quella vista non misura) e la scala è il max della SOMMA.
 //
@@ -80,8 +84,10 @@ public enum GexOiMetric  { GEX, OI }
 // Vista del profilo. Net = con segno (default, retro-compatibile: gli indici
 // dei valori esistenti non cambiano e i workspace salvati restano identici).
 // Somma = call+put senza segno: la SIZE del livello, la stessa "Σ Call+Put"
-// del sito. Aggiunto in coda, come le altre estensioni.
-public enum GexOiView    { Net, Somma }
+// del sito. Lati = le DUE gambe separate (call a sinistra, put a destra della
+// spina centrale), come "Call/Put" del sito: né sommate né sottratte.
+// Aggiunti in coda: gli indici dei valori esistenti non cambiano.
+public enum GexOiView    { Net, Somma, Lati }
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
@@ -145,7 +151,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private bool warnedDuplicate;
 		private float twinMaxI, twinMaxE;
 
-		private sealed class ProfileBar { public double S; public double Net; }
+		private sealed class ProfileBar
+		{
+			public double S;
+			public double Net;    // valore della vista Net/Somma (con segno o lordo)
+			public double Call;   // gamba call, MAGNITUDINE (>= 0): c (GEX) o co (OI)
+			public double Put;    // gamba put, MAGNITUDINE (>= 0): |p| (GEX) o po (OI)
+		}
 
 		// ZONA DI CONFLUENZA (solo modalità Entrambi): muro dell'ETF e muro
 		// dell'indice a distanza <= tolleranza = livello presidiato da ENTRAMBI
@@ -382,6 +394,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 			// assente da una fonte vale 0: il contributo mancante è zero, non
 			// un dato ignoto — quindi la somma non gonfia né perde nulla.
 			var merged = new Dictionary<double, double>();
+			// gambe call/put per strike: servono SOLO alla vista 'Lati'
+			var callAgg = new Dictionary<double, double>();
+			var putAgg  = new Dictionary<double, double>();
 			// profili per fonte tenuti SEPARATI: servono alla detection delle zone
 			// di confluenza (Entrambi), che lavora sui MURI di ciascun libro.
 			var perFonte = new List<Dictionary<double, double>>();
@@ -404,6 +419,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 					double k = Math.Round(s, 1);
 					merged[k] = (merged.TryGetValue(k, out var acc) ? acc : 0) + net;
 					src[k] = (src.TryGetValue(k, out var accs) ? accs : 0) + net;
+					double lc, lpp; Legs(e, out lc, out lpp);
+					callAgg[k] = (callAgg.TryGetValue(k, out var acc2) ? acc2 : 0) + lc;
+					putAgg[k]  = (putAgg.TryGetValue(k, out var acc3) ? acc3 : 0) + lpp;
 				}
 				perFonte.Add(src);
 			}
@@ -485,7 +503,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			var outBars = new List<ProfileBar>();
 			foreach (var kv in merged)
-				outBars.Add(new ProfileBar { S = kv.Key, Net = kv.Value });
+			{
+				double cv, pv;
+				outBars.Add(new ProfileBar
+				{
+					S = kv.Key, Net = kv.Value,
+					Call = callAgg.TryGetValue(kv.Key, out cv) ? cv : 0,
+					Put  = putAgg.TryGetValue(kv.Key, out pv) ? pv : 0
+				});
+			}
 
 			outBars = outBars.OrderBy(b => b.S).ToList();
 			bars = outBars.Count > 0 ? outBars : null;
@@ -527,6 +553,22 @@ namespace NinjaTrader.NinjaScript.Indicators
 				if (isMax) res.Add(a[i]);
 			}
 			return res;
+		}
+
+		// Magnitudine delle due GAMBE di uno strike (>= 0), per la vista 'Lati':
+		// call = c (GEX) / co (OI), put = |p| (GEX, che è negativo) / po (OI).
+		private void Legs(Dictionary<string, object> e, out double call, out double put)
+		{
+			if (OptMetric == GexOiMetric.GEX)
+			{
+				call = Math.Max(0.0, TryNum(e, "c"));
+				put  = Math.Abs(Math.Min(0.0, TryNum(e, "p")));
+			}
+			else
+			{
+				call = Math.Max(0.0, TryNum(e, "co"));
+				put  = Math.Max(0.0, TryNum(e, "po"));
+			}
 		}
 
 		// Valore di UNO strike secondo la vista attiva.
@@ -730,9 +772,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 				: OptSource == GexOiSource.Entrambi
 					? (PlanKey() == "ES" ? "SPY+SPX" : "QQQ+NDX")
 					: (PlanKey() == "ES" ? "SPY" : "QQQ");
-			string title = (OptView == GexOiView.Somma
-					? (OptMetric == GexOiMetric.GEX ? "Σ GEX |c|+|p|" : "Σ OI call+put")
-					: (OptMetric == GexOiMetric.GEX ? "Net GEX" : "Net OI"))
+			// Vista Lati = due gambe separate. In 'Entrambi' non si usa (due profili
+			// speculari × due gambe = quattro serie, illeggibile): si ricade su Net,
+			// esattamente come il sito dove la speculare ha solo Net e Σ.
+			bool lati = OptView == GexOiView.Lati && OptSource != GexOiSource.Entrambi;
+			string title = (lati
+					? (OptMetric == GexOiMetric.GEX ? "Call/Put GEX" : "Call/Put OI")
+					: OptView == GexOiView.Somma
+						? (OptMetric == GexOiMetric.GEX ? "Σ GEX |c|+|p|" : "Σ OI call+put")
+						: (OptMetric == GexOiMetric.GEX ? "Net GEX" : "Net OI"))
+				+ (OptView == GexOiView.Lati && !lati ? " (Call/Put: solo fonte singola)" : "")
 				+ " · " + (OptBucket == GexOiBucket.ZeroDTE ? "0DTE" : OptBucket == GexOiBucket.Settimana ? "≤7gg" : "Tutte")
 				+ " · " + srcName;
 
@@ -775,13 +824,24 @@ namespace NinjaTrader.NinjaScript.Indicators
 				float maxPos = 0.01f, maxNeg = 0.01f;
 				foreach (var b in inWin)
 				{
-					if (b.Net > 0) maxPos = Math.Max(maxPos, (float)b.Net);
-					else           maxNeg = Math.Max(maxNeg, (float)-b.Net);
+					if (lati)
+					{
+						// due lati, stessa unità: una sola scala per call e put
+						maxPos = Math.Max(maxPos, (float)b.Call);
+						maxNeg = Math.Max(maxNeg, (float)b.Put);
+					}
+					else if (b.Net > 0) maxPos = Math.Max(maxPos, (float)b.Net);
+					else                maxNeg = Math.Max(maxNeg, (float)-b.Net);
 				}
 				float yMax = Math.Max(maxPos, maxNeg);
 
+				// In 'Lati' lo zero è una SPINA CENTRALE: call a sinistra, put a destra.
+				float spineXL = (xLeft + xRight) / 2f;
 				using (var bBase = new SolidColorBrush(RenderTarget, new Color4(0.35f, 0.40f, 0.47f, 0.9f)))
-					RenderTarget.DrawLine(new SharpDX.Vector2(xRight, 22), new SharpDX.Vector2(xRight, panelH - 4), bBase, 1f);
+				{
+					float baseX = lati ? spineXL : xRight;
+					RenderTarget.DrawLine(new SharpDX.Vector2(baseX, 22), new SharpDX.Vector2(baseX, panelH - 4), bBase, 1f);
+				}
 
 				// ---- CONFLUENZA (Entrambi): bande viola sulla colonna. Una
 				//      confluenza e' un INTERVALLO DI PREZZO, quindi nella colonna
@@ -991,20 +1051,41 @@ namespace NinjaTrader.NinjaScript.Indicators
 				int   nW   = inWin.Count;
 				var   ys   = new float[nW];
 				for (int i = 0; i < nW; i++) ys[i] = (float)chartScale.GetYByValue(inWin[i].S);
-				for (int i = 0; i < nW; i++)
+				float halfW = colW / 2f - 1f;
+				var colCall = new Color4(0.204f, 0.827f, 0.600f, 0.92f);
+				var colPut  = new Color4(0.984f, 0.443f, 0.522f, 0.92f);
+				using (var bC = new SolidColorBrush(RenderTarget, colCall))
+				using (var bP = new SolidColorBrush(RenderTarget, colPut))
 				{
-					var b = inWin[i];
-					if (b.Net == 0) continue;
-					float y = ys[i];
-					if (y < -20 || y > panelH + 20) continue;
-					float gap = i + 1 < nW ? Math.Abs(ys[i + 1] - y)
-						: i > 0 ? Math.Abs(y - ys[i - 1]) : 10f;
-					float bh  = Math.Max(2f, Math.Min(PixelBinSize, gap * 0.72f));
-					float len = Math.Max(2f, (float)Math.Abs(b.Net) / yMax * colW);
-					var c4 = BarColor(b.Net);
-					using (var bb = new SolidColorBrush(RenderTarget, c4))
-						// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
-						RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
+					for (int i = 0; i < nW; i++)
+					{
+						var b = inWin[i];
+						if (lati ? (b.Call <= 0 && b.Put <= 0) : b.Net == 0) continue;
+						float y = ys[i];
+						if (y < -20 || y > panelH + 20) continue;
+						float gap = i + 1 < nW ? Math.Abs(ys[i + 1] - y)
+							: i > 0 ? Math.Abs(y - ys[i - 1]) : 10f;
+						float bh  = Math.Max(2f, Math.Min(PixelBinSize, gap * 0.72f));
+						if (lati)
+						{
+							// call a SINISTRA della spina, put a DESTRA — stessa scala,
+							// così la gamba più lunga è quella che pesa di più.
+							float lenC = (float)b.Call / yMax * halfW;
+							float lenP = (float)b.Put  / yMax * halfW;
+							if (lenC > 0.5f)
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(spineXL - lenC, y - bh / 2f, lenC, bh), bC);
+							if (lenP > 0.5f)
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(spineXL, y - bh / 2f, lenP, bh), bP);
+						}
+						else
+						{
+							float len = Math.Max(2f, (float)Math.Abs(b.Net) / yMax * colW);
+							var c4 = BarColor(b.Net);
+							using (var bb = new SolidColorBrush(RenderTarget, c4))
+								// RectangleF = (x, y, LARGHEZZA, ALTEZZA) — mai (left, top, right, bottom)
+								RenderTarget.FillRectangle(new SharpDX.RectangleF(xRight - len, y - bh / 2f, len, bh), bb);
+						}
+					}
 				}
 				}
 
@@ -1014,7 +1095,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				if (!twin)
 				{
 					var topIdx = Enumerable.Range(0, inWin.Count)
-						.OrderByDescending(i => Math.Abs(inWin[i].Net)).Take(3);
+						.OrderByDescending(i => lati ? inWin[i].Call + inWin[i].Put
+							: Math.Abs(inWin[i].Net)).Take(3);
 					foreach (int i in topIdx)
 					{
 						float y = (float)chartScale.GetYByValue(inWin[i].S);
@@ -1255,8 +1337,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 		// Net = barra col segno (lato). Somma = call+put senza segno (SIZE del
 		// livello): la stessa "Σ Call+Put" del sito, per rispondere a "quali
 		// sono i livelli più importanti" senza che un libro bilanciato sparisca.
+		// Lati = call e put SEPARATE (call a sinistra, put a destra della spina):
+		// come "Call/Put" del sito. In 'Entrambi' ricade su Net (quattro serie
+		// sarebbero illeggibili).
 		[NinjaScriptProperty]
-		[Display(Name = "Vista (Somma = call+put, size del livello)", Order = 4, GroupName = "1. Dati")]
+		[Display(Name = "Vista (Net · Somma · Lati = call a sinistra, put a destra)", Order = 4, GroupName = "1. Dati")]
 		public GexOiView OptView { get; set; }
 
 		[NinjaScriptProperty]

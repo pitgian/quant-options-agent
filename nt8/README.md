@@ -48,7 +48,7 @@ guasto. Stessa regola e stessi numeri della web app.
 | Fonte opzioni | Indice | Indice = profilo raw 5-pt (SPX/NDX, parità InsiderFinance) · ETF = bin 25-pt (SPY/QQQ) |
 | Borsa di scadenza | Tutte | 0DTE / ≤7gg / Tutte — identiche al selettore del sito |
 | Metrica | GEX | GEX (Mld $, c+p) oppure OI (contratti, co−po) |
-| Vista | Net | **Net** = valore col segno (il lato) · **Somma** = call+put senza segno (**la size del livello**), come il chip `Σ Call+Put` del sito |
+| Vista | Net | **Net** = valore col segno (il lato) · **Somma** = call+put senza segno (**la size del livello**), come `Σ Call+Put` del sito · **Lati** = le due gambe separate (**call a sinistra, put a destra** della spina centrale), come `Call/Put` del sito |
 | Finestra ±% | 5 | Strike entro ±X% dallo spot live (come il sito) |
 | Refresh (minuti) | 5 | Il pipeline pubblica ogni 5 min in seduta |
 | Piano stantio dopo | 15 min | L'intestazione diventa ambra se il piano è più vecchio |
@@ -64,6 +64,12 @@ guasto. Stessa regola e stessi numeri della web app.
   (contratti totali), GEX = `|c|+|p|` (gamma lorda). Colore **indaco**, scala
   sul massimo della somma. Barra alta = strike importante, cioè la domanda
   "quali sono i livelli più grossi", a cui il netto non risponde.
+- **Lati** (`Vista = Lati`) — due gambe separate dalla **spina centrale**:
+  **call a sinistra** (verde), **put a destra** (rosso), una sola scala per
+  entrambe (così la gamba più lunga è quella che pesa di più). È la vista che
+  dice *com'è composto* il libro senza sommare né sottrarre. Solo su fonte
+  singola: con **Entrambi** la vista ricade su Net (due profili speculari ×
+  due gambe = quattro serie, illeggibili) e l'intestazione lo dichiara.
 - **Linee sempre attive**: Max Pain (ambra) e Flip strutturale (viola) della
   fonte selezionata, in scala futures; in Entrambi anche il Flip dell'altra
   fonte (la distanza fra i due = regime confermato o in divergenza). La linea
