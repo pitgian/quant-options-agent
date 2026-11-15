@@ -159,7 +159,10 @@ export const GexHistogram: React.FC<{
        NON vivono più qui (occupavano 73px di fascia centrale): stanno DENTRO
        la metà della propria catena, come la corsia della vista singola. */
     const GUTTER = 16;
-    const H = compact ? 452 : 500;
+    /* H = vista Entrambi (due metà). Alzato (500→580, compact 452→520): con le
+       corsie dei livelli dentro le metà l'area a barre era rimasta corta e la
+       barra più alta finiva a filo del bordo. SH = fonte singola, invariata. */
+    const H = compact ? 520 : 580;
     const SH = compact ? 432 : 462;
     const PLOT_W = W - M.left - M.right;
     const PLOT_H = H - M.top - M.bottom;
@@ -418,7 +421,10 @@ export const GexHistogram: React.FC<{
     const refsInWin = (twinRefs ?? []).filter(r => r.price >= x0 && r.price <= x1);
     const ROWS = 3;                       // 0 = spot · 1 = max pain · 2 = flip
     const LANE = ROWS * 21 + 10;          // altezza UGUALE per le due metà:
-    const barH = Math.max(24, L.HALF_H - LANE);   // stessa scala con 'Scala comune'
+    const barH = Math.max(24, L.HALF_H - LANE);   // altezza dell'area a barre
+    /* La scala usa barMax = barH - margine: la barra più alta lascia ~8px di
+       respiro e non sembra tagliata dal bordo della corsia. */
+    const barMax = Math.max(20, barH - 8);
     /* La corsia INDICI sta in cima (sopra le sue barre), quella ETF in FONDO alla
        metà inferiore (sotto le sue barre): così le due aree a barre restano
        ADIACENTI e a separarle è solo il divisore da 16px, non 73px di etichette. */
@@ -559,14 +565,14 @@ export const GexHistogram: React.FC<{
           {/* tacche di scala per metà (barH = altezza utile, lane esclusa) */}
           {[0.5, 1].map(f => (
             <g key={`si${f}`}>
-              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE - barH * f} y2={L.IDX_BASE - barH * f}
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE - barMax * f} y2={L.IDX_BASE - barMax * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.IDX_BASE - barH * f + 3} textAnchor="end" fontSize={9.5} fill={C.idx} opacity={0.85}>
+              <text x={L.M.left - 8} y={L.IDX_BASE - barMax * f + 3} textAnchor="end" fontSize={9.5} fill={C.idx} opacity={0.85}>
                 {fmtVal(scaleI * f, metric)}
               </text>
-              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE + barH * f} y2={L.ETF_BASE + barH * f}
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE + barMax * f} y2={L.ETF_BASE + barMax * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.ETF_BASE + barH * f + 3} textAnchor="end" fontSize={9.5} fill={C.etf} opacity={0.85}>
+              <text x={L.M.left - 8} y={L.ETF_BASE + barMax * f + 3} textAnchor="end" fontSize={9.5} fill={C.etf} opacity={0.85}>
                 {fmtVal(scaleE * f, metric)}
               </text>
             </g>
@@ -593,11 +599,19 @@ export const GexHistogram: React.FC<{
             );
           })}
 
+          {/* CORSIE dei livelli DENTRO le due metà (come la vista singola):
+              sopra la striscia di INDICI + spot, sotto quella dell'ETF. Sono disegnate PRIMA delle barre:
+              dopo, il loro fondo copriva la punta delle barre più alte. */}
+          <rect x={L.M.left} y={L.M.top} width={L.PLOT_W} height={LANE} fill="url(#gGutter)" />
+          <rect x={L.M.left} y={LANE_DN_TOP} width={L.PLOT_W} height={LANE} fill="url(#gGutter)" />
+          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.M.top + LANE} y2={L.M.top + LANE} stroke={C.idx} strokeWidth={1} opacity={0.35} />
+          <line x1={L.M.left} x2={L.W - L.M.right} y1={LANE_DN_TOP} y2={LANE_DN_TOP} stroke={C.etf} strokeWidth={1} opacity={0.35} />
+
           {/* INDICI: barre verso l'ALTO */}
           {I.map(e => {
             const v = mv(e);
             if (!v) return null;
-            const h = Math.max(0.8, (Math.abs(v) / scaleI) * barH);
+            const h = Math.max(0.8, (Math.abs(v) / scaleI) * barMax);
             return (
               <rect key={`i${e.s}`} x={x(e.s) - bwI / 2} y={L.IDX_BASE - h} width={bwI} height={h}
                 fill={view === 'tot' ? 'url(#gTotUp)' : v >= 0 ? 'url(#gCallUp)' : 'url(#gPutUp)'}
@@ -608,21 +622,13 @@ export const GexHistogram: React.FC<{
           {E.map(e => {
             const v = mv(e);
             if (!v) return null;
-            const h = Math.max(0.8, (Math.abs(v) / scaleE) * barH);
+            const h = Math.max(0.8, (Math.abs(v) / scaleE) * barMax);
             return (
               <rect key={`e${e.s}`} x={x(e.s) - bwE / 2} y={L.ETF_BASE} width={bwE} height={h}
                 fill={view === 'tot' ? 'url(#gTotDn)' : v >= 0 ? 'url(#gCallDn)' : 'url(#gPutDn)'}
                 opacity={0.92} rx={0.6} />
             );
           })}
-
-          {/* CORSIE dei livelli DENTRO le due metà (come la vista singola):
-              sopra la striscia di INDICI + spot, sotto quella dell'ETF. La
-              fascia centrale resta solo un divisore sottile. */}
-          <rect x={L.M.left} y={L.M.top} width={L.PLOT_W} height={LANE} fill="url(#gGutter)" />
-          <rect x={L.M.left} y={LANE_DN_TOP} width={L.PLOT_W} height={LANE} fill="url(#gGutter)" />
-          <line x1={L.M.left} x2={L.W - L.M.right} y1={L.M.top + LANE} y2={L.M.top + LANE} stroke={C.idx} strokeWidth={1} opacity={0.35} />
-          <line x1={L.M.left} x2={L.W - L.M.right} y1={LANE_DN_TOP} y2={LANE_DN_TOP} stroke={C.etf} strokeWidth={1} opacity={0.35} />
 
           {/* DIVISORE fra le due metà: una fessura, non una fascia */}
           <rect x={L.M.left} y={L.GUT_TOP} width={L.PLOT_W} height={L.GUTTER} fill="url(#gGutter)" />
@@ -709,11 +715,11 @@ export const GexHistogram: React.FC<{
               <line x1={hover.x} x2={hover.x} y1={L.M.top} y2={L.H - L.M.bottom}
                 stroke="#e6edf3" strokeWidth={0.8} strokeDasharray="2 3" opacity={0.55} />
               {hI && Math.abs(hI.s - hover.price) < (x1 - x0) * 0.06 && (
-                <circle cx={x(hI.s)} cy={L.IDX_BASE - Math.max(0.8, (Math.abs(mv(hI)) / scaleI) * barH)}
+                <circle cx={x(hI.s)} cy={L.IDX_BASE - Math.max(0.8, (Math.abs(mv(hI)) / scaleI) * barMax)}
                   r={3} fill={view === 'tot' ? C.tot : mv(hI) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
               {hE && Math.abs(hE.s - hover.price) < (x1 - x0) * 0.06 && (
-                <circle cx={x(hE.s)} cy={L.ETF_BASE + Math.max(0.8, (Math.abs(mv(hE)) / scaleE) * barH)}
+                <circle cx={x(hE.s)} cy={L.ETF_BASE + Math.max(0.8, (Math.abs(mv(hE)) / scaleE) * barMax)}
                   r={3} fill={view === 'tot' ? C.tot : mv(hE) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
               <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={7}
