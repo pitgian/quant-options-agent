@@ -132,7 +132,7 @@ const rateTone = (held: number, n: number) =>
   n === 0 ? 'text-gray-500' : held / n >= 0.6 ? 'text-emerald-400' : held / n <= 0.4 ? 'text-red-400' : 'text-slate-300';
 
 const MiniTable: React.FC<{ t: Table }> = ({ t }) => (
-  <div className="text-[11px]">
+  <div className="text-[12px]">
     <div className="text-gray-300 font-semibold mb-1">{t.label} <span className="text-gray-600 font-normal">(n={t.nTot})</span></div>
     <div className="flex flex-col gap-0.5">
       {t.groups.map(g => (
@@ -145,11 +145,11 @@ const MiniTable: React.FC<{ t: Table }> = ({ t }) => (
     </div>
     {t.p !== null && (() => {
       const g = giudizio(t.p, t.nTot);
-      return <div className={`text-[10px] mt-1 ${g.tone}`}>→ {g.text}</div>;
+      return <div className={`text-[11.5px] mt-1 ${g.tone}`}>→ {g.text}</div>;
     })()}
     {t.extraP != null && (() => {
       const g = giudizio(t.extraP, t.nTot);
-      return <div className={`text-[10px] mt-0.5 ${g.tone}`}>→ {t.extraLabel}: {g.text}</div>;
+      return <div className={`text-[11.5px] mt-0.5 ${g.tone}`}>→ {t.extraLabel}: {g.text}</div>;
     })()}
   </div>
 );
@@ -207,7 +207,7 @@ export const SeparationPanel: React.FC<{ stats: Record<string, LevelStat> }> = (
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-[11px] text-gray-500">
+      <div className="text-[12px] text-gray-500">
         {records.length} verdetti con snapshot · periodo {records[0].date} → {records[records.length - 1].date} ·
         esito positivo {nOk} ({(nOk / records.length * 100).toFixed(0)}%) · ES+NQ aggregati
         {senza > 0 && ` · ${senza} senza snapshot scartati`}
@@ -218,7 +218,7 @@ export const SeparationPanel: React.FC<{ stats: Record<string, LevelStat> }> = (
       </div>
 
       {perLevel.length > 0 && (
-        <div className="text-[11px]">
+        <div className="text-[12px]">
           <div className="text-gray-300 font-semibold mb-1">Per livello (≥2 tocchi)</div>
           <div className="flex flex-col gap-0.5">
             {perLevel.map(v => (
@@ -232,7 +232,7 @@ export const SeparationPanel: React.FC<{ stats: Record<string, LevelStat> }> = (
         </div>
       )}
 
-      <div className={`text-[11px] leading-relaxed rounded-lg border px-3 py-2 ${verdict.tone}`}>
+      <div className={`text-[12px] leading-relaxed rounded-lg border px-3 py-2 ${verdict.tone}`}>
         <b>Verdetto:</b> {verdict.text}
       </div>
     </div>

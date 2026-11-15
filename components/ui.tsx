@@ -33,7 +33,7 @@ export function Segmented<T extends string | number>({
   size?: 'xs' | 'sm';
   className?: string;
 }) {
-  const pad = size === 'xs' ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs';
+  const pad = size === 'xs' ? 'px-2 py-1 text-[11.5px]' : 'px-3 py-1.5 text-xs';
   return (
     <div className={`inline-flex bg-[#0d1117] rounded-lg p-0.5 border border-slate-800 ${className}`}>
       {options.map((o) => {
@@ -62,7 +62,7 @@ export function Segmented<T extends string | number>({
 export function Labeled({ label, children, title }: { label: string; children: React.ReactNode; title?: string }) {
   return (
     <div className="flex items-center gap-1.5" title={title}>
-      <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">{label}</span>
+      <span className="text-[11.5px] text-gray-500 font-semibold uppercase tracking-wider">{label}</span>
       {children}
     </div>
   );
@@ -101,7 +101,7 @@ export function Badge({ tone = 'neutral', children, title, className = '' }: {
   return (
     <span
       title={title}
-      className={`inline-flex items-center px-2 py-0.5 text-[9px] font-bold rounded border ${BADGE_TONES[tone]} ${className}`}
+      className={`inline-flex items-center px-2 py-0.5 text-[10.5px] font-bold rounded border ${BADGE_TONES[tone]} ${className}`}
     >
       {children}
     </span>
@@ -117,9 +117,9 @@ export function StatCard({ label, value, sub, valueTone = 'text-slate-100', titl
 }) {
   return (
     <div className="bg-[#161b22] border border-slate-800 rounded-xl p-3 flex flex-col justify-between min-h-[76px]" title={title}>
-      <span className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">{label}</span>
+      <span className="text-[10.5px] text-gray-500 uppercase tracking-wider font-semibold">{label}</span>
       <span className={`text-lg font-bold tnum ${valueTone} mt-1`}>{value}</span>
-      {sub != null && <span className="text-[9px] text-gray-500 tnum">{sub}</span>}
+      {sub != null && <span className="text-[10.5px] text-gray-500 tnum">{sub}</span>}
     </div>
   );
 }
@@ -145,9 +145,9 @@ export function Collapsible({ title, icon, children, defaultOpen = false, hint }
         <span className="flex items-center gap-2 text-xs font-semibold text-gray-300">
           {icon && <span>{icon}</span>}
           {title}
-          {hint && <span className="text-[10px] font-normal text-gray-500 hidden sm:inline">— {hint}</span>}
+          {hint && <span className="text-[11.5px] font-normal text-gray-500 hidden sm:inline">— {hint}</span>}
         </span>
-        <span className={`text-[10px] text-gray-500 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}>▼</span>
+        <span className={`text-[11.5px] text-gray-500 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}>▼</span>
       </button>
       {open && (
         <div className="px-4 pb-4 pt-1 border-t border-slate-800/60 animate-fadeIn flex flex-col gap-5">
@@ -202,7 +202,7 @@ export function InfoHint({ title, children, width = 420 }: {
     <div className="relative inline-flex" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        className="w-5 h-5 rounded-full border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 text-[10px] font-bold flex items-center justify-center transition-colors"
+        className="w-5 h-5 rounded-full border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 text-[11.5px] font-bold flex items-center justify-center transition-colors"
         title={title}
         aria-label={title}
       >
@@ -210,7 +210,7 @@ export function InfoHint({ title, children, width = 420 }: {
       </button>
       {open && (
         <div
-          className="absolute right-0 top-7 z-50 bg-[#0d1117] border border-slate-700 rounded-xl p-3.5 shadow-2xl animate-fadeIn text-[11px] text-gray-300 leading-relaxed max-h-[70vh] overflow-y-auto custom-scrollbar"
+          className="absolute right-0 top-7 z-50 bg-[#0d1117] border border-slate-700 rounded-xl p-3.5 shadow-2xl animate-fadeIn text-[12px] text-gray-300 leading-relaxed max-h-[70vh] overflow-y-auto custom-scrollbar"
           style={{ width: `${width}px` }}
         >
           <div className="font-bold text-slate-200 mb-2">{title}</div>

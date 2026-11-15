@@ -420,7 +420,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
       <Card className="!p-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">Regime gamma</span>
+            <span className="text-[10.5px] text-gray-500 uppercase tracking-wider font-semibold">Regime gamma</span>
             {regimeNow ? (
               <Badge tone={regimeNow === 'long' ? 'good' : 'bad'}
                      title={regimeNow === 'long'
@@ -433,12 +433,12 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
               </Badge>
             ) : '—'}
             {gexFlip && (
-              <span className="text-[11px] font-mono text-gray-400 tnum">
+              <span className="text-[12px] font-mono text-gray-400 tnum">
                 Flip {futures}{chain !== 'etf' && ` · ${idxName}`} {gexFlip.price.toLocaleString()}
               </span>
             )}
             {flipOther && (
-              <span className={`text-[11px] font-mono tnum ${gexFlip && (spot > gexFlip.price) !== (spot > flipOther.price) ? 'font-semibold text-amber-300' : 'text-gray-400'}`}
+              <span className={`text-[12px] font-mono tnum ${gexFlip && (spot > gexFlip.price) !== (spot > flipOther.price) ? 'font-semibold text-amber-300' : 'text-gray-400'}`}
                     title={gexFlip && (spot > gexFlip.price) !== (spot > flipOther.price)
                       ? `Il flip derivato dalla catena ${idxName} DIVERGE da quello ETF: le due fonti leggono regimi opposti`
                       : `Flip derivato dalla catena ${idxName} (opzioni indici), allineato alla fonte ETF`}>
@@ -446,7 +446,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
               </span>
             )}
             {flip0 && (
-              <span className={`text-[11px] font-mono font-semibold tnum ${
+              <span className={`text-[12px] font-mono font-semibold tnum ${
                 gexFlip && ((spot > gexFlip.price) === (spot > flip0))
                   ? 'text-gray-400' : 'text-amber-300'
                 }`}
@@ -457,13 +457,13 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
               </span>
             )}
             {flip0Other && (
-              <span className="text-[11px] font-mono text-gray-400 tnum"
+              <span className="text-[12px] font-mono text-gray-400 tnum"
                     title={`Flip 0DTE derivato dalla catena ${idxName} (scadenze di oggi, opzioni indici)`}>
                 0DTE {idxName} {flip0Other.toLocaleString()}
               </span>
             )}
           </div>
-          <span className={`text-[10px] tnum ${
+          <span className={`text-[11.5px] tnum ${
             (Date.now() - new Date(plan.generated_at).getTime()) > 12 * 60000 ? 'text-red-400'
             : (Date.now() - new Date(plan.generated_at).getTime()) > 7 * 60000 ? 'text-amber-300'
             : 'text-gray-500'
@@ -472,7 +472,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           </span>
         </div>
         {lettura && (
-          <p className="text-[11px] leading-relaxed mt-2 pt-2 border-t border-slate-800/70 text-gray-400">
+          <p className="text-[12px] leading-relaxed mt-2 pt-2 border-t border-slate-800/70 text-gray-400">
             <span className="font-bold text-slate-200">Spot {futures} {Math.round(spot).toLocaleString()}</span>
             {' — '}
             {lettura.up && (() => {
@@ -501,7 +501,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           </p>
         )}
         {scenario && scenario.parts.length > 0 && (
-          <p className="text-[11px] leading-relaxed text-gray-400 mt-1">
+          <p className="text-[12px] leading-relaxed text-gray-400 mt-1">
             {scenario.tag && <span className="font-bold text-slate-200 uppercase tracking-wide">Scenario {scenario.tag}</span>}
             {' — '}{scenario.parts.join(' · ')}
           </p>
@@ -513,17 +513,17 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-sm font-bold text-slate-200">🎯 La scala</h3>
-            <span className="text-[10px] font-semibold text-gray-500" title="Cambia dal selettore nella barra in alto">
+            <span className="text-[11.5px] font-semibold text-gray-500" title="Cambia dal selettore nella barra in alto">
               borsa: {bucket === 'all' ? 'Tutte' : bucket === 'week' ? '≤7gg' : '0DTE'}
             </span>
-            <span className="text-[10px] font-semibold text-gray-500">
+            <span className="text-[11.5px] font-semibold text-gray-500">
               {chain === 'etf' ? 'da ETF (SPY/QQQ)' : chain === 'index' ? `da indici (${idxName})` : `ETF + indici (SPY/QQQ + ${idxName})`}
             </span>
           </div>
-          <span className="text-[10px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 pin · ⚡ trigger · ⧉ confluenza · ●●● peso · barra GEX 🟢 pin / 🔴 trigger</span>
+          <span className="text-[11.5px] text-gray-500">distanza in punti · 🧲 magnete · 🛡 pin · ⚡ trigger · ⧉ confluenza · ●●● peso · barra GEX 🟢 pin / 🔴 trigger</span>
         </div>
         {optLevels.length === 0 ? (
-          <p className="text-[11px] text-amber-300/90 py-4 leading-relaxed">
+          <p className="text-[12px] text-amber-300/90 py-4 leading-relaxed">
             Nessun livello opzioni da questa fonte in questo snapshot —
             {chain === 'index' ? ` la catena ${idxName}` : ' la catena'} è degradata o i dati sono in arrivo.
             Prova un'altra fonte dal menu in alto o attendi il prossimo giro della pipeline (ogni 5 minuti in seduta).
@@ -534,11 +534,11 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
                   nativePref={chain === 'index' ? 'index' : 'etf'} />
         )}
         {hasPinBelow === false && optLevels.length > 0 && (
-          <p className="text-[10px] text-amber-400/80 leading-relaxed mt-2" title="Sotto lo spot tutto il libro è put comprate: i dealer sono short gamma e il loro hedging vende mentre il prezzo scende">
+          <p className="text-[11.5px] text-amber-400/80 leading-relaxed mt-2" title="Sotto lo spot tutto il libro è put comprate: i dealer sono short gamma e il loro hedging vende mentre il prezzo scende">
             ⚠ Nessun pin sotto lo spot: sotto è tutto put comprata (dealer short gamma) — le discese tendono ad accelerare. Il primo sostegno “da gamma” torna sopra il flip o dove le put vengono vendute.
           </p>
         )}
-        <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
+        <p className="text-[11.5px] text-gray-500 leading-relaxed mt-2">
           La scala mostra SOLO i livelli chiave: i muri gamma più grossi per |GEX| della borsa
           e della fonte scelte (il segno decide il meccanismo: 🛡 pin = respinge, ⚡ trigger = accelera),
           il <b>Max Pain della scadenza vicina</b> (🧲 magnete) e il <b>flip gamma</b> (confine di regime).
@@ -556,7 +556,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
       <Card className="!p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h3 className="text-sm font-bold text-slate-200">📊 Istogramma — GEX e Open Interest, tutti gli strike</h3>
-          <span className="text-[10px] text-gray-500">
+          <span className="text-[11.5px] text-gray-500">
             borsa: {bucket === 'all' ? 'Tutte' : bucket === 'week' ? '≤7gg' : '0DTE'} ·
             fonte: {chain === 'etf' ? 'ETF (SPY/QQQ)' : chain === 'index' ? `indici (${idxName})` : 'ETF + indici'} ·
             cambia dalla barra superiore
@@ -585,7 +585,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           twinRefs={twinRefs}
           singleSrc={chain === 'index' ? 'index' : 'etf'}
         />
-        <p className="text-[10px] text-gray-500 leading-relaxed mt-2">
+        <p className="text-[11.5px] text-gray-500 leading-relaxed mt-2">
           {chain === 'both'
             ? <>In 'Entrambi' il grafico è <b>speculare su un unico asse prezzi in punti {futures}</b>:
                 <b> {idxName} sopra</b>, <b> {etfName} sotto</b>. I due libri non vengono sommati — hanno

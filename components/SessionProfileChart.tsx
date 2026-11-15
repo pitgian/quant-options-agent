@@ -75,7 +75,7 @@ export const SessionProfileChart: React.FC<SessionProfileChartProps> = ({
     <Card className="!p-4">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
         <h3 className="text-sm font-bold text-slate-200">📊 Profilo di oggi (seduta in corso)</h3>
-        <div className="flex items-center gap-3 text-[10px] text-gray-400">
+        <div className="flex items-center gap-3 text-[11.5px] text-gray-400">
           <span className="flex items-center gap-1">
             <span className="inline-block w-3 h-2 rounded-sm bg-indigo-500/60" /> Value Area (70%)
           </span>
@@ -90,7 +90,7 @@ export const SessionProfileChart: React.FC<SessionProfileChartProps> = ({
             const va = inVA(r.price);
             return (
               <div key={r.price} className="flex items-center gap-2" style={{ height: rowH }}>
-                <span className={`w-12 text-right text-[8px] font-mono shrink-0 ${isPoc ? 'text-indigo-300 font-bold' : 'text-gray-600'}`}>
+                <span className={`w-12 text-right text-[9.5px] font-mono shrink-0 ${isPoc ? 'text-indigo-300 font-bold' : 'text-gray-600'}`}>
                   {r.price.toFixed(0)}
                 </span>
                 <div className="flex-1 relative h-full rounded-sm"
@@ -109,7 +109,7 @@ export const SessionProfileChart: React.FC<SessionProfileChartProps> = ({
                       <div key={l.label} className="absolute top-0 bottom-0 flex items-center" style={{ left: 0 }}>
                         <div className="w-0.5 h-full" style={{ backgroundColor: l.color }} />
                         {isOverlay && (
-                          <span className="ml-1 text-[8px] font-bold whitespace-nowrap px-1 py-px rounded bg-slate-950/85"
+                          <span className="ml-1 text-[9.5px] font-bold whitespace-nowrap px-1 py-px rounded bg-slate-950/85"
                                 style={{ color: l.color }}>
                             {l.label}
                           </span>
@@ -124,7 +124,7 @@ export const SessionProfileChart: React.FC<SessionProfileChartProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center justify-between text-[10px] text-gray-500 mt-2 tnum">
+      <div className="flex items-center justify-between text-[11.5px] text-gray-500 mt-2 tnum">
         <span>VAL {stats.val.toFixed(0)}</span>
         <span>POC {stats.poc.toFixed(0)} · VA {stats.val.toFixed(0)}–{stats.vah.toFixed(0)}</span>
         <span>VAH {stats.vah.toFixed(0)}</span>

@@ -204,7 +204,9 @@ export const Ladder: React.FC<{
             : 'border-transparent hover:bg-slate-900/40'
       }`}>
         <div className="flex items-center gap-3 min-w-0">
-          <span className={`font-mono font-extrabold tnum ${isSpot ? 'text-xl text-amber-300' : 'text-base text-slate-100'}`}>
+          {/* whitespace-nowrap: con i caratteri più leggibili i chip accanto
+              si allargano e su telefono "ES 7645" si spezzava in due righe. */}
+          <span className={`font-mono font-extrabold tnum whitespace-nowrap ${isSpot ? 'text-xl text-amber-300' : 'text-base text-slate-100'}`}>
             {futures} {r.price.toLocaleString()}
           </span>
           {(() => {
@@ -216,7 +218,7 @@ export const Ladder: React.FC<{
             if (isSpot && ratios?.idx && ratios?.etf) {
               const sx = fmtNat(r.price / ratios.idx), sy = fmtNat(r.price / ratios.etf);
               return (
-                <span className="text-[10px] font-mono text-slate-400 tnum whitespace-nowrap"
+                <span className="text-[11.5px] font-mono text-slate-400 tnum whitespace-nowrap"
                       title={`Doppio prezzo — ${futures} ${r.price.toLocaleString('it-IT')} pt ≈ ${idxName} ${sx} · ${etfName} ${sy}`}>
                   · {idxName} {sx} · {etfName} {sy}
                 </span>
@@ -238,13 +240,13 @@ export const Ladder: React.FC<{
               ? `${idxName} ${fmtNat(r.price / ratios.idx)} · ${etfName} ${fmtNat(r.price / ratios.etf)}`
               : `${nat.src} ${fmtNat(nat.val)}`;
             return (
-              <span className="text-[10px] font-mono text-slate-400 tnum whitespace-nowrap"
+              <span className="text-[11.5px] font-mono text-slate-400 tnum whitespace-nowrap"
                     title={`Doppio prezzo — ${futures} ${r.price.toLocaleString('it-IT')} pt ≈ ${cross}`}>
                 · {nat.src} {fmtNat(nat.val)}
               </span>
             );
           })()}
-          {isSpot && <span className="text-[9px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>}
+          {isSpot && <span className="text-[10.5px] font-extrabold text-amber-400/80 uppercase tracking-widest">live</span>}
           {!isSpot && (r.merged ?? 0) > 1 && (() => {
             // CONFLUENZA (⧉, NON una stella): livelli distinti sulla stessa
             // zona a 5 punti. Se i membri vengono da DUE catene diverse
@@ -254,7 +256,7 @@ export const Ladder: React.FC<{
             const chains = new Set((r.members ?? []).map(m => (m.label ?? '').endsWith('-IDX') ? 'index' : 'etf'));
             const cross = chains.size > 1;
             return (
-              <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${cross
+              <span className={`text-[10.5px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${cross
                 ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
                 : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'}`}
                     title={cross
@@ -264,9 +266,9 @@ export const Ladder: React.FC<{
               </span>
             );
           })()}
-          <span className="text-[11px] text-gray-400 truncate">{r.nome_it}</span>
+          <span className="text-[12px] text-gray-400 truncate">{r.nome_it}</span>
           {r.importance && (
-            <span className="text-[10px] font-bold tracking-tight text-sky-400/90 whitespace-nowrap"
+            <span className="text-[11.5px] font-bold tracking-tight text-sky-400/90 whitespace-nowrap"
                   title={`PESO del livello (1-3): flip o pin sulla zona, vicinanza allo spot, GEX della zona — NON è la confluenza (⧉)`}>
               {'●'.repeat(r.importance === 'alta' ? 3 : r.importance === 'media' ? 2 : 1)}
               <span className="text-slate-600">{'●'.repeat(3 - (r.importance === 'alta' ? 3 : r.importance === 'media' ? 2 : 1))}</span>
@@ -275,25 +277,25 @@ export const Ladder: React.FC<{
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {conf && (
-            <span className={`text-[10px] font-mono font-bold tnum ${conf.tone}`}
+            <span className={`text-[11.5px] font-mono font-bold tnum ${conf.tone}`}
                   title={`Su ${r.n} giudizi, il livello ha fatto il suo mestiere ${r.held} volte: barriera = respinta/tenuta · trigger = rottura con accelerazione · magnete = chiusura di giornata sul livello`}>
               {conf.text}
             </span>
           )}
-          <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded border ${meta.chip}`} title={meta.title}>
+          <span className={`text-[10.5px] font-extrabold uppercase px-1.5 py-0.5 rounded border ${meta.chip}`} title={meta.title}>
             {r.kind === 'magnet' ? '🧲 magnete'
               : r.kind === 'barrier' ? `🛡 barriera${r.side ? ` ${r.side}` : ''}`
               : r.kind === 'trigger' ? `⚡ trigger${r.side ? ` ${r.side}` : ''}`
               : 'pivot'}
           </span>
           {r.oi != null && r.oi >= 1000 && (
-            <span className="text-[10px] font-mono text-gray-500 tnum"
+            <span className="text-[11.5px] font-mono text-gray-500 tnum"
                   title={`Open Interest del muro: ${r.oi.toLocaleString('it-IT')} contratti`}>
               OI {fmtOi.format(r.oi)}
             </span>
           )}
           {!isSpot && (
-            <span className={`text-[11px] font-mono font-semibold tnum w-16 text-right ${r.distPts > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}
+            <span className={`text-[12px] font-mono font-semibold tnum w-16 text-right ${r.distPts > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}
                   title={`Distanza dal prezzo live: ${r.distPts > 0 ? '+' : ''}${r.distPts} punti`}>
               {r.distPts > 0 ? '+' : ''}{r.distPts} pt
             </span>
@@ -301,7 +303,7 @@ export const Ladder: React.FC<{
           <GexBar g={isSpot ? undefined : r.gex} max={maxAbsGex} />
         </div>
         {(r.merged ?? 0) > 1 && r.members && r.members.length > 0 && (
-          <div className="text-[10px] text-gray-500 truncate"
+          <div className="text-[11.5px] text-gray-500 truncate"
                title="Quali livelli convergono su questa zona, con la loro fonte">
             ⧉ confluenza di: {r.members.map(m =>
               `${m.nome_it} [${(m.label ?? '').endsWith('-IDX') ? idxName : 'ETF'}]`

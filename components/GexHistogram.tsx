@@ -301,7 +301,7 @@ export const GexHistogram: React.FC<{
   const Chip: React.FC<{ on: boolean; onClick: () => void; children: React.ReactNode; title?: string; accent?: string }> =
     ({ on, onClick, children, title, accent = '#0284c7' }) => (
       <button onClick={onClick} title={title}
-        className="px-2.5 py-1 text-[10px] font-bold transition-all duration-150"
+        className="px-2.5 py-1 text-[11.5px] font-bold transition-all duration-150"
         style={on
           ? { background: accent, color: '#fff', boxShadow: `0 0 0 1px ${accent}, 0 2px 10px -2px ${accent}` }
           : { background: C.surface, color: C.soft }}>
@@ -373,7 +373,7 @@ export const GexHistogram: React.FC<{
     return (
       <div ref={wrapRef}>
         <div className="flex items-center justify-end mb-2">{controls}</div>
-        <p className="text-[11px] text-gray-500 py-6 text-center">
+        <p className="text-[12px] text-gray-500 py-6 text-center">
           Profilo non disponibile per questa borsa/fonte in questo snapshot.
         </p>
       </div>
@@ -386,7 +386,7 @@ export const GexHistogram: React.FC<{
       return (
         <div ref={wrapRef}>
           <div className="flex items-center justify-end mb-2">{controls}</div>
-          <p className="text-[11px] text-gray-500 py-6 text-center">
+          <p className="text-[12px] text-gray-500 py-6 text-center">
             Nessun profilo per questa finestra — allarga lo zoom o cambia borsa di scadenza.
           </p>
         </div>
@@ -429,7 +429,7 @@ export const GexHistogram: React.FC<{
     return (
       <div ref={wrapRef}>
         <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
-          <div className="text-[10px] leading-relaxed max-w-[420px]">
+          <div className="text-[11.5px] leading-relaxed max-w-[420px]">
             <span className="font-bold" style={{ color: C.idx }}>▲ {idxName}</span>
             <span className="text-gray-500"> sopra · </span>
             <span className="font-bold" style={{ color: C.etf }}>▼ {etfName}</span>
@@ -442,7 +442,7 @@ export const GexHistogram: React.FC<{
           {controls}
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap mb-1.5 text-[10px]">
+        <div className="flex items-center gap-3 flex-wrap mb-1.5 text-[11.5px]">
           {zones.length > 0 ? (
             <span className="font-extrabold px-2 py-0.5 rounded-md border"
               style={{ color: C.conf, borderColor: `${C.conf}55`, background: `${C.conf}14` }}>
@@ -533,12 +533,12 @@ export const GexHistogram: React.FC<{
             <g key={`si${f}`}>
               <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE - L.HALF_H * f} y2={L.IDX_BASE - L.HALF_H * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.IDX_BASE - L.HALF_H * f + 3} textAnchor="end" fontSize={8.5} fill={C.idx} opacity={0.85}>
+              <text x={L.M.left - 8} y={L.IDX_BASE - L.HALF_H * f + 3} textAnchor="end" fontSize={9.5} fill={C.idx} opacity={0.85}>
                 {fmtVal(scaleI * f, metric)}
               </text>
               <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE + L.HALF_H * f} y2={L.ETF_BASE + L.HALF_H * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.ETF_BASE + L.HALF_H * f + 3} textAnchor="end" fontSize={8.5} fill={C.etf} opacity={0.85}>
+              <text x={L.M.left - 8} y={L.ETF_BASE + L.HALF_H * f + 3} textAnchor="end" fontSize={9.5} fill={C.etf} opacity={0.85}>
                 {fmtVal(scaleE * f, metric)}
               </text>
             </g>
@@ -557,7 +557,7 @@ export const GexHistogram: React.FC<{
                 <line x1={cx1} x2={cx1} y1={L.M.top} y2={L.H - L.M.bottom} stroke={C.conf} strokeWidth={1} opacity={0.6} strokeDasharray="3 3" />
                 <line x1={cx2} x2={cx2} y1={L.M.top} y2={L.H - L.M.bottom} stroke={C.conf} strokeWidth={1} opacity={0.6} strokeDasharray="3 3" />
                 <rect x={mid - 26} y={L.M.top - 17} width={52} height={15} rx={4} fill={C.panel} stroke={C.conf} strokeWidth={1} />
-                <text x={mid} y={L.M.top - 6} textAnchor="middle" fontSize={9.5} fontWeight="bold" fill={C.conf}>
+                <text x={mid} y={L.M.top - 6} textAnchor="middle" fontSize={10.5} fontWeight="bold" fill={C.conf}>
                   ⧉ {fmtPrice((z.lo + z.hi) / 2)}
                 </text>
                 <title>{`Confluenza ⧉ ${fmtPrice(z.lo)}–${fmtPrice(z.hi)} ${futName} · lato ${both}\n${idxName} ${fmtPrice(z.bS)}: ${fmtVal(z.b, metric)}\n${etfName} ${fmtPrice(z.aS)}: ${fmtVal(z.a, metric)}`}</title>
@@ -592,23 +592,23 @@ export const GexHistogram: React.FC<{
           <rect x={L.M.left} y={L.GUT_TOP} width={L.PLOT_W} height={L.GUTTER} fill="url(#gGutter)" />
           <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE} y2={L.IDX_BASE} stroke="url(#gSpine)" strokeWidth={1.4} />
           <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE} y2={L.ETF_BASE} stroke="url(#gSpine)" strokeWidth={1.4} />
-          <text x={L.M.left - 8} y={L.IDX_BASE + 3} textAnchor="end" fontSize={9} fill={C.idx} opacity={0.9}>0</text>
-          <text x={L.M.left - 8} y={L.ETF_BASE + 3} textAnchor="end" fontSize={9} fill={C.etf} opacity={0.9}>0</text>
+          <text x={L.M.left - 8} y={L.IDX_BASE + 3} textAnchor="end" fontSize={10} fill={C.idx} opacity={0.9}>0</text>
+          <text x={L.M.left - 8} y={L.ETF_BASE + 3} textAnchor="end" fontSize={10} fill={C.etf} opacity={0.9}>0</text>
 
           {/* titoli d'asse nel margine sinistro: identificano le due metà senza
               coprire le barre (prima erano chip dentro il grafico) */}
           {!L.compact && (
             <g>
               <text transform={`translate(16 ${L.M.top + L.HALF_H / 2}) rotate(-90)`} textAnchor="middle"
-                fontSize={9.5} fontWeight="bold" fill={C.idx} opacity={0.9}>▲ INDICI · {idxName}</text>
+                fontSize={10.5} fontWeight="bold" fill={C.idx} opacity={0.9}>▲ INDICI · {idxName}</text>
               <text transform={`translate(16 ${L.ETF_BASE + L.HALF_H / 2}) rotate(-90)`} textAnchor="middle"
-                fontSize={9.5} fontWeight="bold" fill={C.etf} opacity={0.9}>▼ ETF · {etfName}</text>
+                fontSize={10.5} fontWeight="bold" fill={C.etf} opacity={0.9}>▼ ETF · {etfName}</text>
             </g>
           )}
           {/* marcatori di riga nella fascia: dicono quale categoria sta su quale riga */}
           <g>
             {[{ g: '▲', c: C.idx }, { g: '●', c: C.spot }, { g: '▼', c: C.etf }].map((m, i) => (
-              <text key={`rm${i}`} x={L.M.left - 9} y={rowY[i] + 3.5} textAnchor="end" fontSize={9}
+              <text key={`rm${i}`} x={L.M.left - 9} y={rowY[i] + 3.5} textAnchor="end" fontSize={10}
                 fontWeight="bold" fill={m.c} opacity={0.9}>{m.g}</text>
             ))}
           </g>
@@ -632,7 +632,7 @@ export const GexHistogram: React.FC<{
                 )}
                 <rect x={c.cx - c.w / 2} y={cy - 8.5} width={c.w} height={17} rx={5}
                   fill={C.panel} fillOpacity={0.98} stroke={kc} strokeWidth={1} strokeOpacity={0.85} />
-                <text x={c.cx - c.w / 2 + 7} y={cy + 3.5} fontSize={9.5} fontWeight="bold">
+                <text x={c.cx - c.w / 2 + 7} y={cy + 3.5} fontSize={10.5} fontWeight="bold">
                   <tspan fill={sc}>{srcArrow(c.r.src)} </tspan>
                   <tspan fill={kc}>{c.txt}</tspan>
                 </text>
@@ -646,11 +646,11 @@ export const GexHistogram: React.FC<{
 
           {/* asse X: prezzi in punti futures */}
           {ticks.map((s, i) => (
-            <text key={`t${i}`} x={x(s)} y={L.H - 6} textAnchor="middle" fontSize={9} fill={C.mute}>
+            <text key={`t${i}`} x={x(s)} y={L.H - 6} textAnchor="middle" fontSize={10} fill={C.mute}>
               {fmtPrice(s)}
             </text>
           ))}
-          <text x={L.W - L.M.right} y={L.M.top - 24} textAnchor="end" fontSize={9} fill={C.mute}>
+          <text x={L.W - L.M.right} y={L.M.top - 24} textAnchor="end" fontSize={10} fill={C.mute}>
             asse: punti {futName}
           </text>
 
@@ -673,23 +673,23 @@ export const GexHistogram: React.FC<{
                 {futName} {fmtPrice(hover.price)}
               </text>
               <line x1={tipX + 12} x2={tipX + tipW - 12} y1={tipY + 30} y2={tipY + 30} stroke="#1e293b" />
-              <text x={tipX + 12} y={tipY + 49} fontSize={10.5} fontWeight="bold" fill={C.idx}>▲ {idxName}</text>
-              <text x={tipX + 66} y={tipY + 49} fontSize={11} fontWeight="bold" fill={C.ink} opacity={0.92}>
+              <text x={tipX + 12} y={tipY + 49} fontSize={11} fontWeight="bold" fill={C.idx}>▲ {idxName}</text>
+              <text x={tipX + 66} y={tipY + 49} fontSize={12} fontWeight="bold" fill={C.ink} opacity={0.92}>
                 {hI ? convRow(hI.s, idxRatio) : '—'}
               </text>
-              <text x={tipX + tipW - 12} y={tipY + 49} textAnchor="end" fontSize={11} fontWeight="bold"
+              <text x={tipX + tipW - 12} y={tipY + 49} textAnchor="end" fontSize={12} fontWeight="bold"
                 fill={hI ? (view === 'tot' ? C.tot : mv(hI) >= 0 ? C.call : C.put) : C.mute}>
                 {hI ? fmtVal(mv(hI), metric) : '—'}
               </text>
-              <text x={tipX + 12} y={tipY + 72} fontSize={10.5} fontWeight="bold" fill={C.etf}>▼ {etfName}</text>
-              <text x={tipX + 66} y={tipY + 72} fontSize={11} fontWeight="bold" fill={C.ink} opacity={0.92}>
+              <text x={tipX + 12} y={tipY + 72} fontSize={11} fontWeight="bold" fill={C.etf}>▼ {etfName}</text>
+              <text x={tipX + 66} y={tipY + 72} fontSize={12} fontWeight="bold" fill={C.ink} opacity={0.92}>
                 {hE ? convRow(hE.s, etfRatio) : '—'}
               </text>
-              <text x={tipX + tipW - 12} y={tipY + 72} textAnchor="end" fontSize={11} fontWeight="bold"
+              <text x={tipX + tipW - 12} y={tipY + 72} textAnchor="end" fontSize={12} fontWeight="bold"
                 fill={hE ? (view === 'tot' ? C.tot : mv(hE) >= 0 ? C.call : C.put) : C.mute}>
                 {hE ? fmtVal(mv(hE), metric) : '—'}
               </text>
-              <text x={tipX + 12} y={tipY + 93} fontSize={9.5} fill={C.mute}>
+              <text x={tipX + 12} y={tipY + 93} fontSize={10.5} fill={C.mute}>
                 {hI && hE
                   ? `distanza fra i due strike: ${Math.round(Math.abs(hI.s - hE.s))} pt${Math.abs(hI.s - hE.s) <= ZONE_TOL_PT ? ' · ⧉ stesso livello' : ''}`
                   : 'strike più vicino per ciascuna fonte'}
@@ -698,7 +698,7 @@ export const GexHistogram: React.FC<{
           )}
         </svg>
 
-        <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[10px]">
+        <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[11.5px]">
           {view === 'tot' ? (
             <span className="flex items-center gap-1.5 text-gray-400">
               <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.tot }} />
@@ -784,7 +784,7 @@ export const GexHistogram: React.FC<{
   return (
     <div ref={wrapRef}>
       <div className="flex items-start justify-between flex-wrap gap-2 mb-2">
-        <div className="text-[10px] leading-relaxed max-w-[430px]">
+        <div className="text-[11.5px] leading-relaxed max-w-[430px]">
           <span className="font-bold" style={{ color: srcCol }}>{srcArrow} {srcName}</span>
           <span className="text-gray-500">
             {' '}— {metric === 'gex' ? 'GEX' : 'Open Interest'} per strike
@@ -799,7 +799,7 @@ export const GexHistogram: React.FC<{
       </div>
 
       {metric === 'oi' && !hasOi ? (
-        <p className="text-[11px] text-gray-500 py-6 text-center">
+        <p className="text-[12px] text-gray-500 py-6 text-center">
           Open Interest non disponibile in questo snapshot — torna alla metrica Γ GEX.
         </p>
       ) : geom ? (
@@ -868,7 +868,7 @@ export const GexHistogram: React.FC<{
             <g key={`gy${f}`}>
               <line x1={L.SM.left} x2={L.SW - L.SM.right} y1={geom.base - L.S_HALF * 2 * f} y2={geom.base - L.S_HALF * 2 * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.SM.left - 8} y={geom.base - L.S_HALF * 2 * f + 3} textAnchor="end" fontSize={8.5} fill={C.tot} opacity={0.85}>
+              <text x={L.SM.left - 8} y={geom.base - L.S_HALF * 2 * f + 3} textAnchor="end" fontSize={9.5} fill={C.tot} opacity={0.85}>
                 {fmtY(geom.yMax * f)}
               </text>
             </g>
@@ -876,12 +876,12 @@ export const GexHistogram: React.FC<{
             <g key={`gy${f}`}>
               <line x1={L.SM.left} x2={L.SW - L.SM.right} y1={L.S_ZERO - L.S_HALF * f} y2={L.S_ZERO - L.S_HALF * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.SM.left - 8} y={L.S_ZERO - L.S_HALF * f + 3} textAnchor="end" fontSize={8.5} fill={C.call} opacity={0.85}>
+              <text x={L.SM.left - 8} y={L.S_ZERO - L.S_HALF * f + 3} textAnchor="end" fontSize={9.5} fill={C.call} opacity={0.85}>
                 {fmtY(geom.yMax * f)}
               </text>
               <line x1={L.SM.left} x2={L.SW - L.SM.right} y1={L.S_ZERO + L.S_HALF * f} y2={L.S_ZERO + L.S_HALF * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.SM.left - 8} y={L.S_ZERO + L.S_HALF * f + 3} textAnchor="end" fontSize={8.5} fill={C.put} opacity={0.85}>
+              <text x={L.SM.left - 8} y={L.S_ZERO + L.S_HALF * f + 3} textAnchor="end" fontSize={9.5} fill={C.put} opacity={0.85}>
                 {fmtY(geom.yMax * f)}
               </text>
             </g>
@@ -910,19 +910,19 @@ export const GexHistogram: React.FC<{
 
           {/* asse zero (in 'tot' è la base, in fondo al plot) */}
           <line x1={L.SM.left} x2={L.SW - L.SM.right} y1={geom.base} y2={geom.base} stroke="url(#sZero)" strokeWidth={1.5} />
-          <text x={L.SM.left - 8} y={geom.base + 3} textAnchor="end" fontSize={9} fill={C.soft}>0</text>
+          <text x={L.SM.left - 8} y={geom.base + 3} textAnchor="end" fontSize={10} fill={C.soft}>0</text>
 
           {/* titolo d'asse nel margine sinistro (non copre le barre) */}
           {!L.compact && (
             <text transform={`translate(16 ${L.SM.top + L.SPLOT_H / 2}) rotate(-90)`} textAnchor="middle"
-              fontSize={9.5} fontWeight="bold" fill={srcCol} opacity={0.9}>
+              fontSize={10.5} fontWeight="bold" fill={srcCol} opacity={0.9}>
               {srcArrow} {singleSrc === 'etf' ? 'ETF' : 'INDICI'} · {srcName}
             </text>
           )}
           {/* marcatori di riga nella corsia: spot / max pain / flip, sempre nello stesso ordine */}
           <g>
             {[{ g: '●', c: C.spot }, { g: '◆', c: C.mp }, { g: '⇄', c: C.flip }].map((m, i) => (
-              <text key={`sm${i}`} x={L.SM.left - 9} y={sRowY[i] + 3.5} textAnchor="end" fontSize={9}
+              <text key={`sm${i}`} x={L.SM.left - 9} y={sRowY[i] + 3.5} textAnchor="end" fontSize={10}
                 fontWeight="bold" fill={m.c} opacity={0.9}>{m.g}</text>
             ))}
           </g>
@@ -942,7 +942,7 @@ export const GexHistogram: React.FC<{
                 )}
                 <rect x={c.cx - c.w / 2} y={cy - 8.5} width={c.w} height={17} rx={5}
                   fill={C.panel} fillOpacity={0.98} stroke={kc} strokeWidth={1} strokeOpacity={0.85} />
-                <text x={c.cx - c.w / 2 + 7} y={cy + 3.5} fontSize={9.5} fontWeight="bold">
+                <text x={c.cx - c.w / 2 + 7} y={cy + 3.5} fontSize={10.5} fontWeight="bold">
                   <tspan fill={srcCol}>{srcArrow} </tspan>
                   <tspan fill={kc}>{c.txt}</tspan>
                 </text>
@@ -955,11 +955,11 @@ export const GexHistogram: React.FC<{
 
           {/* asse X */}
           {sTicks.map((v, i) => (
-            <text key={`tx${i}`} x={geom.x(v)} y={L.SH - 8} textAnchor="middle" fontSize={9} fill={C.mute}>
+            <text key={`tx${i}`} x={geom.x(v)} y={L.SH - 8} textAnchor="middle" fontSize={10} fill={C.mute}>
               {singleSrc === 'etf' ? fmtNat(v) : fmtPrice(v)}
             </text>
           ))}
-          <text x={L.SW - L.SM.right} y={L.SH - L.SM.bottom + 14} textAnchor="end" fontSize={9} fill={C.mute}>
+          <text x={L.SW - L.SM.right} y={L.SH - L.SM.bottom + 14} textAnchor="end" fontSize={10} fill={C.mute}>
             asse: {singleSrc === 'etf' ? `prezzi ${etfName}` : `punti ${futName}`}
           </text>
 
@@ -980,28 +980,28 @@ export const GexHistogram: React.FC<{
                 </text>
               )}
               <line x1={sTipX + 12} x2={sTipX + sTipW - 12} y1={sTipY + 30} y2={sTipY + 30} stroke="#1e293b" />
-              <text x={sTipX + 12} y={sTipY + 49} fontSize={10.5} fontWeight="bold" fill={C.call}>
+              <text x={sTipX + 12} y={sTipY + 49} fontSize={11} fontWeight="bold" fill={C.call}>
                 {metric === 'gex' ? 'call GEX' : 'call OI'}
               </text>
-              <text x={sTipX + sTipW - 12} y={sTipY + 49} textAnchor="end" fontSize={11} fontWeight="bold" fill={C.call}>
+              <text x={sTipX + sTipW - 12} y={sTipY + 49} textAnchor="end" fontSize={12} fontWeight="bold" fill={C.call}>
                 {metric === 'gex' ? `${fmtMld(hBar.c)} Mld` : (hBar.co ?? 0).toLocaleString('it-IT')}
               </text>
-              <text x={sTipX + 12} y={sTipY + 68} fontSize={10.5} fontWeight="bold" fill={C.put}>
+              <text x={sTipX + 12} y={sTipY + 68} fontSize={11} fontWeight="bold" fill={C.put}>
                 {metric === 'gex' ? 'put GEX' : 'put OI'}
               </text>
-              <text x={sTipX + sTipW - 12} y={sTipY + 68} textAnchor="end" fontSize={11} fontWeight="bold" fill={C.put}>
+              <text x={sTipX + sTipW - 12} y={sTipY + 68} textAnchor="end" fontSize={12} fontWeight="bold" fill={C.put}>
                 {metric === 'gex' ? `${fmtMld(hBar.p)} Mld` : (-(hBar.po ?? 0)).toLocaleString('it-IT')}
               </text>
               <line x1={sTipX + 12} x2={sTipX + sTipW - 12} y1={sTipY + 78} y2={sTipY + 78} stroke="#1e293b" />
               {view === 'tot' ? (
                 <>
-                  <text x={sTipX + 12} y={sTipY + 97} fontSize={10.5} fontWeight="bold" fill={C.tot}>
+                  <text x={sTipX + 12} y={sTipY + 97} fontSize={11} fontWeight="bold" fill={C.tot}>
                     {metric === 'oi' ? 'call+put' : '|call|+|put|'}
                   </text>
                   <text x={sTipX + sTipW - 12} y={sTipY + 97} textAnchor="end" fontSize={12.5} fontWeight="bold" fill={C.tot}>
                     {fmtVal(metric === 'oi' ? totOf(hBar) : Math.abs(hBar.c) + Math.abs(hBar.p), metric)}
                   </text>
-                  <text x={sTipX + 12} y={sTipY + sTipI} fontSize={9.5} fill={C.mute}>
+                  <text x={sTipX + 12} y={sTipY + sTipI} fontSize={10.5} fill={C.mute}>
                     {metric === 'oi' ? 'size del libro' : 'gamma lorda'}
                     {metric === 'oi' && totOf(hBar) > 0
                       ? ` · call ${Math.round(100 * (hBar.co ?? 0) / totOf(hBar))}% / put ${100 - Math.round(100 * (hBar.co ?? 0) / totOf(hBar))}%`
@@ -1011,8 +1011,8 @@ export const GexHistogram: React.FC<{
                 </>
               ) : (
                 <>
-                  <text x={sTipX + 12} y={sTipY + 97} fontSize={10.5} fill={C.soft}>netto</text>
-                  <text x={sTipX + sTipW - 12} y={sTipY + 97} textAnchor="end" fontSize={12} fontWeight="bold"
+                  <text x={sTipX + 12} y={sTipY + 97} fontSize={11} fill={C.soft}>netto</text>
+                  <text x={sTipX + sTipW - 12} y={sTipY + 97} textAnchor="end" fontSize={12.5} fontWeight="bold"
                     fill={val(hBar) >= 0 ? C.call : C.put}>
                     {fmtVal(val(hBar), metric)} · {val(hBar) >= 0 ? 'pin 🛡' : 'trigger ⚡'}
                   </text>
@@ -1022,10 +1022,10 @@ export const GexHistogram: React.FC<{
           )}
         </svg>
       ) : (
-        <p className="text-[11px] text-gray-500 py-6 text-center">Nessun dato per questo perimetro.</p>
+        <p className="text-[12px] text-gray-500 py-6 text-center">Nessun dato per questo perimetro.</p>
       )}
 
-      <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[10px]">
+      <div className="flex items-center gap-4 mt-1.5 flex-wrap text-[11.5px]">
         {view === 'tot' ? (
           <span className="flex items-center gap-1.5 text-gray-400">
             <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: C.tot }} />

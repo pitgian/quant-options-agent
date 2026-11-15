@@ -32,17 +32,17 @@ const RateRow: React.FC<{
   label: string; agg: ChainAgg; rate: number | null; accent: string;
 }> = ({ label, agg, rate, accent }) => (
   <div className="flex items-center gap-2.5">
-    <span className={`text-[10px] font-bold w-24 shrink-0 ${accent}`}>{label}</span>
+    <span className={`text-[11.5px] font-bold w-24 shrink-0 ${accent}`}>{label}</span>
     <div className="flex-1 h-2.5 rounded-full bg-slate-800 overflow-hidden min-w-[80px]">
       {rate !== null && (
         <div className={`h-full rounded-full ${accent === 'text-violet-300' ? 'bg-violet-400' : 'bg-emerald-400'}`}
              style={{ width: `${Math.round(rate * 100)}%` }} />
       )}
     </div>
-    <span className="text-[11px] font-mono font-bold tnum w-12 text-right text-slate-200">
+    <span className="text-[12px] font-mono font-bold tnum w-12 text-right text-slate-200">
       {rate !== null ? `${(rate * 100).toFixed(0)}%` : '—'}
     </span>
-    <span className="text-[9px] font-mono text-gray-500 w-20 text-right tnum">
+    <span className="text-[10.5px] font-mono text-gray-500 w-20 text-right tnum">
       {agg.n > 0 ? `${agg.held}/${agg.n} · ${agg.levels} liv.` : '—'}
     </span>
   </div>
@@ -116,14 +116,14 @@ export const StatsPanel: React.FC<{ stats: Record<string, LevelStat> }> = ({ sta
         <div className="rounded-lg border border-slate-800 bg-[#0d1117] p-3.5">
           <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
             <h4 className="text-xs font-bold text-slate-200">⚖️ ETF vs Indici — quale fonte tiene meglio?</h4>
-            <span className="text-[9px] text-gray-500">track record separato per fonte · aggiornato a ogni giornata completata</span>
+            <span className="text-[10.5px] text-gray-500">track record separato per fonte · aggiornato a ogni giornata completata</span>
           </div>
           <div className="flex flex-col gap-2">
             <RateRow label={`📊 ETF (SPY/QQQ)`} agg={etf} rate={etfRate} accent="text-emerald-300" />
             <RateRow label={`🏛 Indici (SPX/NDX)`} agg={idx} rate={idxRate} accent="text-violet-300" />
           </div>
           {verdict && (
-            <p className="text-[11px] leading-relaxed mt-3 pt-2.5 border-t border-slate-800/70">
+            <p className="text-[12px] leading-relaxed mt-3 pt-2.5 border-t border-slate-800/70">
               <span className="font-bold text-slate-200">Verdetto: </span>{verdict}
             </p>
           )}
@@ -131,7 +131,7 @@ export const StatsPanel: React.FC<{ stats: Record<string, LevelStat> }> = ({ sta
           {Object.keys(perInst).length > 1 && (etf.n > 0 || idx.n > 0) && (
             <div className="mt-3 pt-2.5 border-t border-slate-800/70 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
               {Object.entries(perInst).map(([inst, p]) => (
-                <div key={inst} className="text-[10px] text-gray-400 flex items-center gap-2 flex-wrap">
+                <div key={inst} className="text-[11.5px] text-gray-400 flex items-center gap-2 flex-wrap">
                   <span className="font-mono font-bold text-slate-300">{inst}</span>
                   <span className="text-emerald-400/90">ETF {(p.etf.n > 0 ? `${Math.round(p.etf.held / p.etf.n * 100)}% (${p.etf.n})` : '—')}</span>
                   <span className="text-gray-600">·</span>
@@ -143,8 +143,8 @@ export const StatsPanel: React.FC<{ stats: Record<string, LevelStat> }> = ({ sta
           {/* per meccanismo */}
           {kinds.length > 0 && (
             <div className="mt-3 pt-2.5 border-t border-slate-800/70">
-              <div className="text-[9px] text-gray-500 uppercase tracking-wider font-bold mb-1.5">Per meccanismo (verdetto giornaliero)</div>
-              <table className="w-full text-[10px]">
+              <div className="text-[10.5px] text-gray-500 uppercase tracking-wider font-bold mb-1.5">Per meccanismo (verdetto giornaliero)</div>
+              <table className="w-full text-[11.5px]">
                 <thead>
                   <tr className="text-gray-500">
                     <th className="text-left font-semibold py-0.5">Meccanismo</th>
@@ -182,8 +182,10 @@ export const StatsPanel: React.FC<{ stats: Record<string, LevelStat> }> = ({ sta
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-slate-800">
-          <table className="min-w-full text-xs text-left text-gray-300">
-            <thead className="bg-[#0d1117] text-gray-400 uppercase tracking-wider text-[9px] font-bold border-b border-slate-800">
+          {/* min-w: su telefono la tabella SCORRE invece di spezzare il nome del
+              livello su 3 righe (con i caratteri più leggibili non ci stava più). */}
+          <table className="min-w-[620px] w-full text-xs text-left text-gray-300">
+            <thead className="bg-[#0d1117] text-gray-400 uppercase tracking-wider text-[10.5px] font-bold border-b border-slate-800">
               <tr>
                 <th className="px-4 py-2.5">Livello</th>
                 <th className="px-4 py-2.5">Occorrenze</th>
@@ -197,12 +199,12 @@ export const StatsPanel: React.FC<{ stats: Record<string, LevelStat> }> = ({ sta
                 const isIdx = chainOf(r.name) === 'index';
                 return (
                   <tr key={r.name} className="hover:bg-slate-900/40">
-                    <td className="px-4 py-2.5 font-semibold text-slate-200">
+                    <td className="px-4 py-2.5 font-semibold text-slate-200 whitespace-nowrap">
                       {r.name.includes(':') && (
-                        <span className="mr-1.5 text-[9px] font-mono font-bold text-slate-500">{r.name.split(':')[0]}</span>
+                        <span className="mr-1.5 text-[10.5px] font-mono font-bold text-slate-500">{r.name.split(':')[0]}</span>
                       )}
                       {r.nome_it}
-                      <span className={`ml-1.5 text-[8px] font-extrabold uppercase px-1 py-0.5 rounded border whitespace-nowrap ${isIdx
+                      <span className={`ml-1.5 text-[9.5px] font-extrabold uppercase px-1 py-0.5 rounded border whitespace-nowrap ${isIdx
                         ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
                         : 'bg-emerald-500/10 text-emerald-400/80 border-emerald-500/20'}`}>
                         {isIdx ? 'indice' : 'ETF'}

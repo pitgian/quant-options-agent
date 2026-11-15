@@ -96,7 +96,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="border-t border-gray-800/40 px-6 py-2.5 text-[10px] text-gray-600 flex justify-between">
+      <footer className="border-t border-gray-800/40 px-6 py-2.5 text-[11.5px] text-gray-600 flex justify-between">
         <span>QuantFlow — livelli da opzioni, volumi e auction market theory</span>
         <span>non è consulenza finanziaria</span>
       </footer>
