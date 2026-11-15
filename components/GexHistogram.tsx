@@ -409,18 +409,22 @@ export const GexHistogram: React.FC<{
     const kindColor = (k: TwinRef['kind']) => k === 'spot' ? C.spot : k === 'mp' ? C.mp : C.flip;
     const srcColor = (v: TwinRef['src']) => v === 'idx' ? C.idx : v === 'etf' ? C.etf : C.soft;
     const srcArrow = (v: TwinRef['src']) => v === 'idx' ? '▲' : v === 'etf' ? '▼' : '●';
-    /* ETICHETTE DENTRO LE METÀ (come la corsia della vista singola): i livelli
-       della catena indici (▲) e lo spot futures (●) nella metà SUPERIORE, i
-       livelli della catena ETF (▼) in quella INFERIORE. Niente più fascia
-       centrale da 73px: sopra e sotto restano due strisce sottili, il resto è
-       grafico. LANE è la loro altezza, uguale per le due metà (simmetria). */
+    /* ETICHETTE DENTRO LE METÀ, UNA RIGA PER TIPO — esattamente come la
+       corsia della vista singola (● spot, ◆ max pain, ⇄ flip). Così due
+       livelli vicini di prezzo NON finiscono mai sulla stessa riga a
+       spingersi con la linea tratteggiata: stanno su righe diverse.
+       Metà SUPERIORE: spot + livelli della catena indici (▲).
+       Metà INFERIORE: livelli della catena ETF (▼). */
     const refsInWin = (twinRefs ?? []).filter(r => r.price >= x0 && r.price <= x1);
-    const UP_ROWS = 2;   // riga 0 = livelli indici, riga 1 = spot futures
-    const DN_ROWS = 1;   // riga 0 = livelli ETF
-    const LANE = Math.max(UP_ROWS, DN_ROWS) * 21 + 10;
-    const barH = Math.max(24, L.HALF_H - LANE);
+    const ROWS = 3;                       // 0 = spot · 1 = max pain · 2 = flip
+    const LANE = ROWS * 21 + 10;          // altezza UGUALE per le due metà:
+    const barH = Math.max(24, L.HALF_H - LANE);   // stessa scala con 'Scala comune'
     const laneY = (half: 'up' | 'dn', row: number) =>
       (half === 'up' ? L.M.top : L.ETF_BASE) + 16 + row * 21;
+    /* la riga dipende dal TIPO (non dalla fonte): lo spot ha la sua, max pain
+       e flip le loro. Nell'ETF la riga 0 (spot) resta libera: lo spot futures
+       è uno solo e vive nella metà superiore. */
+    const rowOf = (r: TwinRef) => r.kind === 'spot' ? 0 : r.kind === 'mp' ? 1 : 2;
     type Chip = { r: TwinRef; txt: string; w: number; cx: number; cx0: number; half: 'up' | 'dn'; row: number };
     const chips: Chip[] = [];
     const buildRow = (half: 'up' | 'dn', row: number, list: TwinRef[]) =>
@@ -430,9 +434,10 @@ export const GexHistogram: React.FC<{
            toccavano — MP e Flip sullo stesso prezzo sembravano un blocco solo) */
         return { r, txt, w: txt.length * 6.2 + 30, cx: x(r.price), cx0: x(r.price), half, row };
       }), L.M.left, L.W - L.M.right));
-    buildRow('up', 0, refsInWin.filter(r => r.src === 'idx'));
-    buildRow('up', 1, refsInWin.filter(r => r.src === 'fut'));
-    buildRow('dn', 0, refsInWin.filter(r => r.src === 'etf'));
+    { const up = refsInWin.filter(r => r.src !== 'etf');
+      for (let k = 0; k < ROWS; k++) buildRow('up', k, up.filter(r => rowOf(r) === k));
+      const dn = refsInWin.filter(r => r.src === 'etf');
+      for (let k = 1; k < ROWS; k++) buildRow('dn', k, dn.filter(r => rowOf(r) === k)); }
     const tipW = Math.min(272, L.PLOT_W - 8), tipH = 100;
     /* riga di conversione: strike NATIVO → prezzo futures. Senza ratio il
        nativo non c'è, e prima usciva `7524 → ES 7524` (due volte lo stesso
@@ -629,13 +634,16 @@ export const GexHistogram: React.FC<{
                 fontSize={10.5} fontWeight="bold" fill={C.etf} opacity={0.9}>▼ ETF · {etfName}</text>
             </g>
           )}
-          {/* marcatori di categoria accanto a ogni corsia: ▲● sopra, ▼ sotto */}
+          {/* marcatori di riga nel margine sinistro: STESSI simboli della vista
+              singola (● spot · ◆ max pain · ⇄ flip), uno per riga e per metà */}
           <g>
-            {([
-              { g: '▲', c: C.idx, y: laneY('up', 0) },
-              { g: '●', c: C.spot, y: laneY('up', 1) },
-              { g: '▼', c: C.etf, y: laneY('dn', 0) },
-            ]).map((m, i) => (
+            {[
+              { g: '●', c: C.spot, y: laneY('up', 0) },
+              { g: '◆', c: C.mp, y: laneY('up', 1) },
+              { g: '⇄', c: C.flip, y: laneY('up', 2) },
+              { g: '◆', c: C.mp, y: laneY('dn', 1) },
+              { g: '⇄', c: C.flip, y: laneY('dn', 2) },
+            ].map((m, i) => (
               <text key={`rm${i}`} x={L.M.left - 9} y={m.y + 3.5} textAnchor="end" fontSize={10}
                 fontWeight="bold" fill={m.c} opacity={0.9}>{m.g}</text>
             ))}
@@ -753,8 +761,8 @@ export const GexHistogram: React.FC<{
             <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-0.5" style={{ background: C.flip }} /> Flip</span>
           </span>
           <span className="text-gray-500">
-            corsie dentro le metà: <b style={{ color: C.idx }}>▲</b> livelli {idxName} sopra,{' '}
-            <b style={{ color: C.etf }}>▼</b> livelli {etfName} sotto, <b style={{ color: C.spot }}>●</b> spot futures
+            corsie dentro le metà, una riga per tipo (● spot · ◆ max pain · ⇄ flip):{' '}
+            <b style={{ color: C.idx }}>▲</b> livelli {idxName} sopra, <b style={{ color: C.etf }}>▼</b> livelli {etfName} sotto
           </span>
           <span className="text-gray-600 ml-auto">passa il mouse: valori delle due fonti a confronto</span>
         </div>
