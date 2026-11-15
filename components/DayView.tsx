@@ -663,7 +663,10 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
                 entro 5 pt, dai top_gamma separati). Le sagome sono il <b>netto</b> di ciascun libro
                 (call−put): passando a <b>Σ Call+Put</b> diventano la <b>somma dei due lati</b> di quel libro
                 (call+put per l'OI, |call|+|put| per il GEX) — la size dei livelli, che il netto nasconde
-                quando call e put si bilanciano sullo stesso strike. Passa il mouse: il riquadro mostra lo strike più
+                quando call e put si bilanciano sullo stesso strike. Con <b>Call/Put</b> ogni libro mostra le
+                sue <b>due gambe per intero</b>: call sopra e put sotto il proprio zero (due istogrammi completi
+                impilati sullo stesso asse prezzi), così si vede cosa fa da pavimento sotto e da soffitto sopra
+                in ciascun libro. Passa il mouse: il riquadro mostra lo strike più
                 vicino di ciascuna fonte, il suo valore e la distanza fra i due.</>
             : <>{/* la descrizione dei COLORI sta nella legenda sotto il grafico,
                   che cambia con la modalità (Call/Put · Net · Σ): qui niente

@@ -185,9 +185,12 @@ export const GexHistogram: React.FC<{
   const gross = (e: GexProfileEntry) => metric === 'gex'
     ? Math.abs(e.c) + Math.abs(e.p)
     : totOf(e);
-  /* Valore usato dal grafico SPECULARE (Entrambi). Lì non esiste la vista
-     Call/Put (ogni metà è una sagoma sola), quindi restano due letture:
-     Net (default, com'era) e Σ. Il resto della UI chiama `val` = netto. */
+  /** Le due GAMBE in magnitudine (>= 0): call e put, per la vista Call/Put. */
+  const legs = (e: GexProfileEntry): { c: number; p: number } => metric === 'gex'
+    ? { c: Math.max(0, e.c), p: Math.max(0, -e.p) }
+    : { c: Math.max(0, e.co ?? 0), p: Math.max(0, e.po ?? 0) };
+  /* Valore usato dal grafico SPECULARE (Entrambi) fuori da Call/Put:
+     Net (default) o Σ. In Call/Put le sagome sono le due gambe (vedi legs). */
   const mv = (e: GexProfileEntry) => view === 'tot' ? gross(e) : val(e);
 
   /* ------------------------------------------------------- confluenze ⧉ */
@@ -228,8 +231,16 @@ export const GexHistogram: React.FC<{
       arr.filter(e => e.s >= x0 && e.s <= x1).sort((a, b) => a.s - b.s);
     const I = inWin(twinIdx!), E = inWin(twinEtf!);
     if (!I.length && !E.length) return null;
-    const maxI = Math.max(1e-9, ...I.map(e => Math.abs(mv(e))));
-    const maxE = Math.max(1e-9, ...E.map(e => Math.abs(mv(e))));
+    // In Call/Put la scala di ciascun libro è la sua gamba più grossa
+    // (max(call, put)): le due gambe si confrontano sullo stesso metro.
+    const splitV = view === 'split';
+    const mag = (e: GexProfileEntry) => {
+      if (!splitV) return Math.abs(mv(e));
+      const g = legs(e);
+      return Math.max(g.c, g.p);
+    };
+    const maxI = Math.max(1e-9, ...I.map(mag));
+    const maxE = Math.max(1e-9, ...E.map(mag));
     const shared = Math.max(maxI, maxE);
     const scaleI = commonScale ? shared : maxI;
     const scaleE = commonScale ? shared : maxE;
@@ -342,16 +353,19 @@ export const GexHistogram: React.FC<{
         </div>
       )}
       {mirror && (
-        /* Nella speculare non c'è la vista Call/Put (ogni metà è una sagoma
-           sola): le due letture sono Net e Σ, come l'N T8 (OptView). */
+        /* Nella speculare le tre viste del sito valgono anche qui: Call/Put
+           rende OGNI metà un istogramma completo (call sopra, put sotto il
+           proprio zero), Net e Σ la lasciano a sagoma unica. */
         <div className="inline-flex rounded-lg border border-slate-800 overflow-hidden">
-          {(['net', 'tot'] as const).map(v => (
-            <Chip key={v} on={(view === 'tot') === (v === 'tot')} onClick={() => setView(v)}
+          {(['split', 'net', 'tot'] as const).map(v => (
+            <Chip key={v} on={view === v} onClick={() => setView(v)}
               accent="#4f46e5"
-              title={v === 'net'
-                ? 'Sagoma del netto call−put per ciascun libro (il lato)'
-                : 'Sagoma della SOMMA dei due lati per ciascun libro (|call|+|put| o co+po): la size del livello' }>
-              {v === 'net' ? 'Net' : 'Σ Call+Put'}
+              title={v === 'split'
+                ? 'Ogni libro con le SUE due gambe: call sopra lo zero, put sotto (entrambi gli istogrammi interi)'
+                : v === 'net'
+                  ? 'Sagoma del netto call−put per ciascun libro (il lato)'
+                  : 'Sagoma della SOMMA dei due lati per ciascun libro (|call|+|put| o co+po): la size del livello'}>
+              {v === 'split' ? 'Call/Put' : v === 'net' ? 'Net' : 'Σ Call+Put'}
             </Chip>
           ))}
         </div>
@@ -429,6 +443,15 @@ export const GexHistogram: React.FC<{
        metà inferiore (sotto le sue barre): così le due aree a barre restano
        ADIACENTI e a separarle è solo il divisore da 16px, non 73px di etichette. */
     const LANE_DN_TOP = L.H - L.M.bottom - LANE;
+    /* Call/Put nella speculare: ogni metà diventa un istogramma COMPLETO, con
+       il proprio zero al centro dell'area a barre — call sopra, put sotto.
+       Le due metà restano impilate (indici sopra, ETF sotto) sullo stesso asse
+       prezzi, quindi si confrontano; ognuna mostra ENTRAMBE le gambe. */
+    const splitView = view === 'split';
+    const upTop = L.M.top + LANE, upBot = L.IDX_BASE;
+    const dnTop = L.ETF_BASE, dnBot = LANE_DN_TOP;
+    const zI = (upTop + upBot) / 2, zE = (dnTop + dnBot) / 2;
+    const subH = Math.max(16, barMax / 2);   // spazio per lato (call / put)
     const laneY = (half: 'up' | 'dn', row: number) =>
       (half === 'up' ? L.M.top : LANE_DN_TOP) + 16 + row * 21;
     /* La riga dipende dal TIPO. SOPRA: spot, max pain, flip (righe 0-1-2, come
@@ -468,8 +491,12 @@ export const GexHistogram: React.FC<{
             <span className="text-gray-500"> sopra · </span>
             <span className="font-bold" style={{ color: C.etf }}>▼ {etfName}</span>
             <span className="text-gray-500">
-              {' '}sotto — asse unico in punti {futName}, {view === 'tot'
-                ? `Σ ${metric === 'gex' ? 'GEX' : 'OI'} dei due lati (call+put)` : `netto ${metric === 'gex' ? 'GEX' : 'OI'}`} per strike.
+              {' '}sotto — asse unico in punti {futName},{' '}
+              {view === 'split'
+                ? `call sopra / put sotto lo zero di CIASCUN libro (${metric === 'gex' ? 'GEX' : 'OI'})`
+                : view === 'tot'
+                  ? `Σ ${metric === 'gex' ? 'GEX' : 'OI'} dei due lati (call+put) per strike`
+                  : `netto ${metric === 'gex' ? 'GEX' : 'OI'} per strike`}.
               Dove le due sagome si allineano, i due libri presidiano lo stesso livello.
             </span>
           </div>
@@ -500,7 +527,7 @@ export const GexHistogram: React.FC<{
 
         <svg viewBox={`0 0 ${L.W} ${L.H}`} className="w-full select-none" role="img"
           aria-label={`Profilo speculare ${idxName} sopra e ${etfName} sotto, asse in punti ${futName}, ${
-            view === 'tot' ? 'somma call+put' : 'netto call-put'}`}
+            view === 'tot' ? 'somma call+put' : view === 'split' ? 'call e put di ciascun libro' : 'netto call-put'}`}
           onPointerMove={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             const px = ((e.clientX - r.left) / r.width) * L.W;
@@ -562,17 +589,22 @@ export const GexHistogram: React.FC<{
             <line key={i} x1={x(s)} x2={x(s)} y1={L.M.top} y2={L.H - L.M.bottom}
               stroke={C.grid} strokeWidth={0.6} strokeDasharray="2 5" opacity={0.7} />
           ))}
-          {/* tacche di scala per metà (barH = altezza utile, lane esclusa) */}
+          {/* tacche di scala per metà. In Call/Put si contano dallo ZERO di
+              ciascuna metà (zI / zE), sopra per le call e sotto per le put. */}
           {[0.5, 1].map(f => (
             <g key={`si${f}`}>
-              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE - barMax * f} y2={L.IDX_BASE - barMax * f}
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={(splitView ? zI : L.IDX_BASE) - (splitView ? subH : barMax) * f}
+                y2={(splitView ? zI : L.IDX_BASE) - (splitView ? subH : barMax) * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.IDX_BASE - barMax * f + 3} textAnchor="end" fontSize={9.5} fill={C.idx} opacity={0.85}>
+              <text x={L.M.left - 8} y={(splitView ? zI : L.IDX_BASE) - (splitView ? subH : barMax) * f + 3}
+                textAnchor="end" fontSize={9.5} fill={C.idx} opacity={0.85}>
                 {fmtVal(scaleI * f, metric)}
               </text>
-              <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE + barMax * f} y2={L.ETF_BASE + barMax * f}
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={(splitView ? zE : L.ETF_BASE) + (splitView ? subH : barMax) * f}
+                y2={(splitView ? zE : L.ETF_BASE) + (splitView ? subH : barMax) * f}
                 stroke={C.grid} strokeWidth={0.6} strokeDasharray="3 4" />
-              <text x={L.M.left - 8} y={L.ETF_BASE + barMax * f + 3} textAnchor="end" fontSize={9.5} fill={C.etf} opacity={0.85}>
+              <text x={L.M.left - 8} y={(splitView ? zE : L.ETF_BASE) + (splitView ? subH : barMax) * f + 3}
+                textAnchor="end" fontSize={9.5} fill={C.etf} opacity={0.85}>
                 {fmtVal(scaleE * f, metric)}
               </text>
             </g>
@@ -607,8 +639,21 @@ export const GexHistogram: React.FC<{
           <line x1={L.M.left} x2={L.W - L.M.right} y1={L.M.top + LANE} y2={L.M.top + LANE} stroke={C.idx} strokeWidth={1} opacity={0.35} />
           <line x1={L.M.left} x2={L.W - L.M.right} y1={LANE_DN_TOP} y2={LANE_DN_TOP} stroke={C.etf} strokeWidth={1} opacity={0.35} />
 
-          {/* INDICI: barre verso l'ALTO */}
+          {/* INDICI. Call/Put: call sopra lo zero della metà (zI), put sotto —
+              le due gambe sullo stesso metro. Net/Σ: una barra sola. */}
           {I.map(e => {
+            if (splitView) {
+              const g = legs(e);
+              const hc = Math.max(0.8, (g.c / scaleI) * subH);
+              const hp = Math.max(0.8, (g.p / scaleI) * subH);
+              const bx = x(e.s) - bwI / 2;
+              return (
+                <g key={`i${e.s}`}>
+                  {g.c > 0 && <rect x={bx} y={zI - hc} width={bwI} height={hc} fill="url(#gCallUp)" opacity={0.92} rx={0.6} />}
+                  {g.p > 0 && <rect x={bx} y={zI} width={bwI} height={hp} fill="url(#gPutUp)" opacity={0.92} rx={0.6} />}
+                </g>
+              );
+            }
             const v = mv(e);
             if (!v) return null;
             const h = Math.max(0.8, (Math.abs(v) / scaleI) * barMax);
@@ -618,8 +663,20 @@ export const GexHistogram: React.FC<{
                 opacity={0.92} rx={0.6} />
             );
           })}
-          {/* ETF: barre verso il BASSO (speculari), zero sotto la propria corsia */}
+          {/* ETF, stessa convenzione (call sopra zE, put sotto) */}
           {E.map(e => {
+            if (splitView) {
+              const g = legs(e);
+              const hc = Math.max(0.8, (g.c / scaleE) * subH);
+              const hp = Math.max(0.8, (g.p / scaleE) * subH);
+              const bx = x(e.s) - bwE / 2;
+              return (
+                <g key={`e${e.s}`}>
+                  {g.c > 0 && <rect x={bx} y={zE - hc} width={bwE} height={hc} fill="url(#gCallUp)" opacity={0.92} rx={0.6} />}
+                  {g.p > 0 && <rect x={bx} y={zE} width={bwE} height={hp} fill="url(#gPutDn)" opacity={0.92} rx={0.6} />}
+                </g>
+              );
+            }
             const v = mv(e);
             if (!v) return null;
             const h = Math.max(0.8, (Math.abs(v) / scaleE) * barMax);
@@ -634,8 +691,16 @@ export const GexHistogram: React.FC<{
           <rect x={L.M.left} y={L.GUT_TOP} width={L.PLOT_W} height={L.GUTTER} fill="url(#gGutter)" />
           <line x1={L.M.left} x2={L.W - L.M.right} y1={L.IDX_BASE} y2={L.IDX_BASE} stroke="url(#gSpine)" strokeWidth={1.2} />
           <line x1={L.M.left} x2={L.W - L.M.right} y1={L.ETF_BASE} y2={L.ETF_BASE} stroke="url(#gSpine)" strokeWidth={1.2} />
-          <text x={L.M.left - 8} y={L.IDX_BASE + 3} textAnchor="end" fontSize={10} fill={C.idx} opacity={0.9}>0</text>
-          <text x={L.M.left - 8} y={L.ETF_BASE + 3} textAnchor="end" fontSize={10} fill={C.etf} opacity={0.9}>0</text>
+          {/* in Call/Put lo zero di ciascun libro sta al centro della sua area
+              (zI / zE); in Net/Σ è la linea del divisore */}
+          {splitView && (
+            <>
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={zI} y2={zI} stroke={C.idx} strokeWidth={1.2} opacity={0.75} />
+              <line x1={L.M.left} x2={L.W - L.M.right} y1={zE} y2={zE} stroke={C.etf} strokeWidth={1.2} opacity={0.75} />
+            </>
+          )}
+          <text x={L.M.left - 8} y={(splitView ? zI : L.IDX_BASE) + 3} textAnchor="end" fontSize={10} fill={C.idx} opacity={0.9}>0</text>
+          <text x={L.M.left - 8} y={(splitView ? zE : L.ETF_BASE) + 3} textAnchor="end" fontSize={10} fill={C.etf} opacity={0.9}>0</text>
 
           {/* titoli d'asse nel margine sinistro: identificano le due metà senza
               coprire le barre */}
@@ -714,11 +779,11 @@ export const GexHistogram: React.FC<{
             <g pointerEvents="none">
               <line x1={hover.x} x2={hover.x} y1={L.M.top} y2={L.H - L.M.bottom}
                 stroke="#e6edf3" strokeWidth={0.8} strokeDasharray="2 3" opacity={0.55} />
-              {hI && Math.abs(hI.s - hover.price) < (x1 - x0) * 0.06 && (
+              {!splitView && hI && Math.abs(hI.s - hover.price) < (x1 - x0) * 0.06 && (
                 <circle cx={x(hI.s)} cy={L.IDX_BASE - Math.max(0.8, (Math.abs(mv(hI)) / scaleI) * barMax)}
                   r={3} fill={view === 'tot' ? C.tot : mv(hI) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
-              {hE && Math.abs(hE.s - hover.price) < (x1 - x0) * 0.06 && (
+              {!splitView && hE && Math.abs(hE.s - hover.price) < (x1 - x0) * 0.06 && (
                 <circle cx={x(hE.s)} cy={L.ETF_BASE + Math.max(0.8, (Math.abs(mv(hE)) / scaleE) * barMax)}
                   r={3} fill={view === 'tot' ? C.tot : mv(hE) >= 0 ? C.call : C.put} stroke={C.panel} strokeWidth={1} />
               )}
