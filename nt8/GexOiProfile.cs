@@ -144,6 +144,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private double   flipEtf, flipIdx, flip0Etf, flip0Idx;
 		private bool     hasFlipEtf, hasFlipIdx, hasFlip0Etf, hasFlip0Idx;
 		private string   regimeTxt = "";
+		// BANDA DI REGIME dalla curva di esposizione (piano 16/11, gamma.etf/index
+		// per borsa): il confine sotto e sopra il PREZZO, cioe' la zona in cui il
+		// regime letto e' quello di regimeTxt. Prima l'indicatore prendeva il
+		// livello GEX-FLIP e il gamma_regime strutturale: due calcoli diversi, e
+		// capitava la linea "flip" sotto il prezzo con la scritta "short gamma"
+		// (che e' pure quello che il sito mostrava) — 16/11.
+		private double   zoneLow, zoneHigh;     // 0 = nessun confine da quel lato
+		private string   flipSide = "";         // "sopra" | "sotto" il prezzo
 		private string   fetchError = "";
 		private DateTime lastFetch = DateTime.MinValue;
 
@@ -323,6 +331,35 @@ namespace NinjaTrader.NinjaScript.Indicators
 			return DateTime.MinValue;
 		}
 
+		// plan["gamma"][<catena>][<borsa>] come dizionario, o null se il piano è
+		// precedente alla curva di esposizione (16/11). Istanza (non static):
+		// due grafici con borse diverse non devono leggersi l'una contro l'altra.
+		private Dictionary<string, object> Band(Dictionary<string, object> gRoot, string chainKey)
+		{
+			object co;
+			var chain = gRoot != null && gRoot.TryGetValue(chainKey, out co) ? co as Dictionary<string, object> : null;
+			object bo;
+			return chain != null && chain.TryGetValue(BucketKey(OptBucket), out bo) ? bo as Dictionary<string, object> : null;
+		}
+
+		// chiave del perimetro nel blocco plan["gamma"]
+		private static string BucketKey(GexOiBucket b)
+		{
+			return b == GexOiBucket.ZeroDTE ? "0dte" : b == GexOiBucket.Settimana ? "week" : "all";
+		}
+
+		// regime pubblicato per la borsa scelta, con fallback a quella strutturale
+		// (i piani più vecchi hanno solo gamma_regime[_index])
+		private static string PickRegime(Dictionary<string, object> plan, bool index, GexOiBucket b)
+		{
+			string rg = index ? TryStr(plan, "gamma_regime_index") : TryStr(plan, "gamma_regime");
+			if (b == GexOiBucket.ZeroDTE)
+				rg = (index ? TryStr(plan, "gamma_regime_0dte_index") : TryStr(plan, "gamma_regime_0dte")) ?? rg;
+			else if (b == GexOiBucket.Settimana)
+				rg = (index ? TryStr(plan, "gamma_regime_week_index") : TryStr(plan, "gamma_regime_week")) ?? rg;
+			return rg;
+		}
+
 		private void ParsePlan(string json)
 		{
 			string key = PlanKey();
@@ -338,10 +375,32 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			planTime  = ParseDate(TryStr(plan, "generated_at"));
 			planSpot  = TryNum(plan, "last_price");
-			string rg = TryStr(plan, "gamma_regime");
-			regimeTxt = rg == "long" ? "long gamma" : rg == "short" ? "short gamma" : "";
-
 			bool idx = OptSource == GexOiSource.Indice;
+
+			// REGIME DELLA BORSA SCELTA: il piano pubblica tre regimi (tutte /
+			// ≤7gg / 0DTE) perche' il libro che i dealer coprono oggi non e' quello
+			// strutturale. Fin qui l'indicatore leggeva SOLO gamma_regime → sul
+			// grafico "short gamma" mentre il sito in 0DTE diceva "long gamma".
+			string rgE = PickRegime(plan, idx, OptBucket);
+			if (string.IsNullOrEmpty(rgE) && idx) rgE = PickRegime(plan, false, OptBucket);
+			regimeTxt = rgE == "long" ? "long gamma" : rgE == "short" ? "short gamma" : "";
+
+			// FLIP e zona dalla CURVA di esposizione: plan["gamma"][<catena>]
+			// [<borsa>] = { regime, flip, flip_below, flip_above }. Si leggono
+			// ENTRAMBE le catene per il perimetro scelto, così anche la resa
+			// speculare (Entrambi) mostra i due confini della curva e non i
+			// livelli storici. zoneLow/zoneHigh della catena primaria = la ZONA in
+			// cui sta il prezzo, cioè dove il regime letto resta valido.
+			zoneLow = zoneHigh = 0; flipSide = "";
+			double bandFlipEtf = 0, bandFlipIdx = 0;
+			var gRoot = plan.TryGetValue("gamma", out var gObj) ? gObj as Dictionary<string, object> : null;
+			if (gRoot != null)
+			{
+				var bE = Band(gRoot, "etf");   if (bE != null) bandFlipEtf = TryNum(bE, "flip");
+				var bI = Band(gRoot, "index"); if (bI != null) bandFlipIdx = TryNum(bI, "flip");
+				var bP = idx ? bI : bE;
+				if (bP != null) { zoneLow = TryNum(bP, "flip_below"); zoneHigh = TryNum(bP, "flip_above"); }
+			}
 
 			// Max Pain e flip: entrambi già in SCALA FUTURES nel piano
 			maxPain    = TryNum(plan, idx ? "max_pain_nearest_index" : "max_pain_nearest");
@@ -376,6 +435,20 @@ namespace NinjaTrader.NinjaScript.Indicators
 					else if (nm == "GEX-FLIP-WEEK-IDX") { flipWIdx = pr; hasFlipWIdx = pr > 0; }
 				}
 			}
+			// Fallback sui campi NUMERICI quando il livello omonimo non c'è: il
+			// dedup del pipeline a 3 pt si mangiava GEX-FLIP-WEEK[-IDX] quando
+			// coincideva col strutturale, e l'indicatore (che leggeva solo i
+			// livelli) tornava al flip strutturale mentre il sito mostrava quello
+			// della borsa → due numeri diversi sullo stesso perimetro (16/11).
+			if (!hasFlipWEtf)  { flipWEtf  = TryNum(plan, "gex_flip_week");        hasFlipWEtf  = flipWEtf  > 0; }
+			if (!hasFlipWIdx)  { flipWIdx  = TryNum(plan, "gex_flip_week_index");  hasFlipWIdx  = flipWIdx  > 0; }
+			if (!hasFlip0Etf)  { flip0Etf  = TryNum(plan, "gex_flip_0dte");        hasFlip0Etf  = flip0Etf  > 0; }
+			if (!hasFlip0Idx)  { flip0Idx  = TryNum(plan, "gex_flip_0dte_index");  hasFlip0Idx  = flip0Idx  > 0; }
+			// La CURVA è il numero giusto: il livello GEX-FLIP* nel piano ne è la
+			// copia in scala futures; dove entrambi esistono, comanda la curva.
+			if (bandFlipEtf > 0) { flipEtf = bandFlipEtf; hasFlipEtf = true; }
+			if (bandFlipIdx > 0) { flipIdx = bandFlipIdx; hasFlipIdx = true; }
+
 			// PRIMARIO: il flip della BORSA selezionata — è il confine di regime e
 			// cambia col perimetro (0DTE = scadenze di oggi, ≤7gg = settimana,
 			// Tutte = strutturale; misurato il 15/11 sull'indice: 7617 vs 7654,
@@ -397,8 +470,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 			{
 				flip  = idx ? flipIdx : flipEtf;     hasFlip  = idx ? hasFlipIdx : hasFlipEtf;
 			}
+			// Per il perimetro SCELTO il confine è quello della CURVA: se esiste
+			// sostituisce qualunque livello omonimo (che può mancare per il dedup
+			// o appartenere a un altro perimetro). È lo stesso numero del sito.
+			double bandFlip = idx ? bandFlipIdx : bandFlipEtf;
+			if (bandFlip > 0) { flip = bandFlip; hasFlip = true; }
 			// flip 0DTE: resta la linea EXTRA opzionale (ShowFlip0Dte)
 			flip0   = idx ? flip0Idx   : flip0Etf;   hasFlip0   = idx ? hasFlip0Idx   : hasFlip0Etf;
+			// da che parte sta il confine rispetto al prezzo (l'etichetta lo dice,
+			// così "sopra il flip = long gamma" non va più interpretato a memoria)
+			if (hasFlip && planSpot > 0) flipSide = flip > planSpot ? "sopra" : "sotto";
 
 			// ---- profilo per strike: TUTTE le fonti sono già in SCALA FUTURES.
 			//      Indice  -> gex_profile*_index        (raw, passo 5pt)
@@ -1188,9 +1269,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (hasMaxPainEtf) lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPainEtf), cMP,
 						"▼ MP " + eNm + " " + maxPainEtf.ToString("0"), anchorR, xRight));
 					if (hasFlipIdx) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx), cFlip,
-						"▲ Flip " + iNm + " " + flipIdx.ToString("0"), xLeft, anchorL));
+						"▲ Flip " + iNm + " " + flipIdx.ToString("0") + FlipTag(flipIdx), xLeft, anchorL));
 					if (hasFlipEtf) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipEtf), cFlip,
-						"▼ Flip " + eNm + " " + flipEtf.ToString("0"), anchorR, xRight));
+						"▼ Flip " + eNm + " " + flipEtf.ToString("0") + FlipTag(flipEtf), anchorR, xRight));
 					if (ShowFlip0Dte && hasFlip0Idx) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0Idx),
 						new Color4(0.72f, 0.55f, 0.95f, 0.6f), "▲ Flip0 " + iNm + " " + flip0Idx.ToString("0"), xLeft, anchorL));
 					if (ShowFlip0Dte && hasFlip0Etf) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip0Etf),
@@ -1201,7 +1282,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 					if (hasMaxPain) lines.Add(Tuple.Create((float)chartScale.GetYByValue(maxPain), cMP,
 						"MP " + maxPain.ToString("0"), xLeft, xRight));
 					if (hasFlip) lines.Add(Tuple.Create((float)chartScale.GetYByValue(flip), cFlip,
-						"Flip " + flip.ToString("0"), xLeft, xRight));
+						"Flip " + flip.ToString("0") + FlipTag(flip), xLeft, xRight));
+					// l'ALTRO confine della zona di regime: quando la curva taglia
+					// due volte entro la banda il prezzo sta IN MEZZO, e disegnarlo
+					// rende leggibile il regime senza dover spiegare la metodologia
+					double other = flip > 0 && zoneLow > 0 && Math.Abs(zoneLow - flip) > 0.01 ? zoneLow
+						: flip > 0 && zoneHigh > 0 && Math.Abs(zoneHigh - flip) > 0.01 ? zoneHigh : 0;
+					if (other > 0)
+						lines.Add(Tuple.Create((float)chartScale.GetYByValue(other),
+							new Color4(0.62f, 0.42f, 0.92f, 0.6f),
+							"Flip· " + other.ToString("0") + " (altro confine)", xLeft, xRight));
 					if (inBoth && hasFlipIdx && Math.Abs(flipIdx - flip) > 0.01)
 						lines.Add(Tuple.Create((float)chartScale.GetYByValue(flipIdx),
 							new Color4(0.62f, 0.42f, 0.92f, 0.85f), "Flip IDX " + flipIdx.ToString("0"), xLeft, xRight));
@@ -1295,10 +1385,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 						: "verde = pin · rosso = trigger";
 					if (inBoth && !lati)
 						leg = "⧉ ±" + tolPts.ToString("0") + "pt: " + (zones == null ? 0 : zones.Count);
-					if (regimeTxt.Length > 0) leg += " · " + regimeTxt;
+					if (regimeTxt.Length > 0)
+						leg += " · " + regimeTxt + (flipSide.Length > 0 ? " · flip " + flipSide : "");
 					DrawTextLeft(RenderTarget, tf, brush, leg, xLeft + 2, panelH - 18);
 				}
 			}
+		}
+
+		// "↑" = il confine sta SOPRA il prezzo (finché non lo attraversi il regime
+		// letto è questo), "↓" = sta SOTTO. Etichetta, non interpretazione.
+		private string FlipTag(double f)
+		{
+			if (planSpot <= 0 || f <= 0) return "";
+			return f > planSpot ? " ↑" : " ↓";
 		}
 
 		// Declutter da asse prezzi: prende le quote vere, le ordina e le sposta del

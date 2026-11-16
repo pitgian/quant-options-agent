@@ -51,7 +51,10 @@ export default defineConfig(({ mode }) => {
         port: 5173,
         host: '0.0.0.0',
         watch: {
-          ignored: ['**/venv/**', '**/node_modules/**', '**/.git/**']
+          // .venv/ va ignorata quanto venv/: sono ~200k file e il watcher di
+          // vite sfracella su ENOSPC (il dev server muore appena parte).
+          ignored: ['**/venv/**', '**/.venv/**', '**/node_modules/**',
+                    '**/.git/**', '**/.next/**', '**/scratch/**']
         }
       },
       plugins,

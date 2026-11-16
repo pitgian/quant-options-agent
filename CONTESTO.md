@@ -1,7 +1,7 @@
 # CONTESTO — stato del progetto (handoff per le sessioni)
 
 > **Leggi questo file per ripartire con il contesto pieno.**
-> Ultimo aggiornamento: 2026-11-03 · commit di riferimento: vedi `git log -5`
+> Ultimo aggiornamento: 2026-11-16 (flip dalla curva di esposizione) · commit di riferimento: vedi `git log -5`
 
 ---
 
@@ -52,6 +52,35 @@ separato futuro con modelli decisionali dedicati.
    `gamma_regime_0dte/week[_index]`: con 0DTE il segno del GEX attorno allo
    spot può essere opposto a quello strutturale. Fallback allo strutturale
    quando la borsa non ha flip (weekend, catena corta) — la riga lo dichiara.
+   **FLIP DALLA CURVA DI ESPOSIZIONE** (16/11, `GEX_METHOD = curve-bs-v1`): il flip
+   NON è più lo zero-crossing della somma per strike (l'istogramma) — quella serie
+   è un dente di sega: misurato sul libro del 16/11, **73 cambi di segno entro ±10%
+   su NDX, 13 su SPX**. Prendere il più vicino significava pescare rumore, e il
+   "confine di regime" poteva stare SOTTO il prezzo mentre il regime (calcolato da
+   un'altra funzione, `regime_at_spot`) era short → il reclamo dell'utente: «il sito
+   dice gamma negativa col prezzo sopra il flip» + «i flip di NT8 e del sito non
+   corrispondono». Ora `gamma_exposure_curve`/`gamma_flip` (day_plan) fanno come le
+   piattaforme pro: **G(P) = Σ ±OI·100·P²·Γ_BS(P, K, iv, T)** — la gamma di ogni
+   contratto rivalutata a OGNI prezzo (IV reali per contratto, default per simbolo
+   se assenti; r=4%, q=1,2%; banda ±12%; T delle scadenze di oggi convenzionale
+   a mezza giornata perché il numero NON deve dipendere dall'ora del giro). La
+   curva è monotona per costruzione → **un taglio solo** (verificato su 12/12 libri
+   reali il 16/11), e regime = segno al prezzo + flip = zero della STESSA curva:
+   "sopra = long, sotto = short" è vero per costruzione, non per assunzione.
+   Pubblicato in `plan["gamma"][etf|index][all|week|0dte]` = {regime, flip,
+   flip_below, flip_above, crossings, band_pct} + copia nei livelli GEX-FLIP*
+   (`regime`, `zone_low`, `zone_high`). Con l'occasione: (a) `dedupe_levels` NON
+   sopprime più i GEX-FLIP* (prima il dedup a 3 pt mangiava GEX-FLIP-WEEK[-IDX] e
+   NT8, che legge solo i livelli, rientrava sul strutturale = 35 pt diverso dal
+   sito — stamattina 7545 vs 7580); (b) i campi flat `gex_flip*`/`gamma_regime*`
+   restati per compatibilità con i client vecchi, ora derivano tutti dalla curva; (c) il sito NON deriva più
+   il regime dal confronto prezzo/flip (era quella la riga bugiada) e lo scenario
+   usava `regimeNow` (stringa) come booleano → 'short' è truthy e stampava
+   "long gamma" col regime corto da sempre; (d) NT8 segue la borsa scelta per il
+   regime e ha il fallback sui campi numerici come il sito.
+   **Test**: `tests/test_day_plan.py` (26 check: curva, invarianti, dedup) +
+   `tests/test_plan_invariants.py` (legge il piano pubblicato e verifica regime vs
+   flip, livelli vs curva, campi flat — fallisce sul piano vecchio, passa sul nuovo).
    **SCADENZE PASSATE** (15/11): `relevant_expiries` ora le scarta. Il feed le
    tiene per giorni con gamma/OI stantii e finivano in GEX flip, regime,
    top_gamma e muri (11,4% della gamma totale il 15/11): il flip strutturale
@@ -186,8 +215,13 @@ solo le barre futures per lo spot), non compaiono più nelle stats (filtro
 value_area, vwap_of, session_high_low) sono stati cancellati. La scala, il
 track record e l'indicatore NT8 vivono di soli muri gamma / flip / max pain.
 
-1. **GEX flip** — zero-crossing della gamma netta: sopra → dealer long gamma
-   (respingono, mean reversion); sotto → short gamma (amplificano, trend)
+1. **GEX flip** — confine di regime: è lo zero della **curva di esposizione**
+   G(P) (gamma di ogni contratto rivalutata a ogni prezzo, BS con IV/OI/T reali),
+   non l'incrocio più vicino dell'istogramma per strike (16/11). Sopra → dealer
+   long gamma (respingono, mean reversion); sotto → short (amplificano, trend).
+   Il piano pubblica anche i DUE confini della zona in cui sta il prezzo
+   (`flip_below`/`flip_above`): se la curva taglia più di una volta la UI lo dice
+   invece di far finta che il confine sia uno solo.
 2. **Muri gamma** — strike con più gamma netta assoluta: gamma lunga = PIN
    (respinge), gamma corta = TRIGGER (accelera la rottura) — top 3 per lato
 3. **Max Pain** — strike a payout minimo per gli acquirenti: scadenza vicina
@@ -272,7 +306,12 @@ Questi risultati hanno guidato le decisioni (non rimuoverli dal documento):
 - **Picchi di gamma lunga (call) sopra il prezzo: respinto l'80% dei touch**
   (n=5, piccolo ma coerente col meccanismo dealer) → i Pin hanno priorità.
 - **GEX flip**: cambio di regime — sopra long gamma (fade), sotto short gamma
-  (trend). È il livello di regola, non un muro.
+  (trend). È il livello di regola, non un muro. **Dal 16/11 vale solo se il flip
+  è lo zero della curva di esposizione**: con la definizione per-strike la frase
+  era falsa (il confine più vicino poteva essere un taglio di rumore con il segno
+  sbagliato). Riscontro empirico a supporto, 08/10: lo zero gamma 0DTE coincideva
+  con InsiderFinance ±0,2% anche con la vecchia formula — la curva lo conferma
+  (16/11: ES Tutte 7585 in scala futures, stesso ordine di grandezza).
 - **VWAP**: dipende dall'ancoraggio — il piano espone ENTRAMBI: VWAP RTH
   (09:30 ET, convenzione equity) e VWAP Globex (18:00 ET, convenzione CME).
 - **La settimana in corso include l'overnight Globex** (bug fix: il lunedì
@@ -299,7 +338,9 @@ npm run build                       # build produzione
 source .venv/bin/activate
 python scripts/fetch_options_data.py --symbol ALL --output data/options_data.json
 python scripts/day_plan.py --show   # rigenera piano + stampa la scala
-python tests/test_day_plan.py       # track record (6 check)
+python tests/test_day_plan.py       # pipeline: borse, curva di flip, dedup (26 check)
+python tests/test_plan_invariants.py # il piano pubblicato: regime vs flip,
+                                     # livelli NT8 vs curva, campi flat (nuovo 16/11)
 # publish manuale sul data branch: clone --depth1 --branch data, copia i file
 # (options_data/options_oi_lastgood/options_history/day_plan/level_stats),
 # commit, push
@@ -308,7 +349,35 @@ python tests/test_day_plan.py       # track record (6 check)
 Deploy: **automatico da push su master** (Vercel Git integration, riconnessa
 e verificata il 06/10 — prima era staccata da 42 giorni).
 
-### Incidente 07/10 mattina: catena opzioni senza OI (flip a +17%)
+### Incidente 16/11: flip e regime si contraddicevano (e NT8 ≠ sito)
+
+L'utente: «perché i flip tra indicatore e sito non corrispondono e perché il sito
+mi dice gamma negativo con il prezzo sopra il flip». Quattro cause distinte, tutte
+corrette (dettaglio in §1 "FLIP DALLA CURVA DI ESPOSIZIONE"):
+
+1. **definizione sbagliata di flip** — zero-crossing più vicino della somma per
+   strike, che è un dente di sega (73 tagli entro ±10% su NDX). Il confine che ne
+   esce può stare sotto il prezzo col regime short: misurato sul piano live delle
+   15:34, NQ/Indice pubblicava flip 27175 con spot 27401 e regime short. → curva di
+   esposizione rivalutata a ogni prezzo (`gamma_flip`), UN taglio, regime e flip
+   dalla stessa funzione.
+2. **dedup che mangiava i flip perimetrali** — GEX-FLIP-WEEK[-IDX] sparava se
+   cadeva a <3 pt da un altro flip; il sito ha il fallback sui campi numerici,
+   l'indicatore NO → due numeri diversi per la stessa borsa (7545 sito contro
+   7580 NT8, stamattina). → i GEX-FLIP* sono esclusi dal dedup e NT8 ha il
+   fallback numerico.
+3. **NT8 leggeva sempre e solo `gamma_regime`** (strutturale), ignorando la
+   proprietà "Borsa di scadenza" che il sito rispetta → "short gamma" sul
+   grafico contro "Long gamma" sull'app a parità di impostazioni.
+4. **`regimeNow` (stringa 'long'|'short') usato come booleano** nello scenario del
+   sito: `'short'` è truthy → lo scenario stampava "long gamma ma max pain
+   lontano" anche col regime corto, da sempre.
+
+Verifica: `tests/test_plan_invariants.py` fallisce sul piano vecchio e passa su
+quello nuovo (12/12 bande catena×perimetro concordi); sul libro reale del 16/11
+la curva taglia una volta sola in 12/12 casi.
+
+
 
 yfinance/Yahoo ha smesso di fornire `openInterest` (OI QQQ 24k contro ~10M
 normali). Il piano ha pubblicato flip NQ a 36.870 con spot 31.352, max pain

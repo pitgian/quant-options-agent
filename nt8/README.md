@@ -46,7 +46,7 @@ guasto. Stessa regola e stessi numeri della web app.
 |---|---|---|
 | Futures | Auto | Auto-detect dal nome strumento (ES/MES → piano ES, NQ/MNQ → piano NQ) |
 | Fonte opzioni | Indice | Indice = profilo raw 5-pt (SPX/NDX, parità InsiderFinance) · ETF = bin 25-pt (SPY/QQQ) |
-| Borsa di scadenza | Tutte | 0DTE / ≤7gg / Tutte — identiche al selettore del sito |
+| Borsa di scadenza | Tutte | 0DTE / ≤7gg / Tutte — identiche al selettore del sito; dal 16/11 cambiano ANCHE flip e regime (prima il regime restava quello strutturale) |
 | Metrica | GEX | GEX (Mld $, c+p) oppure OI (contratti, co−po) |
 | Vista | Net | **Net** = valore col segno (il lato) · **Somma** = call+put senza segno (**la size del livello**), come `Σ Call+Put` del sito · **Lati** = le due gambe separate (**call a sinistra, put a destra** della spina centrale), come `Call/Put` del sito |
 | Finestra ±% | 5 | Strike entro ±X% dallo spot live (come il sito) |
@@ -77,9 +77,15 @@ guasto. Stessa regola e stessi numeri della web app.
   l'indice ha una gabbia e l'ETF no, e viceversa. Ogni colonna è normalizzata
   al proprio massimo (`Scala comune` per il confronto assoluto) e in basso
   dichiara il libro e il suo massimo (▲ SPX 1741 · ▼ SPY 229).
-- **Linee sempre attive**: Max Pain (ambra) e Flip strutturale (viola) della
-  fonte selezionata, in scala futures; in Entrambi anche il Flip dell'altra
-  fonte (la distanza fra i due = regime confermato o in divergenza). La linea
+- **Linee sempre attive**: Max Pain (ambra) e **Flip (viola)** della fonte e
+  della **borsa selezionata**, in scala futures; in Entrambi anche il Flip
+  dell'altra fonte (la distanza fra i due = regime confermato o in divergenza).
+  Dal 16/11 il flip è lo **zero della curva di esposizione gamma** (il modo delle
+  piattaforme pro): l'etichetta dice anche da che parte sta il confine rispetto
+  al prezzo — `Flip 28445 ↑` = sopra, `Flip 7525 ↓` = sotto — e se la curva
+  taglia due volte entro la banda ±12% si disegna anche l'**altro confine**
+  (`Flip· 27175 (altro confine)`, viola tenue): il prezzo sta IN MEZZO, e lì
+  dentro il regime è quello scritto in legenda. La linea
   Spot NON c'è: il grafico ha già la sua. Partono dall'ultima candela, non dal
   bordo sinistro, per non attraversare la price action.
   Etichette con anti-collisione (flip ≈ max pain le separa).
@@ -88,9 +94,19 @@ guasto. Stessa regola e stessi numeri della web app.
   [call ◀|▶ put] · ⧉ ±5pt: n`. Prima erano tre righe sovrapposte con i nomi
   dei libri ripetuti due volte. La legenda segue la vista: in Lati dice
   call/put, in Somma dice "Σ (indaco)", in Net verde=pin / rosso=trigger.
-  Niente "gap x pt" né "scale proprie": tolti il 15/11 su richiesta.
-- Flip assente nel piano (nessuno zero-crossing) → la linea non viene disegnata:
-  non è un errore, è il dato (vedi discussione flip/max pain della scala).
+  Niente "gap x pt" né "scale proprie": tolti il 15/11 su richiesta. Dal 16/11 la
+  legenda appende anche il **regime DELLA BORSA scelta** col lato del confine:
+  `short gamma · flip sopra`. Prima leggeva sempre `gamma_regime` (strutturale)
+  qualunque borsa fosse impostata → "short gamma" sul grafico mentre il sito, su
+  0DTE, diceva "Long gamma" (divergenza segnalata dall'utente il 16/11).
+- Flip assente nel piano (la curva non taglia entro ±12%) → la linea non viene
+  disegnata: non è un errore, è il dato (vedi discussione flip/max pain della scala).
+- **Priorità dei numeri** (per non divergere mai dal sito):
+  `plan["gamma"][catena][borsa].flip` → campo numerico (`gex_flip_week[_index]`,
+  `gex_flip_0dte[_index]`) → livello `GEX-FLIP*`. Il dedup del pipeline a 3 pt
+  fino al 16/11 si mangiava `GEX-FLIP-WEEK[-IDX]` quando coincideva col
+  strutturale e l'indicatore, che leggeva SOLO i livelli, rientrava sul flip
+  strutturale: 7545 (sito) contro 7580 (grafico) sullo stesso perimetro.
 
 ## Perché serve la vista Somma
 

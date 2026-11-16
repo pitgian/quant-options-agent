@@ -148,12 +148,223 @@ def split_sessions(idx_et, highs, lows, opens, closes, vols):
 # Opzioni: muri (calculate_walls) + GEX flip dalle catene
 # ---------------------------------------------------------------------------
 
-def nearest_zero_crossing(profile: dict, spot: float) -> float | None:
-    """Zero-crossing del GEX netto più vicino allo spot (il 'flip').
+# ---------------------------------------------------------------------------
+# IL FLIP DALLA CURVA DI ESPOSIZIONE (16/11) — come lo calcolano le piattaforme
+# ---------------------------------------------------------------------------
+# Fino al 15/11 il flip era lo zero-crossing della SOMMA PER STRIKE del GEX
+# (la "gamma netta" barra per barra dell'istogramma). È un errore di definizione:
+# quella serie è un dente di sega — misurato sul libro del 16/11: 73 cambi di
+# segno entro ±10% dallo spot su NDX, 13 su SPX. Prendere il più vicino significa
+# pescare rumore, e il "confine di regime" che ne esce può stare SOTTO il prezzo
+# mentre il regime allo spot è short: è la contraddizione vista dall'utente
+# ("gamma negativa col prezzo sopra il flip").
+#
+# Le piattaforme serie (SpotGamma / Sweep / InsiderFinance) non guardano le barre:
+# disegnano una CURVA SOLA — "se il prezzo fosse a P, quanta gamma avrebbero in
+# totale i dealer?" — rivalutando la gamma di OGNI contratto a quel prezzo con
+# Black-Scholes (T, IV e OI reali della catena). Quella curva ha in pratica UN
+# incrocio (cresce col prezzo: salendo le call passano ATM e le put ne escono),
+# quindi sotto l'incrocio = dealer short gamma (amplificazione), sopra = long
+# (pin / mean reversion) — e il regime non può mai contraddire il flip, perché i
+# due sono la STESSA funzione letta in due punti.
+#
+# Convenzione segni invariata (call +, put −): coincide con muri e istogramma che
+# l'utente guarda già, quindi il resto della scala non cambia significato.
+CONTRACT_MULT = 100.0        # moltiplicatore contrattuale (convenzione del file)
+GEX_R = 0.04                 # tasso privo di interesse
+GEX_Q = 0.012                # rendimento da dividendi (forward del future)
+GEX_CURVE_BAND = 0.12        # la curva si valuta da spot·(1−12%) a spot·(1+12%)
+GEX_STRIKE_BAND = 0.20       # oltre ±20% dallo spot: gamma trascurabile
+GEX_TODAY_YEARS = 0.5 / 365  # T convenzionale per le scadenze di OGGI
+# IV di riserva quando il feed non la porta (stessi valori di utils/gammaEstimate.ts)
+GEX_DEFAULT_IV = {"SPY": 0.15, "QQQ": 0.20, "SPX": 0.15, "NDX": 0.20}
+GEX_FALLBACK_IV = 0.20
+GEX_METHOD = "curve-bs-v1"   # scritto nel piano: serve per leggere il track record
+_SQRT_2PI = float(np.sqrt(2 * np.pi))
 
-    Estratto da compute_option_levels per poterlo calcolare su QUALSIASI
-    perimetro (0dte / week / all): il flip è il confine di regime e deve
-    seguire la borsa scelta nella UI, non essere sempre quello strutturale.
+
+def _years_to_expiry(date_str: str, today=None) -> float | None:
+    """Anni residui alla scadenza; scadenze passate → None (non è esposizione).
+
+    Le scadenze di OGGI usano un T convenzionale di mezza giornata: il feed non
+    dice QUANTO resta, e usare il tempo residuo reale farebbe scivolare il flip
+    durante la seduta a parità di catena (il numero cambierebbe perché sono le
+    10:30 o le 15:30, non perché il libro è cambiato). Il flip deve essere
+    riproducibile: stessa catena → stesso numero.
+    """
+    if not date_str:
+        return None
+    try:
+        d = datetime.fromisoformat(date_str).date()
+    except ValueError:
+        return None
+    today = today or datetime.now(ET).date()
+    days = (d - today).days
+    if days < 0:
+        return None
+    return GEX_TODAY_YEARS if days == 0 else days / 365.0
+
+
+def _chain_matrix(exps: list, spot: float, symbol: str | None):
+    """Catene → matrici (strike, segno, peso·OI, iv, T) pronte per la curva.
+
+    Righe scartate: OI 0 (nessun contratto aperto = nessuna copertura da fare),
+    strike fuori banda, scadenza già passata. IV assente → default per simbolo;
+    IV > 300% → 300% (è spazzatura deep-OTM, ma un IV enorme peserebbe come un
+    muro).
+    """
+    rows = []
+    default_iv = GEX_DEFAULT_IV.get(symbol or "", GEX_FALLBACK_IV)
+    lo, hi = spot * (1 - GEX_STRIKE_BAND), spot * (1 + GEX_STRIKE_BAND)
+    for e in exps:
+        T = _years_to_expiry(e.get("date", ""))
+        if not T:
+            continue
+        for o in e.get("options") or []:
+            try:
+                K = float(o.get("strike", 0) or 0)
+                oi = float(o.get("oi", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if oi <= 0 or not (lo <= K <= hi):
+                continue
+            iv = float(o.get("iv", 0) or 0)
+            if iv <= 0:
+                iv = default_iv
+            elif iv > 3.0:
+                iv = 3.0
+            rows.append((K, 1.0 if o.get("side") == "CALL" else -1.0,
+                         oi * CONTRACT_MULT, iv, T))
+    if not rows:
+        return None
+    a = np.asarray(rows, dtype=float)
+    return a[:, 0], a[:, 1], a[:, 2], a[:, 3], a[:, 4]
+
+
+def gamma_exposure_curve(exps: list, spot: float, symbol: str | None = None,
+                         band: float = GEX_CURVE_BAND):
+    """Curva di esposizione gamma dei dealer in funzione del PREZZO.
+
+        G(P) = Σ contratti ±OI·100·P²·Γ_BS(P, K, iv, T)      (+ call, − put)
+
+    Restituisce (prezzi, G) oppure None se la catena non è valutabile.
+    """
+    m = _chain_matrix(exps, spot, symbol)
+    if m is None:
+        return None
+    K, sgn, w, iv, T = m
+    step = 0.5 if spot < 2000 else 5.0
+    lo, hi = spot * (1 - band), spot * (1 + band)
+    P = np.arange(lo, hi + step / 2, step)
+    st = iv * np.sqrt(T)
+    var_drift = (GEX_R - GEX_Q + 0.5 * iv * iv) * T
+    disc_q = np.exp(GEX_Q * T)
+    G = np.empty(P.shape, dtype=float)
+    for i0 in range(0, P.size, 64):                 # blocchi 64×N, non M×N
+        Pp = P[i0:i0 + 64][:, None]
+        d1 = (np.log(Pp / K) + var_drift[None, :]) / st[None, :]
+        gam = np.exp(-0.5 * d1 * d1) / (_SQRT_2PI * Pp * st[None, :] * disc_q[None, :])
+        G[i0:i0 + 64] = ((sgn * w)[None, :] * gam * Pp * Pp).sum(axis=1)
+    return P, G
+
+
+def gamma_flip(exps: list, spot: float, symbol: str | None = None,
+               band: float = GEX_CURVE_BAND) -> dict | None:
+    """Regime E confini di regime dalla stessa curva di esposizione.
+
+      regime      'long' | 'short'  ← segno di G allo spot
+      flip        il confine più vicino allo spot (None se la curva non taglia)
+      flip_below  ultimo confine SOTTO lo spot (None = scendendo non cambia
+                  regime entro la banda)
+      flip_above  primo confine SOPRA lo spot
+      crossings   quanti tagli ci sono nella banda (1 = libro pulito)
+      band        ±% della banda valutata
+
+    Il regime è il segno di G allo spot e i flip sono gli zeri della STESSA
+    curva: "sotto il flip = short, sopra = long" è vero per costruzione, non per
+    assunzione — è esattamente ciò che la definizione per-strike rompeva.
+    """
+    c = gamma_exposure_curve(exps, spot, symbol, band)
+    if c is None:
+        return None
+    P, G = c
+    g_spot = float(np.interp(spot, P, G))
+    s = np.sign(G)
+    i = np.where(s[:-1] * s[1:] < 0)[0]
+    xs = ([round(float(x), 1) for x in
+           P[i] + (P[i + 1] - P[i]) * np.abs(G[i]) / (np.abs(G[i]) + np.abs(G[i + 1]))]
+          if i.size else [])
+    below = [x for x in xs if x < spot]
+    above = [x for x in xs if x >= spot]
+    flip_below = max(below) if below else None
+    flip_above = min(above) if above else None
+    cand = [x for x in (flip_below, flip_above) if x is not None]
+    return {
+        "regime": "long" if g_spot > 0 else "short",
+        "flip": min(cand, key=lambda x: abs(x - spot)) if cand else None,
+        "flip_below": flip_below,
+        "flip_above": flip_above,
+        "crossings": len(xs),
+        "band": band,
+    }
+
+
+def bands_by_bucket(exps: list, spot: float, symbol: str | None) -> dict:
+    """gamma_flip per le TRE borse di scadenza (0dte / week / all).
+
+    Stesso partizionamento per data di top_gamma_by_bucket e gex_profile_by_bucket,
+    così muro, barra dell'istogramma e flip che l'utente guarda vengono dallo
+    STESSO insieme di scadenze.
+    """
+    today = datetime.now(ET).date()
+    horizon = today + timedelta(days=7)
+    out: dict = {}
+    for name in ("0dte", "week", "all"):
+        sel = []
+        for e in exps:
+            try:
+                d = datetime.fromisoformat(e.get("date", "")).date()
+            except ValueError:
+                continue
+            if d < today:
+                continue
+            if name == "0dte" and d != today:
+                continue
+            if name == "week" and d > horizon:
+                continue
+            sel.append(e)
+        out[name] = gamma_flip(sel, spot, symbol) if sel else None
+    return out
+
+
+def _band_fut(band: dict | None, ratio: float) -> dict:
+    """Banda di regime (scala nativa) → campi del piano (scala futures)."""
+    if not band:
+        return {}
+
+    def conv(v):
+        return _r5(v * ratio) if v else None
+
+    return {
+        "regime": band.get("regime"),
+        "flip": conv(band.get("flip")),
+        "flip_below": conv(band.get("flip_below")),
+        "flip_above": conv(band.get("flip_above")),
+        "flip_native": band.get("flip"),
+        "flip_below_native": band.get("flip_below"),
+        "flip_above_native": band.get("flip_above"),
+        "crossings": band.get("crossings"),
+        "band_pct": band.get("band"),
+    }
+
+
+def nearest_zero_crossing(profile: dict, spot: float) -> float | None:
+    """DEPRECATO 16/11 — zero-crossing del GEX PER STRIKE più vicino allo spot.
+
+    Non è più la definizione di flip del piano: vedi gamma_flip qui sopra. La
+    serie per strike è la stessa dell'istogramma (che la UI continua a mostrare)
+    ma è un dente di sega e il suo incrocio più vicino non è il confine del
+    regime. Tenuta solo come riferimento di formula.
     """
     strikes = sorted(profile)
     best = None
@@ -167,10 +378,9 @@ def nearest_zero_crossing(profile: dict, spot: float) -> float | None:
 
 
 def regime_at_spot(net: dict, spot: float) -> str | None:
-    """Segno del GEX netto fra i due strike che brackettano lo spot.
-
-    Definito ANCHE senza zero-crossing (profilo tutto positivo/negativo):
-    in quel caso il flip non esiste ma il regime sì.
+    """DEPRECATO 16/11 — segno del GEX per strike ai due strike che brackettano
+    lo spot. Il regime del piano ora viene dalla curva di esposizione
+    (gamma_flip): regime e flip devono essere la STESSA funzione.
     """
     st = sorted(net)
     if not st:
@@ -198,7 +408,8 @@ def regime_at_spot(net: dict, spot: float) -> str | None:
     return ("long" if sum(vals) > 0 else "short") if vals else None
 
 
-def top_gamma_by_bucket(expiries: list, spot: float) -> tuple:
+def top_gamma_by_bucket(expiries: list, spot: float,
+                        symbol: str | None = None) -> tuple:
     """Profili GEX per strike per BORSA DI SCADENZA (0dte / week / all).
 
     0dte = solo le scadenze di oggi (il pin attorno allo spot);
@@ -228,6 +439,12 @@ def top_gamma_by_bucket(expiries: list, spot: float) -> tuple:
     out: dict = {}
     flips: dict = {}
     regimes: dict = {}
+    # FLIP E REGIME di ogni borsa dalla CURVA di esposizione (16/11): prima
+    # erano lo zero-crossing della somma per strike, che è un dente di sega
+    # (73 cambi di segno su NDX entro ±10%) e poteva mettere il "confine" sotto
+    # il prezzo col regime short → la contraddizione vista dall'utente.
+    bands: dict = {name: (gamma_flip(exps, spot, symbol) if exps else None)
+                   for name, exps in buckets.items()}
     for name, exps in buckets.items():
         net: dict = {}
         call_abs: dict = {}
@@ -242,17 +459,9 @@ def top_gamma_by_bucket(expiries: list, spot: float) -> tuple:
                 net[o["strike"]] = net.get(o["strike"], 0.0) + mag * sign
                 side_abs = call_abs if o["side"] == "CALL" else put_abs
                 side_abs[o["strike"]] = side_abs.get(o["strike"], 0.0) + mag
-        # flip e regime DI QUESTA BORSA: 0dte = solo le scadenze di oggi,
-        # week = entro 7 giorni, all = tutto il libro. Prima esistevano solo
-        # per 'all' (compute_option_levels) e per 0dte: la borsa ≤7gg non
-        # aveva né flip né regime e la UI mostrava quelli strutturali.
-        # Stessa finestra di rilevanza di compute_option_levels (±10%): il flip
-        # deve essere calcolato con la STESSA metodologia in tutte le borse,
-        # altrimenti i tre valori non sarebbero confrontabili.
-        lo, hi = spot * (1 - RELEVANCE_WINDOW_PCT), spot * (1 + RELEVANCE_WINDOW_PCT)
-        near = {k: v for k, v in net.items() if lo <= k <= hi}
-        flips[name] = nearest_zero_crossing(near, spot) if near else None
-        regimes[name] = regime_at_spot(near, spot)
+        b = bands.get(name) or {}
+        flips[name] = b.get("flip")
+        regimes[name] = b.get("regime")
         top = sorted(net.items(), key=lambda kv: -abs(kv[1]))[:10]
         out[name] = [
             {
@@ -263,7 +472,7 @@ def top_gamma_by_bucket(expiries: list, spot: float) -> tuple:
             }
             for k, vv in top
         ]
-    return out, flips, regimes
+    return out, flips, regimes, bands
 
 
 def gex_profile_by_bucket(expiries: list, spot: float, window_pct: float = 0.10) -> dict:
@@ -346,15 +555,17 @@ def _bin_profile(entries: list, step: float) -> list:
     return sorted(out.values(), key=lambda x: x["s"])
 
 
-def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | None, float | None, list, str | None]:
-    """Restituisce (walls, gex_flip, gex_flip_0dte, top_gamma, gex_regime).
+def compute_option_levels(expiries: list, spot: float,
+                          symbol: str | None = None,
+                          bands: dict | None = None) -> tuple:
+    """Restituisce (walls, gex_flip, gex_flip_0dte, top_gamma, gex_regime, bands).
 
     walls: [{strike(INDICE), type, net_gex}] — top per |net_gex|
-    gex_flip: strike a zero-crossing del GEX netto vicino allo spot,
-              aggregato su TUTTE le scadenze (regime strutturale)
-    gex_flip_0dte: idem ma solo sulle scadenze di OGGI (daily + weekly +
-              mensile che cadono oggi): il libro che i dealer coprono
-              entro la chiusura. None se oggi non scade nulla.
+    gex_flip / gex_flip_0dte / gex_regime: dal 16/11 vengono dalla CURVA di
+              esposizione gamma (gamma_flip), non dallo zero-crossing della
+              somma per strike. Borsa 'all' = strutturale, '0dte' = oggi.
+    bands: i tre regimi (0dte/week/all) già calcolati dal caller (evita di
+              rifare la curva due volte); None = li calcola qui.
     """
     expiries = relevant_expiries(expiries, spot)
     put_walls_raw, call_walls_raw, _ = calculate_walls(expiries, spot)
@@ -370,28 +581,25 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
         })
 
     CONTRACT = 100.0
-    today = datetime.now(ET).date().isoformat()
     net: dict = {}
-    net0: dict = {}
     call_abs: dict = {}   # |GEX| del lato call per strike (per il lato dominante)
     put_abs: dict = {}
     for exp in expiries:
-        is_today = exp.get("date") == today
         for o in exp.get("options", []):
             g = o.get("gamma")
             if not g:
                 continue
             sign = 1.0 if o["side"] == "CALL" else -1.0
             mag = o["oi"] * g * CONTRACT * spot * spot
-            v = mag * sign
-            net[o["strike"]] = net.get(o["strike"], 0.0) + v
-            if is_today:
-                net0[o["strike"]] = net0.get(o["strike"], 0.0) + v
+            net[o["strike"]] = net.get(o["strike"], 0.0) + mag * sign
             (call_abs if o["side"] == "CALL" else put_abs)[o["strike"]] = \
                 (call_abs if o["side"] == "CALL" else put_abs).get(o["strike"], 0.0) + mag
 
-    flip = nearest_zero_crossing(net, spot)
-    flip0 = nearest_zero_crossing(net0, spot) if net0 else None
+    if bands is None:
+        bands = bands_by_bucket(expiries, spot, symbol)
+    flip = (bands.get("all") or {}).get("flip")
+    flip0 = (bands.get("0dte") or {}).get("flip")
+    gex_regime = (bands.get("all") or {}).get("regime")
 
     top = sorted(net.items(), key=lambda kv: -abs(kv[1]))[:10]
     top_strikes = []
@@ -407,22 +615,11 @@ def compute_option_levels(expiries: list, spot: float) -> tuple[list, float | No
             "side": "call" if c_abs >= p_abs else "put",
         })
 
-    # regime dal SEGNO del GEX ai due strike che bracketano lo spot: è
-    # definito ANCHE quando non c'è zero-crossing entro la finestra (profilo
-    # tutto positivo/negativo) — in quel caso il flip non esiste ma il
-    # regime sì, e il badge non deve sfarfallare.
-    st = sorted(net)
-    vals = []
-    below = [k for k in st if k <= spot]
-    above = [k for k in st if k > spot]
-    if below:
-        vals.append(net[below[-1]])
-    if above:
-        vals.append(net[above[0]])
-    vals = [v for v in vals if v]
-    gex_regime = ("long" if sum(vals) > 0 else "short") if vals else None
+    # regime: segno della curva di esposizione allo spot (borsa 'all'). Definito
+    # anche quando la curva non taglia entro la banda: lì il flip non esiste ma
+    # il regime sì, e il badge non deve sfarfallare.
 
-    return walls, flip, flip0, top_strikes, gex_regime
+    return walls, flip, flip0, top_strikes, gex_regime, bands
 
 
 def max_pain(expiries: list, spot: float) -> dict:
@@ -497,7 +694,16 @@ def dedupe_levels(levels: list) -> list:
     """
     base = [lv for lv in levels if lv.get("chain") != "index"]
     idx_lvs = [lv for lv in levels if lv.get("chain") == "index"]
-    deduped: list = []
+    # I FLIP si escludono a vicenda solo se sono lo STESSO perimetro: i tre
+    # perimetri (Tutte / ≤7gg / 0DTE) sono tre confini di regime diversi e la UI
+    # ne mostra uno per volta secondo la borsa scelta dal trader. Il dedup a 3 pt
+    # che si mangiava GEX-FLIP-WEEK perché coincideva col strutturale è il motivo
+    # per cui l'indicatore NT8 (che legge SOLO i livelli) mostrava un flip diverso
+    # dal sito (che invece ha il fallback sui campi numerici) — bug 16/11.
+    keep = [lv for lv in levels if str(lv.get("name", "")).startswith("GEX-FLIP")]
+    base = [lv for lv in base if not str(lv.get("name", "")).startswith("GEX-FLIP")]
+    idx_lvs = [lv for lv in idx_lvs if not str(lv.get("name", "")).startswith("GEX-FLIP")]
+    deduped: list = list(keep)
     for lv in base:
         if any(abs(lv["price"] - d["price"]) < 3.0 for d in deduped):
             continue
@@ -508,10 +714,12 @@ def dedupe_levels(levels: list) -> list:
                for d in deduped if d.get("source") != "options"):
             continue
         if any(abs(lv["price"] - d["price"]) < 3.0
-               for d in deduped if d.get("chain") == "index"):
+               for d in deduped
+               if d.get("chain") == "index"
+               and not str(d.get("name", "")).startswith("GEX-FLIP")):
             continue
         deduped.append(lv)
-    return deduped
+    return sorted(deduped, key=lambda x: -x["price"])
 
 
 def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: float,
@@ -519,15 +727,19 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
                index_to_fut: float | None = None,
                gex_flip0_etf: float | None = None,
                gex_flipw_etf: float | None = None,
-               index_opts: dict | None = None) -> dict:
+               index_opts: dict | None = None,
+               bands_etf: dict | None = None) -> dict:
     """
     walls_etf: i muri già calcolati dal pipeline opzioni, in scala ETF/strike
                [{"strike":..., "type": "put_wall|call_wall", "net_gex":...,
                  "score":...}, ...]
     spot_fut_ratio: fattore ETF→futures (ES spot / SPY spot, live).
     index_opts: SECONDA FONTE (catena SPX/NDX), in scala indice/strike nativa:
-                {"walls": [...], "flip": ..., "flip0": ..., "ratio": indice→fut}.
-                None/assente = catena indice degradata o mancante.
+                {"walls": [...], "flip": ..., "flip0": ..., "ratio": indice→fut,
+                 "bands": {0dte/week/all}}. None/assente = indice degradata.
+    bands_etf: {"0dte"/"week"/"all" → banda di regime nativa} — porta nel livello
+                flip il confine SOTTO e SOPRA lo spot e il regime, così il sito
+                e NT8 disegnano lo stesso numero e non possono contraddirsi.
     """
     rth, on = split_sessions(idx_et, list(h), list(l), list(o), list(c), v)
     for d, bars in rth.items():
@@ -560,19 +772,37 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
     # livelli restavano nel piano come zavorra — e finivano pure nel track
     # record. Le barre futures servono ancora per lo spot (last_price).
 
-    # --- GEX flip (opzioni ETF) ---
+    # --- GEX flip (opzioni ETF): un livello per perimetro di scadenza ---------
+    # Valori dalla CURVA di esposizione (16/11): sotto il flip i dealer sono
+    # short gamma (movimenti che si amplificano), sopra long (pin). Il livello
+    # si porta dietro anche il confine dall'altra parte dello spot (zone_low /
+    # zone_high) e il regime: chi legge (sito o NT8) non deve indovinare niente.
+    def flip_extras(bucket: str) -> dict:
+        b = (bands_etf or {}).get(bucket) or {}
+        return {
+            "chain": "etf",
+            "regime": b.get("regime"),
+            "zone_low": _r5(b["flip_below"] * spot_fut_ratio) if b.get("flip_below") else None,
+            "zone_high": _r5(b["flip_above"] * spot_fut_ratio) if b.get("flip_above") else None,
+            "crossings": b.get("crossings"),
+            "method": GEX_METHOD,
+        }
+
     if gex_flip_etf:
         add("GEX-FLIP", "GEX flip (cambio regime gamma)",
-            _r5(gex_flip_etf * spot_fut_ratio), "pivot", "options", chain="etf")
+            _r5(gex_flip_etf * spot_fut_ratio), "pivot", "options",
+            **flip_extras("all"))
     # Flip 0DTE: solo le scadenze di oggi (daily + weekly + mensile che
     # cadono oggi). Regime intraday: è il libro che i dealer coprono entro
     # la chiusura. Può divergere dall'aggregato → info, non rumore.
     if gex_flip0_etf:
         add("GEX-FLIP-0DTE", "GEX flip 0DTE (scade oggi)",
-            _r5(gex_flip0_etf * spot_fut_ratio), "pivot", "options", chain="etf")
+            _r5(gex_flip0_etf * spot_fut_ratio), "pivot", "options",
+            **flip_extras("0dte"))
     if gex_flipw_etf:
         add("GEX-FLIP-WEEK", "GEX flip ≤7gg (cambio regime gamma)",
-            _r5(gex_flipw_etf * spot_fut_ratio), "pivot", "options", chain="etf")
+            _r5(gex_flipw_etf * spot_fut_ratio), "pivot", "options",
+            **flip_extras("week"))
 
     # --- muri da catena INDICE (SPX/NDX): stessa logica, fonte separata ---
     # Strike in scala indice, convertiti col fattore indice→futures (ES/SPX).
@@ -583,15 +813,29 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
     if index_opts and index_opts.get("ratio"):
         i_ratio = float(index_opts["ratio"])
         i_src = "SPX" if futures == "ES" else "NDX"
+        def flip_extras_idx(bucket: str) -> dict:
+            b = (index_opts.get("bands") or {}).get(bucket) or {}
+            return {
+                "chain": "index",
+                "regime": b.get("regime"),
+                "zone_low": _r5(b["flip_below"] * i_ratio) if b.get("flip_below") else None,
+                "zone_high": _r5(b["flip_above"] * i_ratio) if b.get("flip_above") else None,
+                "crossings": b.get("crossings"),
+                "method": GEX_METHOD,
+            }
+
         if index_opts.get("flip"):
             add("GEX-FLIP-IDX", f"GEX flip da {i_src} (cambio regime gamma)",
-                _r5(index_opts["flip"] * i_ratio), "pivot", "options", chain="index")
+                _r5(index_opts["flip"] * i_ratio), "pivot", "options",
+                **flip_extras_idx("all"))
         if index_opts.get("flip0"):
             add("GEX-FLIP-0DTE-IDX", f"GEX flip 0DTE da {i_src} (scade oggi)",
-                _r5(index_opts["flip0"] * i_ratio), "pivot", "options", chain="index")
+                _r5(index_opts["flip0"] * i_ratio), "pivot", "options",
+                **flip_extras_idx("0dte"))
         if index_opts.get("flipw"):
             add("GEX-FLIP-WEEK-IDX", f"GEX flip ≤7gg da {i_src} (cambio regime gamma)",
-                _r5(index_opts["flipw"] * i_ratio), "pivot", "options", chain="index")
+                _r5(index_opts["flipw"] * i_ratio), "pivot", "options",
+                **flip_extras_idx("week"))
         pin_wi, trg_wi = [], []
         for w in index_opts.get("walls") or []:
             strike = w.get("strike")
@@ -922,14 +1166,15 @@ def main() -> None:
                   f"livelli opzioni saltati")
             walls, flip, flip0, top_gamma, gex_regime = [], None, [], [], None
             tg_b = {"0dte": [], "week": [], "all": []}
-            flips_b, regs_b = {}, {}
+            flips_b, regs_b, bands_b = {}, {}, {}
             prof_b = {"0dte": [], "week": [], "all": []}
             mp = {"nearest": {}, "all": {}}
         else:
+            tg_b, flips_b, regs_b, bands_b = top_gamma_by_bucket(
+                sd.get("expiries", []), spot_etf, sym)
             walls, flip, flip0, top_gamma, gex_regime = compute_option_levels(
-                sd.get("expiries", []), spot_etf)
+                sd.get("expiries", []), spot_etf, sym, bands=bands_b)[:5]
             mp = max_pain(sd.get("expiries", []), spot_etf)
-            tg_b, flips_b, regs_b = top_gamma_by_bucket(sd.get("expiries", []), spot_etf)
             prof_b = gex_profile_by_bucket(sd.get("expiries", []), spot_etf, window_pct=0.20)
         # GEX flip ricalcolato qui dai per-strike già presenti nel JSON walls
         # (spx/spx_spot definiti nel blocco ratio, prima della catena indice)
@@ -951,17 +1196,19 @@ def main() -> None:
                 print(f"day_plan: catena {idx_sym} degradata "
                       f"(OI tot {oi_idx:,}) → livelli da indici saltati")
             else:
+                tg_bi, flips_bi, regs_bi, bands_bi = top_gamma_by_bucket(
+                    spx.get("expiries", []), spx_spot, idx_sym)
                 walls_i, flip_i, flip0_i, tg_i, reg_i = compute_option_levels(
-                    spx.get("expiries", []), spx_spot)
+                    spx.get("expiries", []), spx_spot, idx_sym, bands=bands_bi)[:5]
                 mp_i = max_pain(spx.get("expiries", []), spx_spot)
                 i_ratio = index_to_fut
                 # PRIMA di index_opts: index_opts usa flips_bi (flip ≤7gg della
                 # catena indice). Invertire l'ordine = UnboundLocalError, lo
                 # script muore prima di scrivere il piano e il workflow lo
                 # nasconde con `|| true` (piano fermo, options_data fresco).
-                tg_bi, flips_bi, regs_bi = top_gamma_by_bucket(spx.get("expiries", []), spx_spot)
                 index_opts = {"walls": walls_i, "flip": flip_i, "flip0": flip0_i,
-                              "flipw": flips_bi.get("week"), "ratio": i_ratio}
+                              "flipw": flips_bi.get("week"), "ratio": i_ratio,
+                              "bands": bands_bi}
                 prof_bi = gex_profile_by_bucket(spx.get("expiries", []), spx_spot, window_pct=0.20)
                 index_aggr = {
                     "gamma_regime_index": reg_i,
@@ -1019,7 +1266,7 @@ def main() -> None:
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
                           index_to_fut=index_to_fut, gex_flip0_etf=flip0,
                           gex_flipw_etf=flips_b.get("week"),
-                          index_opts=index_opts)
+                          index_opts=index_opts, bands_etf=bands_b)
         plan.update(index_aggr)
         plan["spot_etf"] = spot_etf
         plan["gamma_regime"] = gex_regime
@@ -1030,6 +1277,23 @@ def main() -> None:
         # borsa ≤7gg mostrava il flip sbagliato.
         plan["gamma_regime_0dte"] = regs_b.get("0dte")
         plan["gamma_regime_week"] = regs_b.get("week")
+        # --- il quaderno del regime (16/11): curva di esposizione per le TRE
+        # borse di entrambe le catene. È LA fonte di regime e flip: i due numeri
+        # vengono dalla stessa curva, quindi il badge non può più dire "short"
+        # col prezzo sopra il confine. `flip_below`/`flip_above` = i confini della
+        # ZONA di regime in cui sta il prezzo (None = la zona esce dalla banda).
+        plan["gamma"] = {
+            "method": GEX_METHOD,
+            "note": ("G(P) = Σ ±OI·100·P²·Γ_BS(P) rivalutata a ogni prezzo; "
+                     f"banda ±{int(GEX_CURVE_BAND * 100)}%, r={GEX_R}, q={GEX_Q}"),
+            "etf": {"symbol": sym,
+                    **{b: _band_fut((bands_b or {}).get(b), ratio)
+                       for b in ("all", "week", "0dte")}},
+            "index": ({"symbol": idx_sym,
+                       **{b: _band_fut((bands_bi or {}).get(b), i_ratio)
+                          for b in ("all", "week", "0dte")}}
+                      if index_opts and index_opts.get("bands") else None),
+        }
         if flips_b.get("week"):
             plan["gex_flip_week"] = _r5(flips_b["week"] * ratio)
             plan["gex_flip_week_native"] = round(flips_b["week"], 4)

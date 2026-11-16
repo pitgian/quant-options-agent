@@ -154,39 +154,91 @@ expiries_b = [
     exp_b(3, 6050.0, "CALL", 100, 0.005),
     exp_b(30, 6500.0, "CALL", 5000, 0.0002),
 ]
-# la funzione restituisce (profili, flip per borsa, regime per borsa)
-buckets, flips, regimes = top_gamma_by_bucket(expiries_b, SPOT_B)
+# la funzione restituisce (profili, flip per borsa, regime per borsa, bande)
+buckets, flips, regimes, bands = top_gamma_by_bucket(expiries_b, SPOT_B, "TEST")
 assert [t["strike"] for t in buckets["0dte"]] == [6000.0], f"0dte: {buckets['0dte']}"
 assert sorted(t["strike"] for t in buckets["week"]) == [6000.0, 6050.0], f"week: {buckets['week']}"
 assert sorted(t["strike"] for t in buckets["all"]) == [6000.0, 6050.0, 6500.0], f"all: {buckets['all']}"
 # scadenza passata: ignorata ovunque
 past = exp_b(-2, 6100.0, "CALL", 999, 0.01)
-buckets2, flips2, regimes2 = top_gamma_by_bucket([past], SPOT_B)
+buckets2, flips2, regimes2, bands2 = top_gamma_by_bucket([past], SPOT_B, "TEST")
 assert buckets2["all"] == [] and buckets2["week"] == [], "scadenza passata non scartata"
+assert bands2 == {"0dte": None, "week": None, "all": None}, f"bande su libro vuoto: {bands2}"
 # scadenza passata NON deve entrare nemmeno negli aggregati "strutturali"
 from day_plan import relevant_expiries
 assert relevant_expiries([past], SPOT_B) == [], "la scadenza passata passa relevant_expiries"
 # lato dominante: call 100 vs put 60 → side call
 mixed = exp_b(0, 6000.0, "PUT", 60, 0.01)
-buckets3, flips3, regimes3 = top_gamma_by_bucket(
-    [exp_b(0, 6000.0, "CALL", 100, 0.01), mixed], SPOT_B)
+buckets3, flips3, regimes3, bands3 = top_gamma_by_bucket(
+    [exp_b(0, 6000.0, "CALL", 100, 0.01), mixed], SPOT_B, "TEST")
 assert buckets3["0dte"][0]["side"] == "call" and buckets3["0dte"][0]["sign"] == "long"
 
-# --- 10. FLIP e REGIME per borsa: 0dte / week / all NON sono lo stesso valore
-# put sotto lo spot (short) e call sopra (long) → zero-crossing fra i due, su
-# ogni borsa che contiene entrambe le scadenze.
-exp_flip = [
-    exp_b(0,  5950.0, "PUT",  100, 0.01),   # 0dte: negativo
-    exp_b(0,  6000.0, "CALL", 100, 0.01),   # 0dte: positivo → flip ~5975
-    exp_b(30, 6050.0, "CALL", 9000, 0.02),  # solo 'all': molto positivo
-]
-b10, f10, r10 = top_gamma_by_bucket(exp_flip, SPOT_B)
-assert f10["0dte"] is not None and 5950.0 < f10["0dte"] < 6000.0, f"flip 0dte: {f10['0dte']}"
-assert set(r10) == {"0dte", "week", "all"}, f"regimi mancanti: {r10}"
-assert r10["0dte"] in ("long", "short") and r10["all"] in ("long", "short")
-# il flip deve cambiare col perimetro quando cambia il libro (qui 'week' ha
-# solo 0dte+week, 'all' aggiunge la scadenza a 30 giorni con gamma pesante)
-assert f10["week"] == f10["0dte"], f"week {f10['week']} vs 0dte {f10['0dte']}"
-print(f"test_day_plan: flip 0dte={f10['0dte']} week={f10['week']} all={f10['all']} · regimi {r10}")
+# --- 10. FLIP dalla CURVA di esposizione: regime e flip sono la STESSA funzione
+# (16/11). Prima il flip era lo zero-crossing della somma per strike — un dente
+# di sega (73 tagli su NDX entro ±10%) — e capitava il "prezzo sopra il flip"
+# con regime short che l'utente ha visto sull'app. Ora la curva rivaluta la
+# gamma di ogni contratto a OGNI prezzo: un taglio solo, e "sotto = short,
+# sopra = long" è vero per costruzione.
+from day_plan import gamma_flip, gamma_exposure_curve
+import numpy as np
 
-print("test_day_plan: 17 check OK")
+def book(pairs):
+    """pairs = [(offset_days, strike, side, oi), ...] → expiries nel formato del feed."""
+    by_day = {}
+    for off, K, side, oi in pairs:
+        d = (today_b + _td(days=off)).isoformat()
+        by_day.setdefault(d, []).append(
+            {"strike": K, "side": side, "oi": oi, "iv": 0.20})
+    return [{"date": d, "options": o} for d, o in by_day.items()]
+
+# libro PUT-heavy: i dealer sono corti di gamma finché il prezzo resta sotto
+puts_heavy = book([(25, 5800.0, "PUT", 12000), (25, 5900.0, "PUT", 12000),
+                   (25, 6100.0, "CALL", 6000), (25, 6200.0, "CALL", 6000)])
+bd = gamma_flip(puts_heavy, SPOT_B, "TEST")
+assert bd["regime"] == "short", f"libro put-heavy deve essere short: {bd}"
+assert bd["crossings"] == 1, f"un taglio solo atteso: {bd}"
+assert bd["flip"] and bd["flip"] > SPOT_B and bd["flip_above"] == bd["flip"], \
+    f"flip di un libro short deve stare SOPRA il prezzo: {bd}"
+# libro CALL-heavy: specularmente long, col confine SOTTO il prezzo
+calls_heavy = book([(25, 5800.0, "PUT", 6000), (25, 5900.0, "PUT", 6000),
+                    (25, 6100.0, "CALL", 12000), (25, 6200.0, "CALL", 12000)])
+bd2 = gamma_flip(calls_heavy, SPOT_B, "TEST")
+assert bd2["regime"] == "long" and bd2["flip"] < SPOT_B and bd2["flip_below"] == bd2["flip"], \
+    f"libro call-heavy: {bd2}"
+# INVARIANTE del badge: con UN taglio, regime long ⟺ prezzo sopra il flip.
+# È la clausola che il sito e NT8 stanno leggendo a voce.
+for b in (bd, bd2):
+    assert (b["regime"] == "long") == (b["flip"] < SPOT_B), f"invariante rotta: {b}"
+# e il regime è davvero il segno della curva allo spot, non un calcolo parallelo
+for bk, b in ((puts_heavy, bd), (calls_heavy, bd2)):
+    P, G = gamma_exposure_curve(bk, SPOT_B, "TEST")
+    assert (("long" if float(np.interp(SPOT_B, P, G)) > 0 else "short") == b["regime"]
+            and ("long" if float(np.interp(b["flip"] * 1.0002, P, G)) > 0 else "short")
+            != ("long" if float(np.interp(b["flip"] * 0.9998, P, G)) > 0 else "short")), \
+            "il flip non è lo zero della curva letta al prezzo"
+# il T delle scadenze di OGGI è convenzionale: il numero NON dipende dall'ora in
+# cui gira la pipeline (un flip che si muove perché sono le 10:30 è un bug)
+same = book([(0, 5900.0, "PUT", 4000), (0, 6100.0, "CALL", 4000)])
+assert gamma_flip(same, SPOT_B, "TEST") == gamma_flip(same, SPOT_B, "TEST")
+# catena senza OI = niente da coprire → nessuna banda, la UI dichiara l'assenza
+assert gamma_flip([{"date": (today_b + _td(days=1)).isoformat(),
+                    "options": [{"strike": 6000.0, "side": "CALL", "oi": 0, "iv": 0.2}]}],
+                  SPOT_B, "TEST") is None, "catena vuota non deve inventare flip"
+print(f"test_day_plan: curva put-heavy {bd['regime']} flip {bd['flip']} (sopra) · "
+      f"call-heavy {bd2['regime']} flip {bd2['flip']} (sotto)")
+
+# --- 11. i tre FLIP restano tutti in scala: il dedup non deve mangiarsi
+# GEX-FLIP-WEEK perché coincide col strutturale (era il motivo per cui NT8,
+# che legge solo i livelli, mostrava un flip diverso dal sito — 16/11).
+from day_plan import dedupe_levels
+lv = [
+    mk("GEX-FLIP", 7560.0, chain="etf"),
+    mk("GEX-FLIP-WEEK", 7560.0, chain="etf"),      # stesso prezzo del strutturale
+    mk("GEX-FLIP-0DTE", 7562.0, chain="etf"),      # 2 pt: zona diversa, perimetro diverso
+    mk("PIN", 7561.0, chain="etf"),                # un muro SÌ, assorbito dal flip
+]
+kept = {l["name"] for l in dedupe_levels(lv)}
+assert {"GEX-FLIP", "GEX-FLIP-WEEK", "GEX-FLIP-0DTE"} <= kept, f"flip soppressi: {kept}"
+assert "PIN" not in kept, "il dedup dei livelli normali non deve cambiare"
+
+print("test_day_plan: 26 check OK")

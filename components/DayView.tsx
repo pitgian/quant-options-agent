@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { fetchDayPlanFile, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type LiveSpot } from '../services/dayPlanService';
+import { fetchDayPlanFile, fetchLevelStats, fetchLiveSpot, type DayPlan, type DayPlanLevel, type GammaBand, type LiveSpot } from '../services/dayPlanService';
 import { buildLadderForPlan } from './Ladder';
 import { Ladder } from './Ladder';
 import { GexHistogram, type GexProfileEntry, type TwinRef } from './GexHistogram';
@@ -96,47 +96,102 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
   const FLIP_ETF_NAME = `GEX-FLIP${FLIP_SFX}`;
   const FLIP_IDX_NAME = `GEX-FLIP${FLIP_SFX}-IDX`;
 
+  /* LA BANDA DI REGIME (16/11) — d'ora in poi FLIP e REGIME si leggono dallo
+     stesso posto: day_plan calcola la CURVA di esposizione gamma (il modo delle
+     piattaforme pro: gamma rivalutata a OGNI prezzo con Black-Scholes, T/IV/OI
+     reali della catena) e pubblica per ogni catena × perimetro il segno al
+     prezzo (`regime`) e i confini della ZONA in cui il prezzo sta (`flip`,
+     `flip_below`, `flip_above`). Prima il regime veniva dal segno della somma
+     PER STRIKE e il flip dal suo incrocio più vicino: due funzioni diverse sullo
+     stesso dente di sega (73 cambi di segno entro ±10% su NDX il 16/11) — da lì
+     il "gamma negativa col prezzo sopra il flip" visto sull'app.
+     `plan.gamma` manca nei piani vecchi: lì si ripiega sui campi flat e sui
+     livelli, cioè sul comportamento precedente. */
+  const bandKey: 'all' | 'week' | '0dte' =
+    bucket === '0dte' ? '0dte' : bucket === 'week' ? 'week' : 'all';
+  const bandEtf = plan?.gamma?.etf?.[bandKey] ?? null;
+  const bandIdx = plan?.gamma?.index?.[bandKey] ?? null;
+  const band = chain === 'index' ? bandIdx : bandEtf;
+  const bandOther = chain === 'both' ? bandIdx : null;
+  /* Come si legge la zona, in italiano, per il badge e per la scala: il confine
+     da attraversare è UNA cosa, il regime un'altra — qui si dice entrambi. */
+  const fP = (v?: number | null) => (v ? v.toLocaleString('it-IT') : null);
+  const dP = (v: number) => `${v > spot ? '+' : ''}${Math.round(v - spot)}`;
+  const zoneLine = (() => {
+    if (!band || band.flip == null) return null;
+    if (band.flip_below != null && band.flip_above != null)
+      return `il prezzo sta nella zona ${fP(band.flip_below)}–${fP(band.flip_above)} (${dP(band.flip_below!)} / ${dP(band.flip_above!)} pt): è lì che la gamma netta ha questo segno`;
+    if (band.flip_above != null)
+      return `la zona attuale finisce SOPRA a ${fP(band.flip_above)} (${dP(band.flip_above!)} pt): oltre quel prezzo il regime gira`;
+    return `la zona attuale finisce SOTTO a ${fP(band.flip_below)} (${dP(band.flip_below!)} pt): sotto quel prezzo il regime gira`;
+  })();
+  // (bandLine — la frase completa col regime — si costruisce dopo regimeNow)
+
+  /* UNICO risolutore del flip, per catena. Precedenza:
+        1. la CURVA di esposizione (band.flip) — è il numero vero del perimetro
+        2. il livello GEX-FLIP* omonimo nel piano
+        3. i campi numerici flat (gex_flip_week / _0dte, anche _index)
+        4. il livello strutturale (GEX-FLIP[-IDX]) — weekend senza scadenze di
+           oggi: meglio il confine lontano che nessun confine, ma è lo stesso
+           oggetto usato dalla scala E dall'header → i due non possono più
+           mostrare numeri diversi (era il caso 7545-sito / 7580-NT8 del 16/11). */
+  const flipViews = useMemo(() => {
+    const sfxOf = (bk: 'all' | 'week' | '0dte') =>
+      bk === '0dte' ? '-0DTE' : bk === 'week' ? '-WEEK' : '';
+    const one = (kind: 'etf' | 'index', bk: 'all' | 'week' | '0dte' = bandKey): DayPlanLevel | null => {
+      if (!plan) return null;
+      const b = (kind === 'index' ? plan.gamma?.index : plan.gamma?.etf)?.[bk] ?? null;
+      const name = `GEX-FLIP${sfxOf(bk)}${kind === 'index' ? '-IDX' : ''}`;
+      const legacy = kind === 'index' ? 'GEX-FLIP-IDX' : 'GEX-FLIP';
+      const lv = plan.levels.find(l => l.name === name)
+        ?? plan.levels.find(l => l.name === legacy);
+      const num = kind === 'index'
+        ? (bk === '0dte' ? plan.gex_flip_0dte_index : bk === 'week' ? plan.gex_flip_week_index : undefined)
+        : (bk === '0dte' ? plan.gex_flip_0dte : bk === 'week' ? plan.gex_flip_week : undefined);
+      const price = b?.flip
+        ?? (lv?.name === name ? lv.price : undefined)
+        ?? (num && num > 0 ? num : undefined)
+        ?? lv?.price;
+      if (!price) return null;
+      const side = b ? (b.flip_above === b.flip && b.flip_below !== b.flip
+        ? ' — confine di regime SOPRA il prezzo' : ' — confine di regime SOTTO il prezzo') : '';
+      return {
+        ...(lv ?? {}),
+        name, kind: 'pivot', source: 'options', chain: kind,
+        price,
+        nome_it: `${(lv?.name === name ? lv.nome_it : undefined)
+          ?? `GEX flip${bk === '0dte' ? ' 0DTE' : bk === 'week' ? ' ≤7gg' : ''}${kind === 'index' ? ` da ${idxName}` : ''} (cambio regime gamma)`
+            .replace(/ \(.*$/, '')}${side}`,
+        dist_pts: Math.round(price - spot),
+        regime: b?.regime ?? lv?.regime ?? null,
+        zone_low: b?.flip_below ?? lv?.zone_low ?? null,
+        zone_high: b?.flip_above ?? lv?.zone_high ?? null,
+        crossings: b?.crossings ?? lv?.crossings,
+        method: lv?.method,
+        native: b?.flip_native ?? (kind === 'index'
+          ? (idxRatio ? Math.round(price / idxRatio * 10) / 10 : undefined)
+          : (plan.gex_flip_native ?? (etfRatio ? Math.round(price / etfRatio * 10) / 10 : undefined))),
+        nativeSource: kind === 'index' ? idxName : etfName,
+      } as DayPlanLevel;
+    };
+    return {
+      etf: one('etf'), index: one('index'),
+      // chip "0DTE" della testata: il confine del libro che scade OGGI qualunque
+      // borsa sia selezionata — è un CONFRONTO, quindi passa dalla stessa
+      // funzione (i campi flat sarebbero l'ennesima fonte di numeri divergenti)
+      d0etf: one('etf', '0dte'), d0index: one('index', '0dte'),
+    };
+  }, [plan, bucket, spot, bandKey, bandEtf, bandIdx, idxRatio, etfRatio, idxName,
+      etfName, FLIP_ETF_NAME, FLIP_IDX_NAME]);
+
   const optLevels: DayPlanLevel[] = useMemo(() => {
     if (!plan) return [];
     const out: DayPlanLevel[] = [];
 
-    // flip gamma della fonte (regime boundary, pivot) — con doppio prezzo:
-    // nativo esatto se pubblicato dal pipeline, altrimenti ricavato dal ratio.
-    // Se la borsa non ha flip (weekend senza scadenze, catena corta) si usa
-    // quello strutturale: la riga dichiara comunque di che borsa è.
-    const flipName = chain === 'index' ? FLIP_IDX_NAME : FLIP_ETF_NAME;
-    let flip = plan.levels.find(l => l.name === flipName)
-      ?? plan.levels.find(l => l.name === (chain === 'index' ? 'GEX-FLIP-IDX' : 'GEX-FLIP'));
-    /* Il livello del flip può MANCARE perché il pipeline deduplica i livelli
-       entro 3 pt: se il flip ≤7gg cade sullo stesso prezzo di quello 0DTE
-       sopravvive solo uno dei due. I campi numerici però ci sono sempre
-       (gex_flip_week / gex_flip_0dte), quindi in quel caso il livello si
-       ricostruisce qui: senza, la borsa ≤7gg tornerebbe a mostrare il flip
-       strutturale (bug 16/11). */
-    if (flip?.name !== flipName) {
-      const num = chain === 'index'
-        ? (bucket === '0dte' ? plan.gex_flip_0dte_index
-          : bucket === 'week' ? plan.gex_flip_week_index : undefined)
-        : (bucket === '0dte' ? plan.gex_flip_0dte
-          : bucket === 'week' ? plan.gex_flip_week : undefined);
-      if (num && num > 0) {
-        flip = {
-          name: flipName,
-          nome_it: bucket === '0dte'
-            ? `GEX flip 0DTE${chain === 'index' ? ` da ${idxName}` : ''} (scade oggi)`
-            : `GEX flip ≤7gg${chain === 'index' ? ` da ${idxName}` : ''} (cambio regime gamma)`,
-          price: num, kind: 'pivot', source: 'options',
-          dist_pts: Math.round(num - spot), chain: chain === 'index' ? 'index' : 'etf',
-        } as DayPlanLevel;
-      }
-    }
-    if (flip) out.push({
-      ...flip,
-      native: chain === 'index'
-        ? (idxRatio ? Math.round(flip.price / idxRatio * 10) / 10 : undefined)
-        : (plan.gex_flip_native ?? (etfRatio ? Math.round(flip.price / etfRatio * 10) / 10 : undefined)),
-      nativeSource: chain === 'index' ? idxName : etfName,
-    });
+    // flip gamma della fonte (confine di regime, pivot): prezzo, zona e nome
+    // arrivano dal risolutore unico — stessa riga, stessa testata, stesso NT8
+    const flip = chain === 'index' ? flipViews.index : flipViews.etf;
+    if (flip) out.push(flip);
 
     // Max Pain della scadenza vicina (magnete intraday)
     const addMp = (price: number | undefined, name: string, nome: string,
@@ -268,39 +323,41 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     if (chain !== 'index') addCages(pickBucket(plan.gex_profile_binned, plan.gex_profile_week_binned, plan.gex_profile_0dte_binned), '');
     if (chain !== 'etf') addCages(pickBucket(plan.gex_profile_index, plan.gex_profile_week_index, plan.gex_profile_0dte_index), '-IDX');
     return out;
-  }, [plan, spot, chain, idxName, etfName, etfRatio, idxRatio, bucket,
-      FLIP_ETF_NAME, FLIP_IDX_NAME]);
+  }, [plan, spot, chain, idxName, etfName, etfRatio, idxRatio, bucket, flipViews]);
 
   // Flip e regime SECONDO LA FONTE selezionata. Il regime esiste ANCHE senza
-  // flip: quando il profilo entro ±10% è tutto positivo/negativo non c'è
-  // zero-crossing (flip assente) ma il segno del GEX sullo spot resta
-  // definito — così il badge non sfarfalla.
-  /* FLIP DELLA BORSA SELEZIONATA. Il flip è il confine di regime: con 0DTE
-     deve essere lo zero-crossing delle scadenze di OGGI, con ≤7gg quello della
-     settimana, con Tutte quello strutturale — sono tre valori diversi (misurato
-     il 15/11: SPX 7617 su ≤7gg contro 7654 su Tutte, 37 pt di differenza).
-     Prima la UI mostrava SEMPRE lo strutturale qualunque borsa fosse scelta.
-     Fallback allo strutturale quando la borsa non ha flip (es. weekend: nessuna
-     scadenza oggi → niente flip 0DTE): la riga della scala dice di che borsa è. */
-  const flipEtf = plan?.levels.find(l => l.name === FLIP_ETF_NAME)
-    ?? plan?.levels.find(l => l.name === 'GEX-FLIP');
-  const flipIdx = plan?.levels.find(l => l.name === FLIP_IDX_NAME)
-    ?? plan?.levels.find(l => l.name === 'GEX-FLIP-IDX');
+  // flip: quando la curva di esposizione non taglia entro la banda ±12% il
+  // confine non esiste, ma il segno al prezzo (il regime) resta definito — così
+  // il badge non sfarfalla e dice comunque dove il regime CAMBIA (banda nativa).
+  // flip di testata = lo STESSO oggetto usato dalla scala (flipViews): le due
+  // letture non possono più divaricare su fonte/perimetro/piani parziali
+  const flipEtf = flipViews.etf;
+  const flipIdx = flipViews.index;
   const gexFlip = chain === 'index' ? flipIdx : flipEtf;
   const flipOther = chain === 'both' ? flipIdx : null;
-  const flip0 = chain === 'index' ? plan?.gex_flip_0dte_index : plan?.gex_flip_0dte;
-  const flip0Other = chain === 'both' ? plan?.gex_flip_0dte_index : null;
-  // regime: prima il segno rispetto al flip della borsa, poi il regime
-  // pubblicato per QUELLA borsa (0dte/week), infine lo strutturale
+  const flip0 = (chain === 'index' ? flipViews.d0index : flipViews.d0etf)?.price ?? null;
+  const flip0Other = chain === 'both' ? flipViews.d0index?.price ?? null : null;
+  /* REGIME: il segno della curva di esposizione al prezzo (borsa + fonte
+     scelte). Niente più "long se il prezzo sta sopra il flip": era quella
+     formula a promettere una cosa che il numero non garantiva. */
   const regimeOfBucket = chain === 'index'
     ? (bucket === '0dte' ? plan?.gamma_regime_0dte_index
       : bucket === 'week' ? plan?.gamma_regime_week_index : plan?.gamma_regime_index)
     : (bucket === '0dte' ? plan?.gamma_regime_0dte
       : bucket === 'week' ? plan?.gamma_regime_week : plan?.gamma_regime);
   const regimeNow: 'long' | 'short' | null =
-    gexFlip ? (spot > gexFlip.price ? 'long' : 'short')
-            : (regimeOfBucket ?? (chain === 'index' ? (plan?.gamma_regime_index ?? null)
-                                                    : (plan?.gamma_regime ?? null)));
+    band?.regime
+    ?? regimeOfBucket
+    ?? (chain === 'index' ? (plan?.gamma_regime_index ?? null) : (plan?.gamma_regime ?? null));
+  // regime dell'altra catena (solo vista 'Entrambi'), per il chip di divergenza
+  const regimeOther: 'long' | 'short' | null = bandOther?.regime ?? null;
+  /* Frase del badge: regime + zona da attraversare per cambiarlo. */
+  const bandLine = zoneLine
+    ? `Curva di esposizione gamma — ${chain === 'index' ? idxName : etfName}, `
+      + `borsa ${bucket === '0dte' ? '0DTE' : bucket === 'week' ? '≤7gg' : 'tutte le scadenze'}: `
+      + `dealer ${regimeNow === 'long' ? 'LUNGHI' : 'CORTI'} di gamma a questo prezzo · ${zoneLine}`
+      + ((band?.crossings ?? 0) > 1 ? ` · ⚠ la curva taglia ${band?.crossings} volte entro ±${Math.round((band?.band_pct ?? 0.12) * 100)}%` : '')
+    : null;
 
   // Doppio prezzo nel tooltip dell'istogramma (vedi commento sopra idxRatio).
   const futEq = useMemo(() => {
@@ -372,8 +429,10 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     const mpE = plan.max_pain_nearest, mpI = plan.max_pain_nearest_index;
     if (mpE) out.push({ price: mpE, kind: 'mp', src: 'etf', label: `MP ${etfName}` });
     if (mpI) out.push({ price: mpI, kind: 'mp', src: 'idx', label: `MP ${idxName}` });
-    const fE = zero ? plan.gex_flip_0dte : flipEtf?.price;
-    const fI = zero ? plan.gex_flip_0dte_index : flipIdx?.price;
+    // flip già risolti per (fonte × borsa) con la curva di esposizione:
+    // niente rami speciali per il 0DTE, che è uno dei tre perimetri
+    const fE = flipEtf?.price;
+    const fI = flipIdx?.price;
     const tag = zero ? 'Flip0' : 'Flip';
     if (fE) out.push({ price: fE, kind: 'flip', src: 'etf', label: `${tag} ${etfName}` });
     if (fI) out.push({ price: fI, kind: 'flip', src: 'idx', label: `${tag} ${idxName}` });
@@ -463,10 +522,15 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     const parts: string[] = [];
     let tag: 'compressione' | 'trend' | 'ibrido' | null = null;
     const mp = chain === 'index' ? plan.max_pain_nearest_index : plan.max_pain_nearest;
-    const regimeLong = regimeNow;
+    /* ⚠ regimeNow è la STRINGA 'long' | 'short': 'short' è truthy. Fin qui
+       `const regimeLong = regimeNow` ha reso VERA ogni ramo "long gamma" → lo
+       scenario diceva "long gamma ma max pain lontano" anche col regime short
+       (contraddizione visibile in testata il 16/11). Si confronta, non si usa
+       come booleano. */
+    const regimeLong = regimeNow === 'long';
     const fmtDist = (d: number) => `${d > 0 ? '+' : ''}${Math.round(d).toLocaleString('it-IT')} pt`;
 
-    if (mp && regimeLong !== null) {
+    if (mp && regimeNow !== null) {
       const dist = mp - spot;
       const near = Math.abs(dist) / spot < NEAR_MP_PCT;
       if (regimeLong && near) {
@@ -489,19 +553,25 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
         .sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot))[0] ?? null;
       if (wall) parts.push(`checkpoint verso il max pain: ${wall.label} a ${Math.round(wall.price).toLocaleString('it-IT')} — la rotura apre il riallineamento`);
       if (flip0 && regimeLong) parts.push('scadenza oggi: la convergenza verso il max pain tende ad accelerare in chiusura');
+      if (flip0 && !regimeLong) parts.push(`0DTE: confine di oggi a ${flip0.toLocaleString('it-IT')} (${fmtDist(flip0 - spot)} pt) — con gamma corta la convergenza verso il max pain si paga in volatilità, non in deriva`);
     }
 
-    // Divergenza SPY/QQQ (catene ETF): i due regimi sono d'accordo?
-    const oFlip = otherPlan?.levels.find(l => l.name === 'GEX-FLIP');
-    if (flipEtf && oFlip && otherPlan?.last_price) {
-      const mineLong = spot > flipEtf.price;
-      const otherLong = otherPlan.last_price > oFlip.price;
+    // Divergenza SPY/QQQ (catene ETF): i due regimi sono d'accordo? Si legge il
+    // regime PUBBLICATO per l'altro piano, non "prezzo sopra il flip": con la
+    // curva di esposizione le due cose non sono equivalenti (bande multiple).
+    const oReg = (otherPlan?.gamma?.etf?.[bandKey] ?? null)?.regime
+      ?? otherPlan?.gamma_regime ?? null;
+    const mineReg = band?.regime ?? regimeOfBucket ?? null;
+    if (flipEtf && oReg && otherPlan?.last_price && mineReg) {
+      const mineLong = mineReg === 'long';
+      const otherLong = oReg === 'long';
       if (mineLong !== otherLong) {
-        parts.push(`divergenza SPY/QQQ: ES ${mineLong ? 'long' : 'short'} gamma contro NQ ${otherLong ? 'long' : 'short'} — rotazione fra indici, conviction direzionale ridotta`);
+        parts.push(`divergenza ${etfName}/${otherPlan?.futures === 'NQ' ? 'QQQ' : 'SPY'}: ${futures} ${mineLong ? 'long' : 'short'} gamma contro ${otherPlan.futures} ${otherLong ? 'long' : 'short'} — rotazione fra indici, conviction direzionale ridotta`);
       }
     }
     return { tag, parts };
-  }, [plan, spot, regimeNow, otherPlan, ladderAll, chain, flipEtf, flip0]);
+  }, [plan, spot, regimeNow, otherPlan, ladderAll, chain, flipEtf, flip0,
+      band, bandKey, regimeOfBucket, etfName]);
 
   // Nota di regime: esiste almeno un pin (gamma lunga) SOTTO lo spot? Se no,
   // è la firma strutturale del libro (put comprate = dealer short gamma sotto):
@@ -535,30 +605,31 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
           <div className="flex items-center gap-2">
             <span className="text-[10.5px] text-gray-500 uppercase tracking-wider font-semibold">Regime gamma</span>
             {regimeNow ? (
-              <Badge tone={regimeNow === 'long' ? 'good' : 'bad'}
-                     title={regimeNow === 'long'
-                       ? (gexFlip ? 'Sopra il flip: dealer long gamma — volatilità contenuta, i livelli respingono (pin)'
-                                  : 'Dealer long gamma su tutto il profilo entro ±10% — volatilità contenuta (flip oltre la finestra)')
-                       : (gexFlip ? 'Sotto il flip: dealer short gamma — i movimenti si amplificano (trend)'
-                                  : 'Dealer short gamma su tutto il profilo entro ±10% — i movimenti si amplificano (flip oltre la finestra)')}>
+              <Badge tone={regimeNow === 'long' ? 'good' : 'bad'} title={bandLine ?? (regimeNow === 'long'
+                ? 'Dealer LONG gamma a questo prezzo: copre buying sul debole e vendita sul forte → volatilità contenuta, i livelli respingono (pin)'
+                : 'Dealer SHORT gamma a questo prezzo: copre in direzione del movimento → i range si allargano e le rotture accelerano (trend)')}>
                 {regimeNow === 'long' ? '▲ Long gamma (mean reversion)' : '▼ Short gamma (trend/amplificazione)'}
-                {!gexFlip && <span className="ml-1 opacity-70">· flip oltre ±10%</span>}
+                {!gexFlip && <span className="ml-1 opacity-70">· nessun confine entro la banda</span>}
               </Badge>
             ) : '—'}
             {gexFlip && (
-              <span className="text-[12px] font-mono text-gray-400 tnum">
-                Flip {futures}{chain !== 'etf' && ` · ${idxName}`} {gexFlip.price.toLocaleString()}
+              <span className="text-[12px] font-mono text-gray-400 tnum"
+                    title={`Zero della curva di esposizione gamma (${chain === 'index' ? idxName : etfName}, borsa ${bucket === '0dte' ? 'solo scadenze di oggi' : bucket === 'week' ? '≤7 giorni' : 'tutte le scadenze'}): ${gexFlip.price.toLocaleString()} in scala ${futures}${band?.flip_native ? `, ${(chain === 'index' ? band.flip_native : band?.flip_native ?? Math.round(gexFlip.price / (etfRatio ?? 1)) * 1).toLocaleString('it-IT', { maximumFractionDigits: 1 })} nativo` : ''}`}>
+                Flip {gexFlip.price > spot ? '↑' : '↓'} {gexFlip.price.toLocaleString()}
               </span>
             )}
             {flipOther && (
-              <span className={`text-[12px] font-mono tnum ${gexFlip && (spot > gexFlip.price) !== (spot > flipOther.price) ? 'font-semibold text-amber-300' : 'text-gray-400'}`}
-                    title={gexFlip && (spot > gexFlip.price) !== (spot > flipOther.price)
-                      ? `Il flip derivato dalla catena ${idxName} DIVERGE da quello ETF: le due fonti leggono regimi opposti`
-                      : `Flip derivato dalla catena ${idxName} (opzioni indici), allineato alla fonte ETF`}>
+              <span className={`text-[12px] font-mono tnum ${regimeOther && regimeNow && regimeOther !== regimeNow ? 'font-semibold text-amber-300' : 'text-gray-400'}`}
+                    title={regimeOther && regimeNow && regimeOther !== regimeNow
+                      ? `Le due catene leggono REGIMI OPPOSTI a questo prezzo (${etfName} ${regimeNow}, ${idxName} ${regimeOther}): confine ${flipOther.price.toLocaleString()} da ${idxName} — convinzione direzionale da dividere`
+                      : `Flip derivato dalla catena ${idxName} (opzioni indici), regime allineato alla fonte ETF`}>
                 Flip {idxName} {flipOther.price.toLocaleString()}
+                {regimeOther && <span className="opacity-70"> · {regimeOther}</span>}
               </span>
             )}
-            {flip0 && (
+            {/* Il chip 0DTE serve dal confrontare il perimetro scelto con quello
+                di oggi: quando la borsa selezionata È 0DTE sarebbe un doppione. */}
+            {flip0 && bucket !== '0dte' && (
               <span className={`text-[12px] font-mono font-semibold tnum ${
                 gexFlip && ((spot > gexFlip.price) === (spot > flip0))
                   ? 'text-gray-400' : 'text-amber-300'
@@ -569,7 +640,7 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
                 0DTE {futures}{chain !== 'etf' && ` · ${idxName}`} {flip0.toLocaleString()}
               </span>
             )}
-            {flip0Other && (
+            {flip0Other && bucket !== '0dte' && (
               <span className="text-[12px] font-mono text-gray-400 tnum"
                     title={`Flip 0DTE derivato dalla catena ${idxName} (scadenze di oggi, opzioni indici)`}>
                 0DTE {idxName} {flip0Other.toLocaleString()}
