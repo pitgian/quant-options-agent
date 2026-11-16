@@ -955,9 +955,13 @@ def main() -> None:
                     spx.get("expiries", []), spx_spot)
                 mp_i = max_pain(spx.get("expiries", []), spx_spot)
                 i_ratio = index_to_fut
+                # PRIMA di index_opts: index_opts usa flips_bi (flip ≤7gg della
+                # catena indice). Invertire l'ordine = UnboundLocalError, lo
+                # script muore prima di scrivere il piano e il workflow lo
+                # nasconde con `|| true` (piano fermo, options_data fresco).
+                tg_bi, flips_bi, regs_bi = top_gamma_by_bucket(spx.get("expiries", []), spx_spot)
                 index_opts = {"walls": walls_i, "flip": flip_i, "flip0": flip0_i,
                               "flipw": flips_bi.get("week"), "ratio": i_ratio}
-                tg_bi, flips_bi, regs_bi = top_gamma_by_bucket(spx.get("expiries", []), spx_spot)
                 prof_bi = gex_profile_by_bucket(spx.get("expiries", []), spx_spot, window_pct=0.20)
                 index_aggr = {
                     "gamma_regime_index": reg_i,

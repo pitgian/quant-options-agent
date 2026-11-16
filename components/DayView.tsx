@@ -105,8 +105,31 @@ export const DayView: React.FC<{ futures: 'ES' | 'NQ'; chain: ChainSource; bucke
     // Se la borsa non ha flip (weekend senza scadenze, catena corta) si usa
     // quello strutturale: la riga dichiara comunque di che borsa è.
     const flipName = chain === 'index' ? FLIP_IDX_NAME : FLIP_ETF_NAME;
-    const flip = plan.levels.find(l => l.name === flipName)
+    let flip = plan.levels.find(l => l.name === flipName)
       ?? plan.levels.find(l => l.name === (chain === 'index' ? 'GEX-FLIP-IDX' : 'GEX-FLIP'));
+    /* Il livello del flip può MANCARE perché il pipeline deduplica i livelli
+       entro 3 pt: se il flip ≤7gg cade sullo stesso prezzo di quello 0DTE
+       sopravvive solo uno dei due. I campi numerici però ci sono sempre
+       (gex_flip_week / gex_flip_0dte), quindi in quel caso il livello si
+       ricostruisce qui: senza, la borsa ≤7gg tornerebbe a mostrare il flip
+       strutturale (bug 16/11). */
+    if (flip?.name !== flipName) {
+      const num = chain === 'index'
+        ? (bucket === '0dte' ? plan.gex_flip_0dte_index
+          : bucket === 'week' ? plan.gex_flip_week_index : undefined)
+        : (bucket === '0dte' ? plan.gex_flip_0dte
+          : bucket === 'week' ? plan.gex_flip_week : undefined);
+      if (num && num > 0) {
+        flip = {
+          name: flipName,
+          nome_it: bucket === '0dte'
+            ? `GEX flip 0DTE${chain === 'index' ? ` da ${idxName}` : ''} (scade oggi)`
+            : `GEX flip ≤7gg${chain === 'index' ? ` da ${idxName}` : ''} (cambio regime gamma)`,
+          price: num, kind: 'pivot', source: 'options',
+          dist_pts: Math.round(num - spot), chain: chain === 'index' ? 'index' : 'etf',
+        } as DayPlanLevel;
+      }
+    }
     if (flip) out.push({
       ...flip,
       native: chain === 'index'

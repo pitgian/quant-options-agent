@@ -68,6 +68,21 @@ jobs:
         timeout-minutes: 4
         run: |
           python scripts/day_plan.py || true
+          # GUARDIA: `|| true` nasconde un crash dello script, e il piano resta
+          # quello restaurato dal branch data (16/11: piano fermo alle 22:31 del
+          # giorno prima mentre options_data era fresco, per un UnboundLocalError
+          # nella generazione). Se il file non è stato riscritto ADESSO, il job
+          # deve fallire: meglio un run rosso che un piano vecchio silenzioso.
+          python - <<'EOF'
+          import json, sys, datetime
+          d = json.load(open('data/day_plan.json'))
+          gen = d.get('generated_at', '')
+          age = (datetime.datetime.now(datetime.timezone.utc)
+                 - datetime.datetime.fromisoformat(gen)).total_seconds()
+          print(f"day_plan generated_at={gen} → {age/60:.1f} min fa")
+          if age > 600:
+              sys.exit("day_plan NON rigenerato: scripts/day_plan.py è fallito prima della scrittura")
+          EOF
 
       - name: Push to repository data branch
         timeout-minutes: 5
