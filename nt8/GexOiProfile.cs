@@ -966,7 +966,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      dai top_gamma entro ±tolPts (5 pt di default).
 				try
 				{
-					string pkey = (ChartControl != null ? ChartControl.GetHashCode().ToString() : "0") + "|" + ChartPanel.PanelIndex;
+					// Chiave del pannello: DEVE identificare la singola chart, non solo il
+					// ChartControl. Con due chart in TAB della stessa finestra il ChartControl
+					// e' condiviso e PanelIndex vale 0 per entrambe: la chiave vecchia
+					// (hash|panelIndex) collideva e la guardia anti-duplicato bloccava il
+					// DISEGNO della seconda chart (bug 17/11: ES vuota, NQ disegnata).
+					string pkey = (ChartControl != null ? ChartControl.GetHashCode().ToString() : "0")
+						+ "|" + ChartPanel.PanelIndex
+						+ "|" + (ChartBars != null ? ChartBars.GetHashCode().ToString() : "0")
+						+ "|" + (Instrument != null ? Instrument.FullName : "?");
 					lock (PanelOwner)
 					{
 						Tuple<string, DateTime> own;
