@@ -109,6 +109,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 			Timeout = TimeSpan.FromSeconds(20)
 		};
 
+		// Prezzo cache: dentro OnRender NON si leggono serie (Close[0] li' lancia
+		// "invalid index" e l'indicatore non disegna piu' — bug visto su ES 17/11).
+		private double lastClose;
+
 		private const string PlanUrl =
 			"https://raw.githubusercontent.com/pitgian/quant-options-agent/data/data/day_plan.json";
 
@@ -269,6 +273,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (mi.Contains("NQ")) return "NQ";      // NQ, MNQ
 			if (mi.Contains("ES")) return "ES";      // ES, MES
 			return null;
+		}
+
+		protected override void OnBarUpdate()
+		{
+			try { if (CurrentBar >= 0) lastClose = Close[0]; } catch { }
 		}
 
 		private void FetchPlan()
@@ -876,8 +885,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 					px, pw, xRight, xLeft, panelH, bars == null ? -1 : bars.Count), LogLevel.Information);
 			}
 
-			double spot = CurrentBar >= 0 ? Close[0] : 0;
-			if (spot <= 0) spot = planSpot;
+			// MAI Close[0] in OnRender: si usa la cache di OnBarUpdate, con fallback
+			// sul prezzo del piano e poi sul primo strike del profilo.
+			double spot = lastClose > 0 ? lastClose : planSpot;
+			if (spot <= 0 && bars != null && bars.Count > 0) spot = bars[0].S;
 
 			bool stale = planTime != DateTime.MinValue
 				&& (DateTime.Now - planTime).TotalMinutes > StaleMinutes;
