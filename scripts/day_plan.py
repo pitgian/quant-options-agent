@@ -728,7 +728,8 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
                gex_flip0_etf: float | None = None,
                gex_flipw_etf: float | None = None,
                index_opts: dict | None = None,
-               bands_etf: dict | None = None) -> dict:
+               bands_etf: dict | None = None,
+               live_price: float | None = None) -> dict:
     """
     walls_etf: i muri già calcolati dal pipeline opzioni, in scala ETF/strike
                [{"strike":..., "type": "put_wall|call_wall", "net_gex":...,
@@ -752,7 +753,15 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         return {}
     today = dates[-1]
     today_bars = rth[today]
-    last = today_bars[-1]["c"]
+    # RIFERIMENTO DEL PREZZO (fix 18/11).
+    # Prima: last = ultima barra RTH del giorno più recente -> di notte e in
+    # pre-apertura era la CHIUSURA DI IERI (18/11 06:01 ET: 27.086 mentre NQ
+    # quotava 27.340). Da lì dist_pts, etichette "sopra/sotto" e pin
+    # sopra/sotto sfasati di ~250 punti: i muri call veri finivano stampati
+    # come se fossero sotto il prezzo.
+    # Ora: prezzo LIVE dei futures se la pipeline lo passa (= ultima barra 5m
+    # Yahoo, che include la sessione overnight), altrimenti fallback RTH.
+    last = float(live_price) if (live_price and live_price > 0) else today_bars[-1]["c"]
 
     levels: list = []
 
@@ -915,6 +924,7 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "futures": futures,
         "last_price": round(last_fut, 1),
+        "last_price_source": "live" if (live_price and live_price > 0) else "rth_close",
         "read": read,
         "levels": levels,
     }
@@ -1266,7 +1276,8 @@ def main() -> None:
                           gex_flip_etf=flip, spot_fut_ratio=ratio,
                           index_to_fut=index_to_fut, gex_flip0_etf=flip0,
                           gex_flipw_etf=flips_b.get("week"),
-                          index_opts=index_opts, bands_etf=bands_b)
+                          index_opts=index_opts, bands_etf=bands_b,
+                          live_price=(float(cl[-1]) if len(cl) else None))
         plan.update(index_aggr)
         plan["spot_etf"] = spot_etf
         plan["gamma_regime"] = gex_regime
