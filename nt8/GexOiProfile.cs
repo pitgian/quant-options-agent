@@ -230,6 +230,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				ScalaComune                    = false;
 				ZoneTolPct                     = 0;      // 0 = auto (1.5x griglia nativa ETF)
 				WallPct                        = 20;
+				PlanSpotMaxDev                 = 50;    // pt di scarto piano/chart oltre cui loggare l'avviso
 
 				AddPlot(System.Windows.Media.Brushes.Transparent, "Void");   // plot fittizio: il disegno è tutto in OnRender
 			}
@@ -384,6 +385,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			planTime  = ParseDate(TryStr(plan, "generated_at"));
 			planSpot  = TryNum(plan, "last_price");
+
+			// 18/11: la pipeline scriveva come last_price la CHIUSURA RTH di IERI
+			// (alle 06:01 ET NQ=27.086 mentre quotava 27.340) -> distanze e
+			// etichette sopra/sotto sfasate di ~250pt. Ora il piano manda il prezzo
+			// live, ma NON ci si fida comunque: tutto ciò che riguarda "dove sta il
+			// prezzo" usa RefSpot() (= Close[0] del chart, cache di OnBarUpdate).
+			if (lastClose > 0 && planSpot > 0 && Math.Abs(lastClose - planSpot) > PlanSpotMaxDev)
+				Log(string.Format("GexOiProfile: piano sfasato di {0:0} pt (plan {1:0.0} vs chart {2:0.0})\n" +
+					" -> uso il prezzo del chart per sopra/sotto e distanze",
+					lastClose - planSpot, planSpot, lastClose), LogLevel.Warning);
 			bool idx = OptSource == GexOiSource.Indice;
 
 			// REGIME DELLA BORSA SCELTA: il piano pubblica tre regimi (tutte /
@@ -488,7 +499,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 			flip0   = idx ? flip0Idx   : flip0Etf;   hasFlip0   = idx ? hasFlip0Idx   : hasFlip0Etf;
 			// da che parte sta il confine rispetto al prezzo (l'etichetta lo dice,
 			// così "sopra il flip = long gamma" non va più interpretato a memoria)
-			if (hasFlip && planSpot > 0) flipSide = flip > planSpot ? "sopra" : "sotto";
+			if (hasFlip && RefSpot() > 0) flipSide = flip > RefSpot() ? "sopra" : "sotto";
 
 			// ---- profilo per strike: TUTTE le fonti sono già in SCALA FUTURES.
 			//      Indice  -> gex_profile*_index        (raw, passo 5pt)
@@ -570,11 +581,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 				// "6 zone" della vecchia UI erano tutti falsi positivi (verificato
 				// 13/11 sul piano live, gap minimo reale 20 pt).
 				double tol = ZoneTolPct > 0
-					? planSpot * ZoneTolPct / 100.0
+					? RefSpot() * ZoneTolPct / 100.0
 					: 5.0;
 				tolPts = tol;
 
-				zones = BuildZones(wallsEtf, wallsIdx, planSpot, tol, 50.0, 50.0);
+				zones = BuildZones(wallsEtf, wallsIdx, RefSpot(), tol, 50.0, 50.0);
 
 				// Distanza minima reale fra i due libri: il numero che il trader
 				// deve vedere quando le confluenze sono zero.
@@ -977,11 +988,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 				//      dai top_gamma entro ±tolPts (5 pt di default).
 				try
 				{
-					// Chiave del pannello: DEVE identificare la singola chart, non solo il
-					// ChartControl. Con due chart in TAB della stessa finestra il ChartControl
-					// e' condiviso e PanelIndex vale 0 per entrambe: la chiave vecchia
-					// (hash|panelIndex) collideva e la guardia anti-duplicato bloccava il
-					// DISEGNO della seconda chart (bug 17/11: ES vuota, NQ disegnata).
+					// chiave per-CHART: con due chart in TAB della stessa finestra il ChartControl
+					// e' condiviso e PanelIndex vale 0 per entrambe -> la chiave vecchia
+					// collideva e la guardia anti-duplicato bloccava il disegno della
+					// seconda chart (bug 17/11: ES vuota, NQ disegnata).
 					string pkey = (ChartControl != null ? ChartControl.GetHashCode().ToString() : "0")
 						+ "|" + ChartPanel.PanelIndex
 						+ "|" + (ChartBars != null ? ChartBars.GetHashCode().ToString() : "0")
@@ -1415,8 +1425,22 @@ namespace NinjaTrader.NinjaScript.Indicators
 		// letto è questo), "↓" = sta SOTTO. Etichetta, non interpretazione.
 		private string FlipTag(double f)
 		{
-			if (planSpot <= 0 || f <= 0) return "";
-			return f > planSpot ? " ↑" : " ↓";
+			double s = RefSpot();
+			if (s <= 0 || f <= 0) return "";
+			return f > s ? " ↑" : " ↓";
+		}
+
+		// Prezzo di riferimento per TUTTO ciò che riguarda "dove sta il prezzo"
+		// (sopra/sotto, distanze, tolleranze, frecce): il prezzo del CHART.
+		// last_price del piano resta solo come fallback quando la cache di
+		// OnBarUpdate non è ancora disponibile. Non si legge Close[0] qui dentro:
+		// questa roba gira anche in OnRender (crash 'invalid index' del 17/11).
+		private double RefSpot()
+		{
+			if (lastClose > 0) return lastClose;
+			if (planSpot  > 0) return planSpot;
+			if (bars != null && bars.Count > 0) return bars[0].S;
+			return 0;
 		}
 
 		// Declutter da asse prezzi: prende le quote vere, le ordina e le sposta del
@@ -1621,6 +1645,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		[NinjaScriptProperty]
 		[System.ComponentModel.DataAnnotations.Range(5.0, 80.0)]
+		[Display(Name = "Scarto piano/chart (pt) oltre cui avvisare", Order = 18, GroupName = "3. Confluenza")]
+		public double PlanSpotMaxDev { get; set; }
+
 		[Display(Name = "Soglia muro (% del max della fonte) — solo Entrambi", Order = 12, GroupName = "3. Confluenza")]
 		public double WallPct { get; set; }
 	}
