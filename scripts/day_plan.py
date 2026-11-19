@@ -12,8 +12,10 @@ Genera data/day_plan.json:
   track record. Le barre futures servono unicamente per lo spot.
 
 E mantiene data/level_stats.json: l'affidabilità storica per nome livello
-("PDH rispettato 8/12") — valutata ogni mattina sul piano del giorno
-precedente contro le barre reali. È il track record, espresso come
+("PDH rispettato 8/12") — valutata ogni mattina contro le barre reali del
+piano CONGELATO all'apertura della giornata giudicata
+(data/day_plan_snapshots.json: la prima run di ogni giornata ET copia il
+piano corrente prima di sovrascriverlo). È il track record, espresso come
 confidence direttamente utilizzabile sulla scala.
 
 Convenzioni:
@@ -40,8 +42,9 @@ sys.path.insert(0, SCRIPTS_DIR)
 from fetch_options_data import calculate_walls  # parità con la UI (stessa formula)
 
 PLAN_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "day_plan.json")
-PREV_PLAN_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "day_plan_prev.json")
 STATS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "level_stats.json")
+SNAPSHOTS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "day_plan_snapshots.json")
+SNAPSHOT_KEEP_DAYS = 7   # retention: il target di scoring è sempre ≤7 giorni fa
 
 # Griglia operativa: tutti i livelli opzioni si normalizzano a 5pt per
 # garantire che ETF e INDICE che rappresentano lo stesso strike economico
@@ -82,6 +85,17 @@ OPTIONS_PATH = os.path.join(SCRIPTS_DIR, "..", "data", "options_data.json")
 ET = ZoneInfo("America/New_York")
 VERSION = 1
 
+# Versione della SEMANTICA dei verdetti del track record. v1 (≤18/11):
+# respinta/follow-through valutati su una finestra che includeva la barra di
+# tocco → verdetti banalmente soddisfatti ("toccato = rispettato"). v2
+# (19/11): respinta DOPO il tocco; magnet giudicato sul close RTH (non
+# mezzanotte) e solo se pertinente (entro 0,4%); serata Globex (16:00–24:00)
+# esclusa dal giudizio della giornata; piano giudicato = snapshot congelato
+# all'apertura (niente look-ahead del piano rigenerato a fine giornata).
+# Un cambio di semantica invalida la comparabilità della storia: vedi
+# load_stats per l'azzeramento.
+SCORING_VERSION = 2
+
 # Finestra di rilevanza: muri, flip e max pain si cercano entro questo raggio
 # dallo spot. Fuori, l'OI delle scadenze lunghe (LEAPS accumulati da anni)
 # domina e produce "muri" a −19% e max pain senza senso (bug 08/10: put wall
@@ -117,6 +131,11 @@ def relevant_expiries(expiries: list, spot: float) -> list:
 TOUCH_BAND_PTS = 3.0     # il prezzo è "sul livello" entro ±3 pt
 BREAK_BUF_PTS = 4.0      # oltre il livello di 4 pt = violato
 REJECT_PTS = 6.0         # allontanamento di 6 pt = rispetto
+# pertinenza del magnet: la prova "la giornata chiude sul max pain" conta
+# solo se la giornata è arrivata entro lo 0,4% dal livello — la stessa
+# soglia near_mp del piano. Un max pain a +2335 pt non è un test: senza
+# questo filtro inquinava solo n (verdetti 0/7 senza valore informativo).
+MAGNET_RELEVANCE_PCT = 0.004
 
 
 # ---------------------------------------------------------------------------
@@ -934,22 +953,52 @@ def build_plan(idx_et, o, h, l, c, v, futures: str, walls_etf: list, spot_etf: f
 # Scoring: affidabilità storica per nome livello
 # ---------------------------------------------------------------------------
 
+def _rth_close(idx_et, closes) -> float | None:
+    """Close RTH (16:00 ET) dell'ultima giornata nella finestra: il close che
+    conta per il magnet è quello del cash, non l'ultima barra Globex prima
+    di mezzanotte (le barre Yahoo sono stampate all'INIZIO della candela:
+    RTH = 09:30..15:55, la barra 16:00 è già post-mercato)."""
+    if not len(idx_et):
+        return None
+    last_day = idx_et[-1].date()
+    ref = None
+    for t, c in zip(idx_et, closes):
+        if (t.date() == last_day and t.hour < 16
+                and (t.hour > 9 or (t.hour == 9 and t.minute >= 30))):
+            ref = float(c)
+    return ref
+
+
 def score_plan_against(plan: dict, idx_et, highs, lows, closes=None, only_date=None) -> list:
     """Giudica un piano: ogni livello ha successo se fa IL SUO MESTIERE.
 
-    only_date: se fornito, giudica SOLO le barre di quel giorno ET (giudizio
-    della giornata completata). Altrimenti conta le barre DAL giorno di
-    pubblicazione del piano in poi.
+    only_date: se fornito, giudica SOLO le barre 00:00–16:00 ET di quel
+    giorno (giudizio della giornata completata). La serata Globex 16:00–24:00
+    è l'apertura della seduta SUCCESSIVA: farla pesare sul piano di oggi
+    flipava verdetti per mosse che governa il piano di domani. Altrimenti
+    conta le barre DAL giorno di pubblicazione del piano in poi.
 
     Verdetto per meccanismo (kind), sulla finestra di 2h dal primo touch:
-      barrier/pivot  non cede il buffer di 4 pt, oppure respinge ≥6 pt
+      barrier/pivot  non cede il buffer di 4 pt, oppure respinge ≥6 pt DOPO
+                     il tocco (19/11: la respinta non è più valutata sulla
+                     barra di tocco — una barra larga 40-140 pt la soddisfava
+                     da sola col suo estremo sul lato di arrivo e OGNI livello
+                     toccato risultava "rispettato", GEX-FLIP 100% ovunque)
       trigger        rottura CON follow-through ≥6 pt nella direzione di moto
-                     (lo stallo dopo il tocco è fallimento)
-      magnet         convergenza: a fine finestra il prezzo chiude sul livello
+                     DOPO il tocco (lo stallo dopo il tocco è fallimento; lo
+                     spike dentro la barra di tocco senza seguito non basta)
+      magnet         convergenza: il close RTH (16:00 ET) chiude sul livello;
+                     la prova conta solo se il livello è stato pertinente
+                     (giornata arrivata entro lo 0,4%)
     """
     gen = str(plan.get("generated_at") or "")[:10]
     if only_date is not None:
-        keep = [k for k in range(len(idx_et)) if idx_et[k].date() == only_date]
+        # 00:00–16:00: overnight mattutino + RTH. La serata Globex (16:00 ET
+        # in poi) appartiene alla seduta successiva e NON giudica il piano
+        # di oggi (bug 19/11: un muro rispettato tutto il giorno ma rotto
+        # alle 20:00 veniva segnato fallito).
+        keep = [k for k in range(len(idx_et))
+                if idx_et[k].date() == only_date and idx_et[k].hour < 16]
         if not keep:
             return []
     elif gen:
@@ -981,32 +1030,59 @@ def score_plan_against(plan: dict, idx_et, highs, lows, closes=None, only_date=N
                 touched = True
                 first = k
                 break
-        # magnete (max pain): il mestiere è la CHIUSURA DI GIORNATA sul
-        # livello — il pinning dei dealer avviene in chiusura, non a 2h dal
-        # tocco (lezione 24/10). Non richiede il tocco: la giornata chiude
-        # sul livello o no. Il close è quello dell'ULTIMA barra del giorno.
+        # magnete (max pain): il mestiere è la CHIUSURA DEL CASH (16:00 ET)
+        # sul livello — il pinning dei dealer avviene nell'asta di chiusura
+        # RTH, non a 2h dal tocco (lezione 24/10). Fix 19/11: closes[-1] con
+        # only_date era la barra Globex delle 23:55 — un pin riuscito alle
+        # 16:00 resultava fallito per i movimenti della serata. Non richiede
+        # il tocco, ma richiede PERTINENZA: se la giornata non si è mai
+        # avvicinata entro lo 0,4% il livello non ha fatto il suo mestiere
+        # e non è un test (n resta pulito per l'affidabilità).
         # len() e non verità: closes è un array numpy — `if closes:` su più
         # di un elemento solleva ValueError e abbatte TUTTO lo scoring
         if kind == "magnet" and closes is not None and len(closes):
-            held = abs(closes[-1] - P) <= band
-            touched = True
+            ref = _rth_close(idx_et, closes)
+            if ref is None:
+                ref = float(closes[-1])   # giornata senza barre RTH: fallback
+            held = abs(ref - P) <= band
+            day_lo, day_hi = min(lows), max(highs)
+            if day_lo <= P <= day_hi:
+                near = 0.0
+            else:
+                near = min(abs(day_lo - P), abs(day_hi - P))
+            touched = near <= P * MAGNET_RELEVANCE_PCT
         elif touched:
+            # Finestra di giudizio: [first, first+24). La barra di tocco conta
+            # per la rottura (il suo estremo oltre il buffer è una violazione
+            # reale: lì il prezzo CI È andato), ma NON per la respinta/follow-
+            # through: il fix 19/11 misura la respinta dalle barre DOPO il
+            # tocco (rej_hi/rej_lo). Prima l'intera finestra includeva il
+            # tocco e la clausola "respinta ≥ rej" era soddisfatta dalla
+            # barra di tocco stessa — range 40-140 pt su NQ contro soglie
+            # ~19-20 pt — quindi ogni livello toccato era banalmente
+            # "rispettato" e il track record misurava solo il tocco.
             after_hi = max(highs[first:first + 24], default=P)
             after_lo = min(lows[first:first + 24], default=P)
+            rej_hi = max(highs[first + 1:first + 24], default=None)
+            rej_lo = min(lows[first + 1:first + 24], default=None)
             mid = (highs[first] + lows[first]) / 2
             from_above = mid > P
             if kind == "trigger":
                 # successo = rottura CON follow-through (≥ rej) nella direzione
-                # di moto entro la finestra; stallo o rimbalzo = fallimento
-                held = after_lo <= P - rej if from_above else after_hi >= P + rej
+                # di moto DOPO il tocco; stallo o rimbalzo = fallimento. Lo
+                # spike-through dentro la barra di tocco senza seguito non è
+                # una rottura: è un trading range che ha visitato il livello.
+                held = ((rej_lo is not None and rej_lo <= P - rej) if from_above
+                        else (rej_hi is not None and rej_hi >= P + rej))
             else:
                 # barriera/pin/pivot: successo = stallo sul lato di arrivo
-                # (mai il buffer di 4 pt) OPPURE respinta ≥6 pt in direzione
-                # opposta. La rottura continua nel senso di arrivo = fallimento.
+                # (mai il buffer di 4 pt) OPPURE respinta ≥6 pt DOPO il tocco
+                # in direzione opposta. La rottura continua nel senso di
+                # arrivo = fallimento.
                 if from_above:
-                    held = after_lo > P - brk or after_hi >= P + rej
+                    held = after_lo > P - brk or (rej_hi is not None and rej_hi >= P + rej)
                 else:
-                    held = after_hi < P + brk or after_lo <= P - rej
+                    held = after_hi < P + brk or (rej_lo is not None and rej_lo <= P - rej)
         out.append({
             "name": lv.get("name"), "nome_it": lv.get("nome_it"),
             "price": P, "source": lv.get("source"), "kind": kind,
@@ -1040,9 +1116,26 @@ def load_stats() -> dict:
         return {}
     try:
         with open(STATS_PATH) as f:
-            return json.load(f).get("levels", {})
+            raw = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
+    # Verdetti prodotti con una semantica precedente NON si mescolano ai
+    # nuovi: la rate diventerebbe un patchwork incomparabile (v1 giudicava
+    # "rispettato" ogni livello toccato). Al primo caricamento dopo il
+    # cambio versione il track record riparte da zero e la storia v1 finisce
+    # in backup. last_scored resta quello del file: le vecchie giornate non
+    # vengono ri-giudicate con la semantica nuova (il piano sarebbe comunque
+    # quello rigenerato a fine giornata — look-ahead, v1 bug non ancora fixato).
+    if int(raw.get("scoring_version") or 1) < SCORING_VERSION:
+        backup = STATS_PATH.replace(".json", "_v1_backup.json")
+        if not os.path.exists(backup):
+            with open(STATS_PATH) as src, open(backup, "w") as dst:
+                dst.write(src.read())
+        print(f"day_plan: stats v1 archiviate in {os.path.basename(backup)} "
+              f"(semantica verdetti cambiata in v{SCORING_VERSION}) → "
+              f"track record azzerato")
+        return {}
+    return raw.get("levels", {})
 
 
 def load_last_scored():
@@ -1060,9 +1153,80 @@ def load_last_scored():
 def save_stats(stats: dict, last_scored=None) -> None:
     os.makedirs(os.path.dirname(STATS_PATH), exist_ok=True)
     with open(STATS_PATH, "w") as f:
-        json.dump({"version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
+        json.dump({"version": 1, "scoring_version": SCORING_VERSION,
+                   "generated_at": datetime.now(timezone.utc).isoformat(),
                    "last_scored": last_scored.isoformat() if last_scored else None,
                    "levels": stats}, f, indent=1)
+
+
+# --- SNAPSHOT PRE-APERTURA (anti look-ahead) --------------------------------
+# La pipeline rigenera il piano ogni ~5 minuti con lo spot corrente: leggere
+# PLAN_PATH allo scoring significava giudicare la seduta col piano delle
+# ~16:05, i cui livelli erano stati scelti già conoscendo il close (muri
+# sopra/sotto spot di chiusura, "nearest" max pain vicino al close). Il
+# primo freeze: la prima run di ogni giornata ET copia il piano CORRENTE
+# (l'ultima pubblicazione del giorno prima, quindi pre-apertura) e lo
+# tagging con la data di oggi: è il piano con cui il mercato ha aperto,
+# l'unico equo da giudicare.
+
+def load_snapshots() -> dict:
+    """{"2026-11-19": <contenuto PLAN_PATH del piano pre-apertura di quel giorno>}"""
+    if not os.path.exists(SNAPSHOTS_PATH):
+        return {}
+    try:
+        with open(SNAPSHOTS_PATH) as f:
+            return json.load(f).get("snapshots", {})
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def snapshot_plan_for_today() -> None:
+    """Prima run della giornata ET: congela il piano corrente. Idempotente."""
+    if not os.path.exists(PLAN_PATH):
+        return
+    today = datetime.now(ET).date().isoformat()
+    snaps = load_snapshots()
+    if today in snaps:
+        return
+    try:
+        with open(PLAN_PATH) as f:
+            content = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+    # Solo un piano pubblicato PRIMA di oggi può essere il piano d'apertura.
+    # Se il deploy arriva a seduta in corso, PLAN_PATH contiene il piano di
+    # oggi (rigenerato con lo spot corrente): congelarlo ricreerebbe esattamente
+    # il look-ahead che il freeze vuole togliere → oggi non si giudica.
+    gen_date = str(content.get("generated_at") or "")[:10]
+    if gen_date >= today:
+        print(f"day_plan: piano corrente generato OGGI ({gen_date}) → nessun "
+              f"freeze per oggi (evita look-ahead al primo giro post-deploy)")
+        return
+    snaps[today] = content
+    keep = sorted(snaps)[-SNAPSHOT_KEEP_DAYS:]
+    snaps = {k: snaps[k] for k in keep}
+    os.makedirs(os.path.dirname(SNAPSHOTS_PATH), exist_ok=True)
+    with open(SNAPSHOTS_PATH, "w") as f:
+        json.dump({"version": 1,
+                   "updated_at": datetime.now(timezone.utc).isoformat(),
+                   "snapshots": snaps}, f, indent=1)
+    print(f"day_plan: piano congelato per l'apertura di {today} → "
+          f"{os.path.basename(SNAPSHOTS_PATH)}")
+
+
+def snapshot_for_date(want: str) -> dict | None:
+    """Piano congelato più recente con data ≤ want. Il fallback ai giorni
+    precedenti copre festività/giornate senza run: il piano in effetto
+    all'apertura era l'ultimo pubblicato. None = nessuno snapshot prima del
+    deploy del freeze (le giornate precedenti NON si giudicano: verrebbero
+    misurate contro il piano look-ahead)."""
+    if not want:
+        return None
+    snaps = load_snapshots()
+    for d in sorted(snaps, reverse=True):
+        if d <= want:
+            return snaps[d]
+    return None
 
 
 def main() -> None:
@@ -1370,10 +1534,6 @@ def main() -> None:
             print(f"\n=== {fut} — spot {plan['last_price']} ===")
             for lv in plan["levels"]:
                 print(f"  {lv['price']:9.1f}  {lv['nome_it']:32s} [{lv['kind']}/{lv['source']}]")
-        if args.show:
-            print(f"\n=== {fut} — spot {plan['last_price']} ===")
-            for lv in plan["levels"]:
-                print(f"  {lv['price']:9.1f}  {lv['nome_it']:32s} [{lv['kind']}/{lv['source']}]")
 
     # --- TRACK RECORD: al cambio di giornata ET si giudica il piano
     # ripristinato (quello con cui si apre la giornata) sulle barre
@@ -1387,17 +1547,26 @@ def main() -> None:
     # divergenza SPY/QQQ): è il dataset per i futuri decision model.
     scored_target = None
     try:
-        if plans and os.path.exists(PLAN_PATH):
-            with open(PLAN_PATH) as pf:
-                old_all = json.load(pf)
+        if plans:
             for fut, (idx_et, h, l, cl) in bars_data.items():
                 today = max(idx_et).date()
-                old_plan = (old_all.get("plans") or {}).get(fut)
                 bar_dates = sorted({d.date() for d in idx_et})
                 target = max((d for d in bar_dates
                               if d < today and (last_scored is None or d > last_scored)),
                              default=None)
-                if not (old_plan and target):
+                if not target:
+                    continue
+                # Il piano da giudicare è quello CONGELATO all'apertura della
+                # giornata target (snapshot pre-apertura), non l'ultimo
+                # scritto in giornata: vedi snapshot_plan_for_today.
+                old_all = snapshot_for_date(target.isoformat())
+                if old_all is None:
+                    print(f"day_plan: nessuno snapshot pre-apertura per {target} "
+                          f"→ giornata non giudicata (atteso solo al primo giro "
+                          f"dopo il deploy del freeze)")
+                    continue
+                old_plan = (old_all.get("plans") or {}).get(fut)
+                if not old_plan:
                     continue
                 # SOLO i livelli che la scala mostra davvero: fonti opzioni
                 # + max pain + muri gamma top-3 per lato (le sintesi che fa
@@ -1507,6 +1676,12 @@ def main() -> None:
         import traceback
         traceback.print_exc()
         print(f"day_plan: scoring saltato ({e})")
+
+    # Congela il piano per l'apertura di OGGI (idempotente): alla prima run
+    # della giornata PLAN_PATH contiene ancora l'ultima pubblicazione di
+    # ieri — è il piano con cui il mercato ha aperto e quello che sarà
+    # giudicato domani. DEVE girare PRIMA della sovrascrittura qui sotto.
+    snapshot_plan_for_today()
 
     os.makedirs(os.path.dirname(PLAN_PATH), exist_ok=True)
     with open(PLAN_PATH, "w") as f:

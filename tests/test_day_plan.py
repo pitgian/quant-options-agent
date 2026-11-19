@@ -242,3 +242,118 @@ assert {"GEX-FLIP", "GEX-FLIP-WEEK", "GEX-FLIP-0DTE"} <= kept, f"flip soppressi:
 assert "PIN" not in kept, "il dedup dei livelli normali non deve cambiare"
 
 print("test_day_plan: 26 check OK")
+
+# --- 12. BUG 19/11 (scoring v2): la respinta NON può essere soddisfatta
+# dalla barra di tocco. Prima la finestra [first, first+24) includeva il
+# tocco: una barra larga 40-140 pt (range tipico NQ 5m) soddisfaceva da
+# sola la clausola "respinta ≥ rej" col suo estremo sul lato di arrivo, e
+# OGNI livello toccato risultava "rispettato" (GEX-FLIP 100% ovunque, put
+# wall non misurabile). Ora la respinta si misura DOPo il tocco.
+PLAN_B = {"generated_at": "2026-10-05T08:00:00+00:00",
+          "levels": [{"name": "WALL", "nome_it": "Muro", "price": 6000.0, "kind": "barrier"}]}
+# 12a. tocco LARGO da sopra (high P+80 ≥ P+rej nella barra di tocco) poi
+# rottura continua verso il basso → deve FALLIRE (v1 dava held=True)
+idx, h, l, c = bars([
+    (D1, 6080, 5985),                            # barra di tocco larga: mid > P
+    (D1 + timedelta(minutes=5), 5950, 5940),     # sfonda
+    (D1 + timedelta(minutes=10), 5930, 5920),    # continua giù
+])
+r = score_plan_against(PLAN_B, idx, h, l, c)
+assert r[0]["touched"] and not r[0]["held"], \
+    f"barriera sfondata dopo tocco largo deve fallire: {r[0]}"
+# 12b. stallo rotto ma VERA respinta dopo il tocco (min sotto il buffer poi
+# high ≥ P+rej nelle barre successive) → successo legittimo
+idx, h, l, c = bars([
+    (D1, 6010, 5998),                            # tocco da sopra (mid 6004 > P)
+    (D1 + timedelta(minutes=5), 6000, 5992),     # scende sotto il buffer
+    (D1 + timedelta(minutes=10), 6012, 6004),    # respinta: high ≥ 6006
+])
+r = score_plan_against(PLAN_B, idx, h, l, c)
+assert r[0]["held"], f"respinta vera dopo il tocco deve restare un successo: {r[0]}"
+# 12c. trigger: lo spike-through DENTRO la barra di tocco senza seguito NON
+# è una rottura (v1 lo contava come follow-through)
+idx, h, l, c = bars([
+    (D1, 6020, 5990),                            # tocco da sopra, spike a 5990 ≤ P-rej
+    (D1 + timedelta(minutes=5), 6004, 5997),     # stallo sopra: mai follow-through
+    (D1 + timedelta(minutes=10), 6002, 5996),
+])
+r = score_plan_against(PLAN_T, idx, h, l, c)
+assert r[0]["touched"] and not r[0]["held"], \
+    f"trigger con spike solo nella barra di tocco deve fallire: {r[0]}"
+# 12d. barriera da sotto: tocco largo (low P-10 ≤ P-rej nel tocco) poi
+# rottura continua verso l'alto → deve FALLIRE
+idx, h, l, c = bars([
+    (D1, 6005, 5990),                            # tocco largo da sotto: mid < P
+    (D1 + timedelta(minutes=5), 6012, 6006),     # rompe il buffer alto
+    (D1 + timedelta(minutes=10), 6020, 6014),    # continua su
+])
+r = score_plan_against(PLAN_B, idx, h, l, c)
+assert r[0]["touched"] and not r[0]["held"], \
+    f"barriera superata dopo tocco largo deve fallire: {r[0]}"
+
+print("test_day_plan: 30 check OK")
+
+# --- 13. scoring v2: magnet sul close RTH + pertinenza; serata Globex
+# esclusa dal giudizio della giornata (only_date). Prima: closes[-1] era la
+# barra delle 23:55 (pin riuscito alle 16:00 resultava fallito) e la rottura
+# della serata flipava i verdetti del piano di giorno.
+PLAN_M2 = {"generated_at": "2026-10-05T08:00:00+00:00",
+           "levels": [{"name": "MAXPAIN", "nome_it": "Max Pain", "price": 6000.0, "kind": "magnet"}]}
+PLAN_B2 = {"generated_at": "2026-10-05T08:00:00+00:00",
+           "levels": [{"name": "WALL", "nome_it": "Muro", "price": 6000.0, "kind": "barrier"}]}
+T_RTH = [datetime(2026, 10, 5, 15, 50, tzinfo=ET),
+         datetime(2026, 10, 5, 15, 55, tzinfo=ET)]
+T_EVE = [datetime(2026, 10, 5, 20, 0, tzinfo=ET),
+         datetime(2026, 10, 5, 23, 55, tzinfo=ET)]
+D_GG = date(2026, 10, 5)
+
+# 13a. RTH chiude SUL livello (6002), la serata fugge a 6100 → held=True
+idx, h, l, c = bars([(t, 6004, 5996) for t in T_RTH] + [(t, 6110, 6090) for t in T_EVE])
+c = [5999.0, 6002.0, 6095.0, 6100.0]
+r = score_plan_against(PLAN_M2, idx, h, l, c, only_date=D_GG)
+assert r[0]["touched"] and r[0]["held"], f"il pin del close RTH deve valere: {r[0]}"
+
+# 13b. barriera rispettata in RTH ma rotta alla serata → with only_date = True
+idx, h, l, c = bars([(t, 6003, 5996) for t in T_RTH] + [(t, 6110, 6090) for t in T_EVE])
+r = score_plan_against(PLAN_B2, idx, h, l, c, only_date=D_GG)
+assert r[0]["held"], f"il giudizio di giornata non deve vedere la serata: {r[0]}"
+
+# 13c. magnet fuori pertinenza (giornata trattata 6300-6400) → NON contato
+idx, h, l, c = bars([(datetime(2026, 10, 5, 10, 0, tzinfo=ET), 6400, 6300)])
+r = score_plan_against(PLAN_M2, idx, h, l, c, only_date=D_GG)
+assert not r[0]["touched"], f"magnet lontano non è un test: {r[0]}"
+
+# 13d. magnet DENTRO il range di giornata → contato
+idx, h, l, c = bars([(datetime(2026, 10, 5, 15, 55, tzinfo=ET), 6020, 5990)])
+c = [6002.0]
+r = score_plan_against(PLAN_M2, idx, h, l, c, only_date=D_GG)
+assert r[0]["touched"] and r[0]["held"], f"magnet dentro il range deve contare: {r[0]}"
+
+# 13e. snapshot pre-apertura: freeze una sola volta per giornata, piano
+# pubblicato OGGI non si congela (evita look-ahead al primo giro post-deploy)
+import day_plan as dp
+import json as _json
+import tempfile
+_tmp = tempfile.mkdtemp()
+dp.PLAN_PATH = os.path.join(_tmp, "plan.json")
+dp.SNAPSHOTS_PATH = os.path.join(_tmp, "snaps.json")
+_ieri = (datetime.now(dp.ET) - timedelta(days=1)).strftime("%Y-%m-%d")
+_oggi = datetime.now(dp.ET).strftime("%Y-%m-%d")
+with open(dp.PLAN_PATH, "w") as f:
+    _json.dump({"version": 1, "generated_at": f"{_ieri}T20:05:00+00:00",
+                "plans": {"ES": {"last_price": 6000.0}}}, f)
+dp.snapshot_plan_for_today()
+assert dp.snapshot_for_date(_oggi)["plans"]["ES"]["last_price"] == 6000.0
+dp.snapshot_plan_for_today()          # seconda run: non sovrascrive
+assert len(dp.load_snapshots()) == 1
+assert dp.snapshot_for_date("2020-01-01") is None   # niente snapshot prima del deploy
+# piano generato OGGI: NON si congela (look-ahead)
+with open(dp.PLAN_PATH, "w") as f:
+    _json.dump({"version": 1, "generated_at": f"{_oggi}T20:05:00+00:00",
+                "plans": {"ES": {"last_price": 6100.0}}}, f)
+_dp2 = tempfile.mkdtemp()
+dp.SNAPSHOTS_PATH = os.path.join(_dp2, "snaps.json")
+dp.snapshot_plan_for_today()
+assert dp.snapshot_for_date(_oggi) is None, "il piano di oggi non deve congelarsi"
+
+print("test_day_plan: 36 check OK")
